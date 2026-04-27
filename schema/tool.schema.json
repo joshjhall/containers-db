@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joshjhall/containers-db/schema/tool.schema.json",
+  "title": "Tool",
+  "description": "Top-level metadata for a tool in the containers-db catalog. Mirrors the contents of `tools/<id>/index.json`. One file per tool. Per-version data lives in sibling `versions/<v>.json` files validated by version.schema.json.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "display_name",
+    "kind",
+    "activity",
+    "default_version",
+    "available"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "description": "Schema version for the tool index document. Bumped on breaking shape changes; consumers reject unknown versions.",
+      "const": 1
+    },
+    "id": {
+      "description": "Stable, lowercase, snake-case slug. Must match the parent directory name (`tools/<id>/`). Referenced by other tool entries' ordering arrays and by version files' `tool` field.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "display_name": {
+      "description": "Human-readable name shown in stibbons UIs and recommendation output. Free-form, mixed case allowed.",
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "description": "Coarse category. `language` covers programming-language toolchains (Rust, Python, Node). `cli` is end-user binaries (`gh`, `just`). `library` is build-time/runtime libs without an entry-point binary. `runtime` covers things like JVM/V8 that host other code. `service` is long-running daemons (Postgres, Redis).",
+      "type": "string",
+      "enum": ["language", "cli", "library", "runtime", "service"]
+    },
+    "homepage": {
+      "description": "Canonical project homepage URL. Used by stibbons in `info` output.",
+      "type": "string",
+      "format": "uri"
+    },
+    "source_repo": {
+      "description": "Primary source repository URL (the repo the activity scanner watches).",
+      "type": "string",
+      "format": "uri"
+    },
+    "license": {
+      "description": "SPDX identifier of the project's license (e.g., `MIT`, `Apache-2.0`, `GPL-3.0-or-later`). Free-form so dual-licensed and exotic licenses can be expressed.",
+      "type": "string",
+      "minLength": 1
+    },
+    "activity": {
+      "description": "Activity scoring snapshot from the most recent scan. The `score` tier drives stibbons' recommendation gating; the `signals` block records the raw inputs so future re-evaluation against new heuristics is possible without re-fetching.",
+      "type": "object",
+      "required": ["score", "scanned_at"],
+      "additionalProperties": false,
+      "properties": {
+        "score": {
+          "description": "Coarse activity bucket. The 7 tiers (most → least active): `very-active`, `active`, `maintained`, `slow`, `stale`, `dormant`, `abandoned`. stibbons recommends only `maintained` and above; `slow`/`stale` warn; `dormant`/`abandoned` refuse.",
+          "type": "string",
+          "enum": [
+            "very-active",
+            "active",
+            "maintained",
+            "slow",
+            "stale",
+            "dormant",
+            "abandoned"
+          ]
+        },
+        "signals": {
+          "description": "Raw scanner observations that produced the score. Optional fields — scanners record what they can fetch from the source forge.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "releases_last_90d": {
+              "description": "Count of tagged/published releases in the trailing 90-day window.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "commits_last_90d": {
+              "description": "Count of commits to the default branch in the trailing 90-day window.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "active_maintainers": {
+              "description": "Count of distinct authors who committed in the trailing 90-day window. Proxy for bus factor.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "open_advisories": {
+              "description": "Count of open security advisories on the source forge (e.g., GHSA entries) at scan time.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_release_at": {
+              "description": "Timestamp of the most recent release (any channel).",
+              "type": "string",
+              "format": "date-time"
+            },
+            "last_commit_at": {
+              "description": "Timestamp of the most recent commit on the default branch.",
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
+        "scan_cadence_days": {
+          "description": "Days between scans for this tool. Set by the scanner based on `score` (very-active=1, active=7, maintained=30, slow/stale=90 — guideline only). Not enum-locked: the recommendation engine (#404) may refine.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        },
+        "scanned_at": {
+          "description": "When the scanner last produced this snapshot. Consumers can compare against `scan_cadence_days` to detect stale data.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "validation_tiers": {
+      "description": "Per-tool documentation of which verification tiers (1-4) the install methods support, mirroring the 4-tier model in `lib/base/checksum-verification.sh`. Tier 1 = signatures (GPG/sigstore), Tier 2 = pinned checksums, Tier 3 = published checksums, Tier 4 = TOFU. The actual per-method encoding lives on `install_methods[].verification` in version files; this object is the catalog-level summary so a recommender can answer 'does this tool support Tier 2 verification?' without scanning every version.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tier1": { "$ref": "#/$defs/TierSummary" },
+        "tier2": { "$ref": "#/$defs/TierSummary" },
+        "tier3": { "$ref": "#/$defs/TierSummary" },
+        "tier4": { "$ref": "#/$defs/TierSummary" }
+      }
+    },
+    "default_version": {
+      "description": "The version stibbons selects when no version is requested. Free-form string so partial versions (e.g., Python `3.12`) are allowed alongside exact pins.",
+      "type": "string",
+      "minLength": 1
+    },
+    "minimum_recommended": {
+      "description": "Lowest version stibbons will offer when recommending. Versions older than this are still installable on explicit request, but excluded from defaults and warnings flagged.",
+      "type": "string",
+      "minLength": 1
+    },
+    "channels": {
+      "description": "Named release channels the tool publishes (e.g., `stable`, `beta`, `nightly`). Keys are channel ids referenced from version files' `channel` field. Cross-reference enforcement is the consumer's job — JSON Schema only checks shape.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Human-readable summary of what this channel contains and its support guarantees.",
+            "type": "string",
+            "minLength": 1
+          },
+          "default": {
+            "description": "When true, this is the channel `default_version` resolves against. Exactly one channel should be marked default; not enforced by schema.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "ordering": {
+      "description": "Install-order constraints for this tool relative to other catalog tools. luggage's resolver topologically sorts using these arrays.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "must_install_before": {
+          "description": "Hard constraint: every listed tool id must be installed before this one. Cycles are rejected by the resolver.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolId" },
+          "uniqueItems": true
+        },
+        "should_install_before": {
+          "description": "Soft constraint: prefer to install the listed tool ids before this one, but the resolver may reorder to break cycles or honor scheduling.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolId" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "available": {
+      "description": "Catalog of versions known to this tool entry. The list is the source of truth for `luggage list-versions`. Each entry may carry `last_known_good_for` fossil records describing the most recent OS/distro version on which this tool version was tested before support was dropped.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["version"],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "description": "Version string. Must match the basename of a sibling `versions/<v>.json` file when one exists.",
+            "type": "string",
+            "minLength": 1
+          },
+          "last_known_good_for": {
+            "description": "Fossil map of distro id → highest distro version where this tool version was last tested working. Captures the moment a newer tool version dropped a distro so consumers can find the last working pair.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ToolId": {
+      "description": "Reference to another tool's `id`.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "TierSummary": {
+      "description": "Catalog-level note about whether a verification tier is available for this tool. Per-method specifics live on version files.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available"],
+      "properties": {
+        "available": {
+          "description": "True when at least one install method on at least one supported version uses this tier.",
+          "type": "boolean"
+        },
+        "notes": {
+          "description": "Free-form reviewer notes (e.g., upstream signing key URL, reasons a tier is unavailable).",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_tool",
+  "version": "1.0.0",
+  "released": "2026-03-12",
+  "channel": "stable",
+  "support_matrix": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "status": "supported"
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "arm64",
+      "status": "supported"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.21",
+      "arch": "amd64",
+      "status": "untested"
+    }
+  ],
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-04-22T13:14:15Z",
+      "ci_run": "https://github.com/joshjhall/containers-db/actions/runs/0",
+      "result": "pass"
+    }
+  ],
+  "install_methods": [
+    {
+      "name": "tarball",
+      "platform": {
+        "os": ["debian", "ubuntu"],
+        "arch": ["amd64", "arm64"]
+      },
+      "verification": {
+        "tier": 3,
+        "algorithm": "sha256",
+        "checksum_url_template": "https://example.invalid/sample/{version}/SHA256SUMS"
+      },
+      "source_url_template": "https://example.invalid/sample/{version}/sample-{version}-linux-{arch}.tar.gz",
+      "post_install": [
+        {
+          "kind": "command",
+          "command": "/usr/local/bin/sample",
+          "args": ["--self-test"]
+        }
+      ],
+      "system_packages": {
+        "debian": ["ca-certificates"],
+        "ubuntu": ["ca-certificates"]
+      }
+    }
+  ],
+  "uninstall": {
+    "commands": ["rm -f /usr/local/bin/sample"]
+  },
+  "metadata": {
+    "added_at": "2026-04-25T00:00:00Z",
+    "updated_at": "2026-04-25T00:00:00Z",
+    "schema_version": 1
+  }
+}

@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joshjhall/containers-db/schema/version.schema.json",
+  "title": "ToolVersion",
+  "description": "Per-version installation and support data for a tool. Lives at `tools/<tool_id>/versions/<version>.json`. The schema captures three intentionally separate concerns: (1) `support_matrix` — what we *claim* runs; (2) `tested[]` — what CI has *evidenced*; (3) `install_methods[]` — *how* to install. The claim/evidence split is deliberate per the catalog design memo and must not be conflated.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "tool",
+    "version",
+    "install_methods",
+    "metadata"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "description": "Schema version for this version document. Bumped on breaking shape changes; consumers reject unknown versions.",
+      "const": 1
+    },
+    "tool": {
+      "description": "Tool id this version belongs to. Must match the parent directory name (`tools/<tool>/versions/`) and the `id` field of the corresponding tool index.",
+      "$ref": "#/$defs/ToolId"
+    },
+    "version": {
+      "description": "Version string. Must match the file basename (`<version>.json`). Free-form so partial versions like Python `3.12` are allowed.",
+      "type": "string",
+      "minLength": 1
+    },
+    "released": {
+      "description": "Upstream release date (calendar date in the project's timezone — exact-time precision not required).",
+      "type": "string",
+      "format": "date"
+    },
+    "channel": {
+      "description": "Release channel id this version belongs to. Must reference a channel declared on the parent tool's `channels` map; cross-ref enforcement is the consumer's job.",
+      "type": "string",
+      "minLength": 1
+    },
+    "support_matrix": {
+      "description": "CLAIM: which OS/version/arch combinations we *say* this tool version runs on. Authoritative for stibbons recommendation and luggage `resolve` output. Distinct from `tested[]`, which is observational evidence.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/SupportEntry" }
+    },
+    "tested": {
+      "description": "EVIDENCE: CI run records that demonstrate this version was actually exercised on a given OS/version/arch. Each entry pins to a CI run URL and a result so claims can be audited. May be empty during initial catalog population.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/TestEntry" }
+    },
+    "install_methods": {
+      "description": "Ordered list of install strategies. luggage walks them in array order, picking the first whose `platform` predicate matches the target host. At least one method is required.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/InstallMethod" }
+    },
+    "uninstall": {
+      "description": "Optional inverse of install — commands luggage runs to remove this tool version. Best-effort; some tools have no clean uninstall.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "description": "Shell command strings executed in order. Each runs in a clean shell with the tool's environment exported.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "metadata": {
+      "description": "Bookkeeping. `added_at` records when this entry was first written to the catalog; `updated_at` is bumped by every scanner-driven edit.",
+      "type": "object",
+      "required": ["added_at", "schema_version"],
+      "additionalProperties": false,
+      "properties": {
+        "added_at": {
+          "description": "When this version entry was first added to the catalog.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "description": "When this version entry was last modified by a scanner or hand-edit.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "schema_version": {
+          "description": "Echo of the document `schemaVersion` so changelog tooling can detect schema drift on a single field.",
+          "const": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ToolId": {
+      "description": "Stable, lowercase, snake-case tool slug.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "Distro": {
+      "description": "OS / distribution identifier. Free-form string so non-Linux targets can be added later (e.g., `darwin`, `windows`). Common Linux values: `debian`, `ubuntu`, `alpine`, `rhel`, `fedora`, `arch`.",
+      "type": "string",
+      "minLength": 1
+    },
+    "Arch": {
+      "description": "CPU architecture. Common values: `amd64`, `arm64`, `armv7`, `riscv64`. Other values allowed for forward compatibility.",
+      "type": "string",
+      "minLength": 1
+    },
+    "SupportEntry": {
+      "description": "One row of the support matrix — a (distro, distro version, arch) triple plus a status.",
+      "type": "object",
+      "required": ["os", "arch", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "os": {
+          "description": "Distro id. See `$defs/Distro`.",
+          "$ref": "#/$defs/Distro"
+        },
+        "os_version": {
+          "description": "Distro version (e.g., `12` for Debian Bookworm, `3.21` for Alpine, `9` for RHEL). Optional — when omitted, the row applies to all versions of `os`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "description": "CPU architecture. See `$defs/Arch`.",
+          "$ref": "#/$defs/Arch"
+        },
+        "status": {
+          "description": "Claim about this combination: `supported` (we will install and expect it to work), `unsupported` (we refuse), `untested` (we don't know).",
+          "type": "string",
+          "enum": ["supported", "unsupported", "untested"]
+        },
+        "notes": {
+          "description": "Free-form reviewer notes (e.g., known caveats, required system packages).",
+          "type": "string"
+        }
+      }
+    },
+    "TestEntry": {
+      "description": "One CI run providing evidence that a given (distro, distro version, arch) actually worked.",
+      "type": "object",
+      "required": ["os", "arch", "tested_at", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "os": { "$ref": "#/$defs/Distro" },
+        "os_version": {
+          "description": "Distro version under test. Optional but strongly recommended for evidence rows.",
+          "type": "string"
+        },
+        "arch": { "$ref": "#/$defs/Arch" },
+        "tested_at": {
+          "description": "When the CI run completed.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "ci_run": {
+          "description": "URL of the CI run that produced this evidence (e.g., GitHub Actions run URL).",
+          "type": "string",
+          "format": "uri"
+        },
+        "result": {
+          "description": "Outcome of the run for this combination.",
+          "type": "string",
+          "enum": ["pass", "fail", "skip"]
+        },
+        "notes": {
+          "description": "Free-form notes (e.g., flake reason for `fail`, why `skip`).",
+          "type": "string"
+        }
+      }
+    },
+    "InstallMethod": {
+      "description": "One way to install this version. luggage selects the first method whose `platform` matches and whose `verification` tier is acceptable to the active policy.",
+      "type": "object",
+      "required": ["name", "verification"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Method identifier (e.g., `rustup`, `apt`, `tarball`, `script`). Used in luggage logs and error messages.",
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "description": "Predicate restricting which hosts this method applies to. Omit to mean any platform. luggage AND-combines all listed fields. String values match exactly; arrays match if the host's value is in the array.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "os": {
+              "description": "Distro id or array of ids this method targets.",
+              "oneOf": [
+                { "$ref": "#/$defs/Distro" },
+                {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/Distro" },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              ]
+            },
+            "os_version": {
+              "description": "Distro version or array of versions this method targets. Compared as strings.",
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              ]
+            },
+            "arch": {
+              "description": "CPU architecture or array of architectures this method targets.",
+              "oneOf": [
+                { "$ref": "#/$defs/Arch" },
+                {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/Arch" },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              ]
+            }
+          }
+        },
+        "verification": {
+          "description": "Download-verification configuration. Carries the 4-tier model from `lib/base/checksum-verification.sh`. This document declares the *shape* of the field; the per-tier conditional `required` rules (e.g., Tier 2 requires `pinned_checksum`) are layered on by issue #402.",
+          "type": "object",
+          "required": ["tier"],
+          "unevaluatedProperties": false,
+          "properties": {
+            "tier": {
+              "description": "Verification tier: 1 = cryptographic signature (GPG/sigstore), 2 = pinned checksum baked into this file, 3 = checksum fetched from the publisher at install time, 4 = calculated TOFU (no verification, security warning required).",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "algorithm": {
+              "description": "Verification algorithm. Tier 1 uses `gpg` or `sigstore`; Tiers 2-3 use `sha256` or `sha512`; Tier 4 typically `sha256` for the TOFU record.",
+              "type": "string",
+              "enum": ["sha256", "sha512", "gpg", "sigstore"]
+            },
+            "pinned_checksum": {
+              "description": "Tier 2: hex-encoded checksum baked into this version file. Audited via git review.",
+              "type": "string",
+              "pattern": "^[0-9a-f]+$",
+              "minLength": 32
+            },
+            "checksum_url_template": {
+              "description": "Tier 3: URL template the publisher serves the checksum at. Same `{version}` / `{arch}` / `{os}` placeholders as `source_url_template`.",
+              "type": "string",
+              "minLength": 1
+            },
+            "gpg_key_url": {
+              "description": "Tier 1 (GPG): URL of the publisher's public key.",
+              "type": "string",
+              "format": "uri"
+            },
+            "signature_url_template": {
+              "description": "Tier 1 (GPG): URL template for the detached signature corresponding to the downloaded artifact.",
+              "type": "string",
+              "minLength": 1
+            },
+            "sigstore_identity": {
+              "description": "Tier 1 (sigstore): expected signing identity (cosign `--certificate-identity`).",
+              "type": "string",
+              "minLength": 1
+            },
+            "sigstore_issuer": {
+              "description": "Tier 1 (sigstore): expected OIDC issuer (cosign `--certificate-oidc-issuer`).",
+              "type": "string",
+              "format": "uri"
+            },
+            "tofu": {
+              "description": "Tier 4: explicit acknowledgment that no upstream verification exists. Setting this to true is required for Tier 4 entries; consumers must surface a security warning.",
+              "type": "boolean"
+            }
+          }
+        },
+        "source_url_template": {
+          "description": "URL template for the artifact to download. Supports `{version}`, `{arch}`, `{os}`, `{os_version}` placeholders, resolved by the consumer at install time.",
+          "type": "string",
+          "minLength": 1
+        },
+        "invoke": {
+          "description": "How to run an installer artifact (e.g., rustup-init script). Omit for plain tarballs that luggage extracts directly.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "description": "Argument vector passed to the installer.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "env": {
+              "description": "Environment variables exported for the installer process.",
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        },
+        "post_install": {
+          "description": "Steps run after the primary install succeeds (e.g., `rustup component add`, capability tweaks). Each entry is a structured step rather than a raw shell line so luggage can sandbox / audit them.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "description": "Step type. `command` runs a single binary with args; `cargo_install` is shorthand for cargo subcommand installs; `component_add` is shorthand for `rustup component add`.",
+                "type": "string",
+                "enum": ["command", "cargo_install", "component_add"]
+              },
+              "command": {
+                "description": "For `kind: command` — binary to run.",
+                "type": "string",
+                "minLength": 1
+              },
+              "args": {
+                "description": "Argument vector for `kind: command`.",
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "package": {
+                "description": "For `kind: cargo_install` — crate name.",
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "description": "For `kind: cargo_install` — crate version (must be exact per the cargo-install policy in CLAUDE.md).",
+                "type": "string",
+                "minLength": 1
+              },
+              "component": {
+                "description": "For `kind: component_add` — rustup component name.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "system_packages": {
+          "description": "OS packages required before this install method runs, keyed by distro id. Values are arrays of package names native to that distro's package manager. luggage installs these via the host's package manager before invoking the method.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  }
+}

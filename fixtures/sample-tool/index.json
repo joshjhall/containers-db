@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "sample_tool",
+  "display_name": "Sample Tool",
+  "kind": "cli",
+  "homepage": "https://example.invalid/sample",
+  "source_repo": "https://example.invalid/sample/repo",
+  "license": "MIT",
+  "activity": {
+    "score": "maintained",
+    "signals": {
+      "releases_last_90d": 2,
+      "commits_last_90d": 14,
+      "active_maintainers": 3,
+      "open_advisories": 0,
+      "last_release_at": "2026-03-12T00:00:00Z",
+      "last_commit_at": "2026-04-20T00:00:00Z"
+    },
+    "scan_cadence_days": 30,
+    "scanned_at": "2026-04-25T00:00:00Z"
+  },
+  "validation_tiers": {
+    "tier3": {
+      "available": true,
+      "notes": "Publisher serves SHA256SUMS at the release URL."
+    },
+    "tier4": {
+      "available": false
+    }
+  },
+  "default_version": "1.0.0",
+  "minimum_recommended": "1.0.0",
+  "channels": {
+    "stable": {
+      "description": "Production-grade releases.",
+      "default": true
+    }
+  },
+  "ordering": {
+    "must_install_before": [],
+    "should_install_before": []
+  },
+  "available": [
+    {
+      "version": "1.0.0"
+    }
+  ]
+}

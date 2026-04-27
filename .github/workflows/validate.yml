@@ -1,0 +1,74 @@
+name: Validate schemas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-schemas:
+    name: ajv validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ajv-cli
+        run: npm install --no-save ajv-cli@5.0.0 ajv-formats@3.0.1
+
+      - name: Compile tool schema
+        run: |
+          npx --no-install ajv compile \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/tool.schema.json
+
+      - name: Compile version schema
+        run: |
+          npx --no-install ajv compile \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/version.schema.json
+
+      - name: Validate sample-tool index against tool schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/tool.schema.json \
+            -d fixtures/sample-tool/index.json
+
+      - name: Validate sample-tool versions against version schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/version.schema.json \
+            -d "fixtures/sample-tool/versions/*.json"
+
+      - name: Negative test — broken fixture must fail validation
+        run: |
+          set +e
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/version.schema.json \
+            -d fixtures/_negative/missing-required.json
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::Negative fixture passed validation — schema is too permissive"
+            exit 1
+          fi
+          echo "Negative fixture correctly rejected (ajv exit $rc)"
