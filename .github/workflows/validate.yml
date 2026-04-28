@@ -57,6 +57,22 @@ jobs:
             -s schema/version.schema.json \
             -d "fixtures/sample-tool/versions/*.json"
 
+      - name: Validate rust tool index against tool schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/tool.schema.json \
+            -d tools/rust/index.json
+
+      - name: Validate rust version files against version schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/version.schema.json \
+            -d "tools/rust/versions/*.json"
+
       - name: Negative test — broken fixture must fail validation
         run: |
           set +e
