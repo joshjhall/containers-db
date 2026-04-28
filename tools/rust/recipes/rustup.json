@@ -1,0 +1,63 @@
+{
+  "_comment": "Human-reference recipes for rust install_methods. NOT machine-resolved: the catalog has no $ref-style include mechanism, so per-version files inline copies of these objects into their install_methods array. Edit a recipe here, then propagate to every versions/<v>.json. The {rustup_target} placeholder is luggage-resolved at install time (see follow-up issue: placeholder vocabulary) — for v0.1.0 it is a free string in the URL templates.",
+  "rustup-init-gnu": {
+    "name": "rustup-init",
+    "platform": {
+      "os": ["debian", "ubuntu", "rhel"],
+      "arch": ["amd64", "arm64"]
+    },
+    "verification": {
+      "tier": 3,
+      "algorithm": "sha256",
+      "checksum_url_template": "https://static.rust-lang.org/rustup/dist/{rustup_target}/rustup-init.sha256"
+    },
+    "source_url_template": "https://static.rust-lang.org/rustup/dist/{rustup_target}/rustup-init",
+    "invoke": {
+      "args": ["-y", "--default-toolchain", "{version}", "--profile", "default"],
+      "env": {
+        "CARGO_HOME": "/cache/cargo",
+        "RUSTUP_HOME": "/cache/rustup"
+      }
+    },
+    "post_install": [
+      { "kind": "component_add", "component": "rust-src" },
+      { "kind": "component_add", "component": "rust-analyzer" },
+      { "kind": "component_add", "component": "clippy" },
+      { "kind": "component_add", "component": "rustfmt" }
+    ],
+    "system_packages": {
+      "debian": ["ca-certificates", "gcc", "libc6-dev"],
+      "ubuntu": ["ca-certificates", "gcc", "libc6-dev"],
+      "rhel": ["ca-certificates", "gcc", "glibc-devel"]
+    }
+  },
+  "rustup-init-musl": {
+    "name": "rustup-init",
+    "platform": {
+      "os": "alpine",
+      "arch": ["amd64", "arm64"]
+    },
+    "verification": {
+      "tier": 3,
+      "algorithm": "sha256",
+      "checksum_url_template": "https://static.rust-lang.org/rustup/dist/{rustup_target}/rustup-init.sha256"
+    },
+    "source_url_template": "https://static.rust-lang.org/rustup/dist/{rustup_target}/rustup-init",
+    "invoke": {
+      "args": ["-y", "--default-toolchain", "{version}", "--profile", "default"],
+      "env": {
+        "CARGO_HOME": "/cache/cargo",
+        "RUSTUP_HOME": "/cache/rustup"
+      }
+    },
+    "post_install": [
+      { "kind": "component_add", "component": "rust-src" },
+      { "kind": "component_add", "component": "rust-analyzer" },
+      { "kind": "component_add", "component": "clippy" },
+      { "kind": "component_add", "component": "rustfmt" }
+    ],
+    "system_packages": {
+      "alpine": ["ca-certificates", "gcc", "musl-dev"]
+    }
+  }
+}
