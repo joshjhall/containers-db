@@ -73,18 +73,29 @@ jobs:
             -s schema/version.schema.json \
             -d "tools/rust/versions/*.json"
 
-      - name: Negative test — broken fixture must fail validation
+      - name: Validate tier example fixtures against version schema
         run: |
-          set +e
           npx --no-install ajv validate \
             --spec=draft2020 \
             -c ajv-formats \
             -s schema/version.schema.json \
-            -d fixtures/_negative/missing-required.json
-          rc=$?
+            -d "fixtures/tier*-example.json"
+
+      - name: Negative test — broken fixtures must each fail validation
+        run: |
           set -e
-          if [ "$rc" -eq 0 ]; then
-            echo "::error::Negative fixture passed validation — schema is too permissive"
-            exit 1
-          fi
-          echo "Negative fixture correctly rejected (ajv exit $rc)"
+          for fixture in fixtures/_negative/*.json; do
+            set +e
+            npx --no-install ajv validate \
+              --spec=draft2020 \
+              -c ajv-formats \
+              -s schema/version.schema.json \
+              -d "$fixture"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              echo "::error::Negative fixture $fixture passed validation — schema is too permissive"
+              exit 1
+            fi
+            echo "Negative fixture $fixture correctly rejected (ajv exit $rc)"
+          done

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_bad",
+  "version": "1.0.0",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "verification": {
+        "tier": 3,
+        "algorithm": "sha256",
+        "checksum_url_template": "https://example.invalid/sample/1.0.0/SHA256SUMS",
+        "pinned_checksum": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      },
+      "source_url_template": "https://example.invalid/sample/1.0.0.tar.gz"
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}

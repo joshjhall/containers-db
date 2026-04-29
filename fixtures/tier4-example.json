@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_tofu",
+  "version": "0.1.0",
+  "released": "2026-04-01",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "platform": {
+        "os": ["debian", "ubuntu"],
+        "arch": ["amd64"]
+      },
+      "verification": {
+        "tier": 4,
+        "algorithm": "sha256",
+        "tofu": true
+      },
+      "source_url_template": "https://example.invalid/sample-tofu/{version}/sample-{version}-linux-{arch}.tar.gz",
+      "system_packages": {
+        "debian": ["ca-certificates"],
+        "ubuntu": ["ca-certificates"]
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "updated_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}
