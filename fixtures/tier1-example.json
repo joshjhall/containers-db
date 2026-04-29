@@ -18,10 +18,10 @@
         "signature_url_template": "https://example.invalid/sample-signed/{version}/sample-{version}-linux-{arch}.tar.gz.asc"
       },
       "source_url_template": "https://example.invalid/sample-signed/{version}/sample-{version}-linux-{arch}.tar.gz",
-      "system_packages": {
-        "debian": ["ca-certificates", "gnupg"],
-        "ubuntu": ["ca-certificates", "gnupg"]
-      }
+      "dependencies": [
+        { "tool": "ca_certificates" },
+        { "tool": "gnupg" }
+      ]
     }
   ],
   "metadata": {

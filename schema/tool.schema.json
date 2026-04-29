@@ -2,16 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/joshjhall/containers-db/schema/tool.schema.json",
   "title": "Tool",
-  "description": "Top-level metadata for a tool in the containers-db catalog. Mirrors the contents of `tools/<id>/index.json`. One file per tool. Per-version data lives in sibling `versions/<v>.json` files validated by version.schema.json.",
+  "description": "Top-level metadata for a tool in the containers-db catalog. Mirrors the contents of `tools/<id>/index.json`. One file per tool. Per-version data lives in sibling `versions/<v>.json` files validated by version.schema.json. The `kind: system_package` variant is a tracking record only — it carries a `system_package` sub-object instead of `default_version`/`available` (no `versions/` subdirectory) and is referenced from version files via `Dependency.tool`.",
   "type": "object",
   "required": [
     "schemaVersion",
     "id",
     "display_name",
     "kind",
-    "activity",
-    "default_version",
-    "available"
+    "activity"
   ],
   "additionalProperties": false,
   "properties": {
@@ -32,9 +30,9 @@
       "minLength": 1
     },
     "kind": {
-      "description": "Coarse category. `language` covers programming-language toolchains (Rust, Python, Node). `cli` is end-user binaries (`gh`, `just`). `library` is build-time/runtime libs without an entry-point binary. `runtime` covers things like JVM/V8 that host other code. `service` is long-running daemons (Postgres, Redis).",
+      "description": "Coarse category. `language` covers programming-language toolchains (Rust, Python, Node). `cli` is end-user binaries (`gh`, `just`). `library` is build-time/runtime libs without an entry-point binary. `runtime` covers things like JVM/V8 that host other code. `service` is long-running daemons (Postgres, Redis). `system_package` is a tracking record for an OS package the host package manager owns (apt/apk/yum); the catalog records its existence and cross-distro name map but never `picks` a version.",
       "type": "string",
-      "enum": ["language", "cli", "library", "runtime", "service"]
+      "enum": ["language", "cli", "library", "runtime", "service", "system_package"]
     },
     "homepage": {
       "description": "Canonical project homepage URL. Used by stibbons in `info` output.",
@@ -131,8 +129,13 @@
         "tier4": { "$ref": "#/$defs/TierSummary" }
       }
     },
+    "version_style": {
+      "description": "How this tool's version strings should be parsed. `semver` is the implicit default when omitted; `prefix` is for tools that use a leading `v` or similar token; `calver` is for date-derived schemes; `opaque` disables comparator parsing entirely (constraints involving this tool can only check string equality).",
+      "type": "string",
+      "enum": ["semver", "prefix", "calver", "opaque"]
+    },
     "default_version": {
-      "description": "The version stibbons selects when no version is requested. Free-form string so partial versions (e.g., Python `3.12`) are allowed alongside exact pins.",
+      "description": "The version stibbons selects when no version is requested. Free-form string so partial versions (e.g., Python `3.12`) are allowed alongside exact pins. Required for every kind except `system_package` (the host package manager picks).",
       "type": "string",
       "minLength": 1
     },
@@ -180,8 +183,59 @@
         }
       }
     },
+    "alternatives": {
+      "description": "Advisory pointers to related tools (similar capabilities, partial overlap, succession). Never auto-substituted by the resolver — surfaces in remediation menus and `stibbons info` output only. Direction is from this tool TO the listed alternative; `successor` means `the listed tool came after this one`.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["tool", "relationship"],
+        "additionalProperties": false,
+        "properties": {
+          "tool": { "$ref": "#/$defs/ToolId" },
+          "relationship": {
+            "description": "Nature of the relationship. `similar` = same problem solved with comparable tradeoffs; `overlaps` = partial functional overlap; `successor` = supersedes this tool; `predecessor` = this tool supersedes the listed one.",
+            "type": "string",
+            "enum": ["similar", "overlaps", "successor", "predecessor"]
+          },
+          "scope": {
+            "description": "Optional narrowing of where the relationship applies (e.g., `linux-only`, `cli-only`). Free-form.",
+            "type": "string",
+            "minLength": 1
+          },
+          "notes": {
+            "description": "Free-form reviewer notes for the remediation menu.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "system_package": {
+      "description": "Cross-distro identification for a `kind: system_package` tracking record. Maps each supported distro to the package name that distro's package manager uses. luggage looks this up at install time when a Dependency targets this entry. Only meaningful when `kind == system_package` — the schema's `allOf` block forbids the field on other kinds and requires it here. Trust source is intentionally absent: apt/apk/yum's signed-repo configuration on the host is the trust root, not the catalog.",
+      "type": "object",
+      "required": ["platforms"],
+      "additionalProperties": false,
+      "properties": {
+        "platforms": {
+          "description": "Map of distro id → per-distro package name. Distros not present in the map are unsupported for this system_package; consumer Dependency entries that narrow `platforms` to an unmapped distro are rejected by the cross-ref validator.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "Package name as it appears to the distro's package manager (e.g., `libc6-dev` on Debian, `glibc-devel` on RHEL).",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
     "available": {
-      "description": "Catalog of versions known to this tool entry. The list is the source of truth for `luggage list-versions`. Each entry may carry `last_known_good_for` fossil records describing the most recent OS/distro version on which this tool version was tested before support was dropped.",
+      "description": "Catalog of versions known to this tool entry. The list is the source of truth for `luggage list-versions`. Each entry may carry `last_known_good_for` fossil records describing the most recent OS/distro version on which this tool version was tested before support was dropped. Required for every kind except `system_package` (host package manager owns version selection, no per-version files exist).",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -206,6 +260,27 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "kind": { "const": "system_package" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "description": "system_package: tracking record only. Requires `system_package`; forbids `default_version` and `available` (no version selection, no versions/ subdirectory).",
+        "required": ["system_package"],
+        "allOf": [
+          { "not": { "required": ["default_version"] } },
+          { "not": { "required": ["available"] } }
+        ]
+      },
+      "else": {
+        "description": "Standard tools (language/cli/library/runtime/service): require `default_version` + `available`; forbid the `system_package` sub-object (reserved for tracking records).",
+        "required": ["default_version", "available"],
+        "not": { "required": ["system_package"] }
+      }
+    }
+  ],
   "$defs": {
     "ToolId": {
       "description": "Reference to another tool's `id`.",

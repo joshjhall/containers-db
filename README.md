@@ -78,6 +78,86 @@ The claim/evidence split exists because shipping schedules force claims to
 move ahead of CI runs; without separate fields, every claim would either
 rot into a lie or block on CI.
 
+## Dependency model
+
+Dependencies in this catalog are **flat references**: every dependency
+points at another catalog tool by id. There are no string-typed package
+arrays — even OS packages like `gcc` and `ca-certificates` are
+first-class catalog entries with `kind: "system_package"`. That gives
+the future luggage resolver one shape to walk and one place to attach
+activity decay, advisory gating, and remediation menus.
+
+### Two levels of dependency
+
+A version file has two distinct dependency arrays. Both share the
+`Dependency` shape (`schema/version.schema.json#/$defs/Dependency`):
+
+| Field                                  | Level   | Meaning                                                                          |
+| -------------------------------------- | ------- | -------------------------------------------------------------------------------- |
+| `requires[]`                           | version | Compatibility expectations that must hold across **all** install methods         |
+| `install_methods[].dependencies[]`     | method  | Physical install chain for **this specific** install method on **this** platform |
+
+Use `requires[]` for facts like "this version of cargo_X needs rust >=
+1.8.5" — solver input that captures the diamond case where two install
+methods of two different tools both pull in the same dep at conflicting
+constraints. Use `install_methods[].dependencies[]` for the actual
+prerequisites the platform needs before luggage runs the method's
+fetch/extract/invoke steps (typically the system_package entries the
+host package manager will install).
+
+### `kind: "system_package"` entries
+
+A system_package catalog entry is a tracking record only. It carries:
+
+- `system_package.platforms` — a map of distro id → per-distro package
+  name (e.g., `libc_dev` maps `debian: libc6-dev`, `rhel: glibc-devel`).
+  luggage looks this up at install time when a Dependency targets the
+  entry.
+- `activity` — same scoring as any other tool, so a stale or compromised
+  system package decays the recommendation tier of everything that
+  depends on it.
+- `validation_tiers` — typically Tier 1 because distro archives are
+  GPG-signed by their respective archive keyrings.
+
+system_packages do **not** carry `default_version` or `available[]` —
+the host package manager (apt/apk/yum) owns version selection. The
+schema enforces this with a conditional `if/then/else` block on
+`tool.schema.json`.
+
+### Constraint is a guard, not a selector
+
+The catalog never **picks** a system_package version. apt does. The
+catalog only **refuses** when a known-bad version is in the resolver's
+view. That is why exact `version` pins on a Dependency targeting a
+`kind: "system_package"` are forbidden — only `version_constraint`
+expressions are allowed, and they act as guards (e.g. "refuse if
+glibc < 2.31"). This rule cannot be expressed in pure JSON Schema
+across files and is enforced by `scripts/validate-cross-refs.mjs`.
+
+The current comparator is a placeholder that only accepts the literal
+`*`. Real comparator wiring lands in a follow-up issue; the placeholder
+exists with a loud TODO and a CI assertion so production constraints
+cannot be silently parsed through it.
+
+### Deliberate handoff to apt
+
+Transitive system dependencies — what depends on glibc, what gets
+pulled in by `apt install gcc` — are left to the host package manager.
+The catalog tracks the direct edge ("rust depends on libc_dev"); apt
+pulls in libstdc++, gcc-runtime, and the rest. We rely on the distro
+security feeds (DSA / USN / RHSA) to cover transitive system libs;
+wiring those feeds into the resolver's advisory-gating policy is a
+separate piece of work, tracked as a follow-up.
+
+### Alternatives are advisory only
+
+A tool's `alternatives[]` array points at related tools (similar
+capabilities, partial overlap, succession). The resolver **never
+auto-substitutes** — alternatives surface only in remediation menus
+and `stibbons info` output. Auto-substitution would silently change
+what gets installed, which is the opposite of what a reproducible
+catalog is for.
+
 ## Snapshot pinning
 
 `snapshots/YYYY-MM-DD.json` (planned) freezes the catalog at a point in

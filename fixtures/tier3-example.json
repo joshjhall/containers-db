@@ -17,10 +17,9 @@
         "checksum_url_template": "https://example.invalid/sample-published/{version}/SHA256SUMS"
       },
       "source_url_template": "https://example.invalid/sample-published/{version}/sample-{version}-linux-{arch}.tar.gz",
-      "system_packages": {
-        "debian": ["ca-certificates"],
-        "ubuntu": ["ca-certificates"]
-      }
+      "dependencies": [
+        { "tool": "ca_certificates" }
+      ]
     }
   ],
   "metadata": {

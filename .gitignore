@@ -5,3 +5,7 @@ package.json
 
 # ajv cache
 .ajv-cache/
+
+# Claude Code per-session state and local settings
+.claude/memory/tmp/
+.claude/settings.local.json

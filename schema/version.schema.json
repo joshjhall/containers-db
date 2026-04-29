@@ -46,6 +46,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/TestEntry" }
     },
+    "requires": {
+      "description": "Version-level compatibility expectations that must hold across ALL install methods (e.g., `cargo_X needs rust >=1.8.5`, `python_3.13 needs openssl >=3`). Solver input — captures the diamond case where two install methods of two different tools both pull in the same dep at conflicting constraints. Distinct from `install_methods[].dependencies[]`, which is the physical install chain for one specific method on one specific platform.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Dependency" }
+    },
     "install_methods": {
       "description": "Ordered list of install strategies. luggage walks them in array order, picking the first whose `platform` predicate matches the target host. At least one method is required.",
       "type": "array",
@@ -106,7 +111,7 @@
       "minLength": 1
     },
     "SupportEntry": {
-      "description": "One row of the support matrix — a (distro, distro version, arch) triple plus a status.",
+      "description": "One row of the support matrix — a (distro, distro version, arch) triple plus a status. The remediation fields (`reason`, `tracking_url`, `recheck_at`) are intended for `status: unsupported` rows so the resolver can surface why a combination was refused and when to revisit; populating them on `supported` or `untested` rows is allowed but unused by current consumers.",
       "type": "object",
       "required": ["os", "arch", "status"],
       "additionalProperties": false,
@@ -132,6 +137,21 @@
         "notes": {
           "description": "Free-form reviewer notes (e.g., known caveats, required system packages).",
           "type": "string"
+        },
+        "reason": {
+          "description": "Structured explanation for `status: unsupported`. Surfaced verbatim by the resolver's remediation menu (e.g., `upstream dropped armv7 in 1.95`, `glibc too old`).",
+          "type": "string",
+          "minLength": 1
+        },
+        "tracking_url": {
+          "description": "Link to an upstream issue, advisory, or PR documenting the unsupported state. Populated when there is something for a user to follow.",
+          "type": "string",
+          "format": "uri"
+        },
+        "recheck_at": {
+          "description": "Calendar date after which the catalog scanner should re-evaluate this row. Useful for time-bound unsupported reasons (e.g., `EOL distro version reached`).",
+          "type": "string",
+          "format": "date"
         }
       }
     },
@@ -165,6 +185,67 @@
         "notes": {
           "description": "Free-form notes (e.g., flake reason for `fail`, why `skip`).",
           "type": "string"
+        }
+      }
+    },
+    "Dependency": {
+      "description": "A typed reference to another catalog tool (typically `kind: system_package`) that must be present in the resolver's view of the install plan. Shared shape used by `requires[]` (version-level compatibility) and `install_methods[].dependencies[]` (method-level install chain). The `version` and `version_constraint` fields are mutually exclusive: `version` is an exact pin (forbidden when `tool` targets a `kind: system_package` entry — the host package manager picks, the catalog only guards via `version_constraint`); `version_constraint` is a comparator string parsed per the target's `version_style`. The system_package-pin rule cannot be enforced in pure JSON Schema across files and is checked by the cross-ref validator script.",
+      "type": "object",
+      "required": ["tool"],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "description": "Neither a pin nor a constraint — `take whatever the resolver picks`.",
+          "not": {
+            "anyOf": [
+              { "required": ["version"] },
+              { "required": ["version_constraint"] }
+            ]
+          }
+        },
+        {
+          "description": "Exact pin only.",
+          "required": ["version"],
+          "not": { "required": ["version_constraint"] }
+        },
+        {
+          "description": "Constraint only.",
+          "required": ["version_constraint"],
+          "not": { "required": ["version"] }
+        }
+      ],
+      "properties": {
+        "tool": {
+          "description": "Target tool's `id`. Must exist in the catalog (cross-ref validator enforces).",
+          "$ref": "#/$defs/ToolId"
+        },
+        "version": {
+          "description": "Exact version pin. Forbidden when the target tool's `kind` is `system_package` (the host package manager owns version selection — the catalog only guards via `version_constraint`). Enforced by the cross-ref validator script, not by JSON Schema, because `kind` lookup crosses files.",
+          "type": "string",
+          "minLength": 1
+        },
+        "version_constraint": {
+          "description": "Comparator expression (e.g., `>=1.8.5`, `~=2.4`). Parsed per the target tool's `version_style`. The placeholder comparator currently shipped only accepts the literal `*`; real comparator wiring lands in a follow-up issue.",
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "description": "When this dep is needed. `build` = present at install time only (compiler, header files); `runtime` = needed every time the tool runs; `both` (default) = needed throughout.",
+          "type": "string",
+          "enum": ["build", "runtime", "both"],
+          "default": "both"
+        },
+        "required": {
+          "description": "Whether the resolver must refuse to install when the dep is unmet (`true`, default) or merely warn (`false`). Soft deps surface in stibbons output but do not block.",
+          "type": "boolean",
+          "default": true
+        },
+        "platforms": {
+          "description": "Optional narrowing — restrict this Dependency to the listed distros. When a Dependency targets a `kind: system_package`, every listed platform must appear in the target's `system_package.platforms` map; the cross-ref validator enforces this.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Distro" },
+          "minItems": 1,
+          "uniqueItems": true
         }
       }
     },
@@ -433,14 +514,10 @@
             }
           }
         },
-        "system_packages": {
-          "description": "OS packages required before this install method runs, keyed by distro id. Values are arrays of package names native to that distro's package manager. luggage installs these via the host's package manager before invoking the method.",
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": { "type": "string", "minLength": 1 },
-            "uniqueItems": true
-          }
+        "dependencies": {
+          "description": "Method-level install chain: physical packages and tools that must be installed BEFORE this install method runs. Each entry references another catalog tool (typically `kind: system_package`) by id. Distinct from the version-level `requires[]`, which expresses compatibility expectations across all install methods rather than what to fetch for THIS one. Replaces the pre-#6 `system_packages: { distro: [strings] }` shape, which is gone — files carrying `system_packages` are rejected by `additionalProperties: false`.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Dependency" }
         }
       }
     }

@@ -45,11 +45,11 @@
         { "kind": "component_add", "component": "clippy" },
         { "kind": "component_add", "component": "rustfmt" }
       ],
-      "system_packages": {
-        "debian": ["ca-certificates", "gcc", "libc6-dev"],
-        "ubuntu": ["ca-certificates", "gcc", "libc6-dev"],
-        "rhel": ["ca-certificates", "gcc", "glibc-devel"]
-      }
+      "dependencies": [
+        { "tool": "ca_certificates" },
+        { "tool": "gcc" },
+        { "tool": "libc_dev" }
+      ]
     },
     {
       "name": "rustup-init",
@@ -76,9 +76,11 @@
         { "kind": "component_add", "component": "clippy" },
         { "kind": "component_add", "component": "rustfmt" }
       ],
-      "system_packages": {
-        "alpine": ["ca-certificates", "gcc", "musl-dev"]
-      }
+      "dependencies": [
+        { "tool": "ca_certificates" },
+        { "tool": "gcc" },
+        { "tool": "musl_dev" }
+      ]
     }
   ],
   "metadata": {
