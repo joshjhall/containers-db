@@ -22,6 +22,15 @@
       "os_version": "3.21",
       "arch": "amd64",
       "status": "untested"
+    },
+    {
+      "os": "rhel",
+      "os_version": "8",
+      "arch": "amd64",
+      "status": "unsupported",
+      "reason": "Requires glibc >= 2.32; RHEL 8 ships 2.28.",
+      "tracking_url": "https://example.invalid/sample/issues/42",
+      "recheck_at": "2026-10-01"
     }
   ],
   "tested": [
@@ -33,6 +42,9 @@
       "ci_run": "https://github.com/joshjhall/containers-db/actions/runs/0",
       "result": "pass"
     }
+  ],
+  "requires": [
+    { "tool": "gcc", "version_constraint": "*", "purpose": "build" }
   ],
   "install_methods": [
     {
@@ -54,10 +66,9 @@
           "args": ["--self-test"]
         }
       ],
-      "system_packages": {
-        "debian": ["ca-certificates"],
-        "ubuntu": ["ca-certificates"]
-      }
+      "dependencies": [
+        { "tool": "ca_certificates" }
+      ]
     }
   ],
   "uninstall": {
@@ -69,3 +80,4 @@
     "schema_version": 1
   }
 }
+

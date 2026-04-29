@@ -17,10 +17,9 @@
         "pinned_checksum": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
       },
       "source_url_template": "https://example.invalid/sample-pinned/{version}/sample-{version}-linux-{arch}.tar.gz",
-      "system_packages": {
-        "debian": ["ca-certificates"],
-        "ubuntu": ["ca-certificates"]
-      }
+      "dependencies": [
+        { "tool": "ca_certificates" }
+      ]
     }
   ],
   "metadata": {

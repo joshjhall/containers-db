@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_bad",
+  "version": "1.0.0",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "verification": {
+        "tier": 4,
+        "algorithm": "sha256",
+        "tofu": true
+      },
+      "source_url_template": "https://example.invalid/sample-bad/1.0.0.tar.gz",
+      "dependencies": [
+        { "tool": "musl_dev", "platforms": ["debian"] }
+      ]
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}

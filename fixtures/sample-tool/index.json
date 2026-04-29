@@ -28,6 +28,7 @@
       "available": false
     }
   },
+  "version_style": "semver",
   "default_version": "1.0.0",
   "minimum_recommended": "1.0.0",
   "channels": {
@@ -40,9 +41,18 @@
     "must_install_before": [],
     "should_install_before": []
   },
+  "alternatives": [
+    {
+      "tool": "gcc",
+      "relationship": "overlaps",
+      "scope": "build-time",
+      "notes": "Sample fixture entry — demonstrates the alternatives shape; never auto-substituted."
+    }
+  ],
   "available": [
     {
       "version": "1.0.0"
     }
   ]
 }
+

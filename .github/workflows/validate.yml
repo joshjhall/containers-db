@@ -65,6 +65,18 @@ jobs:
             -s schema/tool.schema.json \
             -d tools/rust/index.json
 
+      - name: Validate system_package tool indexes against tool schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/tool.schema.json \
+            -d "tools/gcc/index.json" \
+            -d "tools/libc_dev/index.json" \
+            -d "tools/musl_dev/index.json" \
+            -d "tools/ca_certificates/index.json" \
+            -d "tools/gnupg/index.json"
+
       - name: Validate rust version files against version schema
         run: |
           npx --no-install ajv validate \
@@ -81,21 +93,28 @@ jobs:
             -s schema/version.schema.json \
             -d "fixtures/tier*-example.json"
 
+      - name: Cross-reference + comparator-placeholder check
+        run: node scripts/validate-cross-refs.mjs
+
       - name: Negative test — broken fixtures must each fail validation
         run: |
           set -e
           for fixture in fixtures/_negative/*.json; do
+            ajv_rc=0
+            xref_rc=0
             set +e
             npx --no-install ajv validate \
               --spec=draft2020 \
               -c ajv-formats \
               -s schema/version.schema.json \
               -d "$fixture"
-            rc=$?
+            ajv_rc=$?
+            node scripts/validate-cross-refs.mjs --only "$fixture"
+            xref_rc=$?
             set -e
-            if [ "$rc" -eq 0 ]; then
-              echo "::error::Negative fixture $fixture passed validation — schema is too permissive"
+            if [ "$ajv_rc" -eq 0 ] && [ "$xref_rc" -eq 0 ]; then
+              echo "::error::Negative fixture $fixture passed both ajv AND cross-ref — schema/script is too permissive"
               exit 1
             fi
-            echo "Negative fixture $fixture correctly rejected (ajv exit $rc)"
+            echo "Negative fixture $fixture correctly rejected (ajv=$ajv_rc, xref=$xref_rc)"
           done

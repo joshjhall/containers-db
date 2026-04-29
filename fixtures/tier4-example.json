@@ -17,10 +17,9 @@
         "tofu": true
       },
       "source_url_template": "https://example.invalid/sample-tofu/{version}/sample-{version}-linux-{arch}.tar.gz",
-      "system_packages": {
-        "debian": ["ca-certificates"],
-        "ubuntu": ["ca-certificates"]
-      }
+      "dependencies": [
+        { "tool": "ca_certificates" }
+      ]
     }
   ],
   "metadata": {
