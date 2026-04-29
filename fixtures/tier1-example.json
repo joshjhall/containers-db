@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_signed",
+  "version": "1.0.0",
+  "released": "2026-04-01",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "platform": {
+        "os": ["debian", "ubuntu"],
+        "arch": ["amd64", "arm64"]
+      },
+      "verification": {
+        "tier": 1,
+        "algorithm": "gpg",
+        "gpg_key_url": "https://example.invalid/sample-signed/release-key.asc",
+        "signature_url_template": "https://example.invalid/sample-signed/{version}/sample-{version}-linux-{arch}.tar.gz.asc"
+      },
+      "source_url_template": "https://example.invalid/sample-signed/{version}/sample-{version}-linux-{arch}.tar.gz",
+      "system_packages": {
+        "debian": ["ca-certificates", "gnupg"],
+        "ubuntu": ["ca-certificates", "gnupg"]
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "updated_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}

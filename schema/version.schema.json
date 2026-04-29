@@ -223,7 +223,7 @@
           }
         },
         "verification": {
-          "description": "Download-verification configuration. Carries the 4-tier model from `lib/base/checksum-verification.sh`. This document declares the *shape* of the field; the per-tier conditional `required` rules (e.g., Tier 2 requires `pinned_checksum`) are layered on by issue #402.",
+          "description": "Download-verification configuration. Carries the 4-tier model from `lib/base/checksum-verification.sh` (Tier 1 cryptographic signature, Tier 2 pinned checksum baked into this file, Tier 3 publisher-served checksum, Tier 4 calculated TOFU). The per-tier conditional rules in `allOf` enforce that each tier carries exactly the fields that tier needs and no fields belonging to other tiers — see `docs/verification.md` for the field-mapping table.",
           "type": "object",
           "required": ["tier"],
           "unevaluatedProperties": false,
@@ -235,7 +235,7 @@
               "maximum": 4
             },
             "algorithm": {
-              "description": "Verification algorithm. Tier 1 uses `gpg` or `sigstore`; Tiers 2-3 use `sha256` or `sha512`; Tier 4 typically `sha256` for the TOFU record.",
+              "description": "Verification algorithm. Tier 1 uses `gpg` or `sigstore`; Tiers 2-3 use `sha256` or `sha512`; Tier 4 (when present) records the algorithm of the TOFU digest, typically `sha256`.",
               "type": "string",
               "enum": ["sha256", "sha512", "gpg", "sigstore"]
             },
@@ -271,10 +271,104 @@
               "format": "uri"
             },
             "tofu": {
-              "description": "Tier 4: explicit acknowledgment that no upstream verification exists. Setting this to true is required for Tier 4 entries; consumers must surface a security warning.",
+              "description": "Tier 4: explicit acknowledgment that no upstream verification exists. Must be `true` on Tier 4 entries; consumers must surface a security warning when this is set.",
               "type": "boolean"
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "tier": { "const": 1 } },
+                "required": ["tier"]
+              },
+              "then": {
+                "description": "Tier 1: cryptographic signature. Requires `algorithm` ∈ {gpg, sigstore} plus the matching key/identity fields. Forbids tier 2/3/4 carriers.",
+                "required": ["algorithm"],
+                "properties": {
+                  "algorithm": { "enum": ["gpg", "sigstore"] }
+                },
+                "oneOf": [
+                  {
+                    "properties": { "algorithm": { "const": "gpg" } },
+                    "required": ["gpg_key_url", "signature_url_template"]
+                  },
+                  {
+                    "properties": { "algorithm": { "const": "sigstore" } },
+                    "required": ["sigstore_identity", "sigstore_issuer"]
+                  }
+                ],
+                "allOf": [
+                  { "not": { "required": ["pinned_checksum"] } },
+                  { "not": { "required": ["checksum_url_template"] } },
+                  { "not": { "required": ["tofu"] } }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": { "tier": { "const": 2 } },
+                "required": ["tier"]
+              },
+              "then": {
+                "description": "Tier 2: pinned checksum baked into this file. Requires `algorithm` ∈ {sha256, sha512} and `pinned_checksum`. Forbids tier 1/3/4 carriers.",
+                "required": ["algorithm", "pinned_checksum"],
+                "properties": {
+                  "algorithm": { "enum": ["sha256", "sha512"] }
+                },
+                "allOf": [
+                  { "not": { "required": ["checksum_url_template"] } },
+                  { "not": { "required": ["gpg_key_url"] } },
+                  { "not": { "required": ["signature_url_template"] } },
+                  { "not": { "required": ["sigstore_identity"] } },
+                  { "not": { "required": ["sigstore_issuer"] } },
+                  { "not": { "required": ["tofu"] } }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": { "tier": { "const": 3 } },
+                "required": ["tier"]
+              },
+              "then": {
+                "description": "Tier 3: publisher-served checksum. Requires `algorithm` ∈ {sha256, sha512} and `checksum_url_template`. Forbids tier 1/2/4 carriers.",
+                "required": ["algorithm", "checksum_url_template"],
+                "properties": {
+                  "algorithm": { "enum": ["sha256", "sha512"] }
+                },
+                "allOf": [
+                  { "not": { "required": ["pinned_checksum"] } },
+                  { "not": { "required": ["gpg_key_url"] } },
+                  { "not": { "required": ["signature_url_template"] } },
+                  { "not": { "required": ["sigstore_identity"] } },
+                  { "not": { "required": ["sigstore_issuer"] } },
+                  { "not": { "required": ["tofu"] } }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": { "tier": { "const": 4 } },
+                "required": ["tier"]
+              },
+              "then": {
+                "description": "Tier 4: calculated TOFU. Requires `tofu: true` (explicit acknowledgment). `algorithm`, when present, must be a hash function. Forbids tier 1/2/3 carriers.",
+                "required": ["tofu"],
+                "properties": {
+                  "tofu": { "const": true },
+                  "algorithm": { "enum": ["sha256", "sha512"] }
+                },
+                "allOf": [
+                  { "not": { "required": ["pinned_checksum"] } },
+                  { "not": { "required": ["checksum_url_template"] } },
+                  { "not": { "required": ["gpg_key_url"] } },
+                  { "not": { "required": ["signature_url_template"] } },
+                  { "not": { "required": ["sigstore_identity"] } },
+                  { "not": { "required": ["sigstore_issuer"] } }
+                ]
+              }
+            }
+          ]
         },
         "source_url_template": {
           "description": "URL template for the artifact to download. Supports `{version}`, `{arch}`, `{os}`, `{os_version}` placeholders, resolved by the consumer at install time.",

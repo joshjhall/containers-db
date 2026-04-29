@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_published",
+  "version": "0.9.3",
+  "released": "2026-04-01",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "platform": {
+        "os": ["debian", "ubuntu"],
+        "arch": ["amd64", "arm64"]
+      },
+      "verification": {
+        "tier": 3,
+        "algorithm": "sha256",
+        "checksum_url_template": "https://example.invalid/sample-published/{version}/SHA256SUMS"
+      },
+      "source_url_template": "https://example.invalid/sample-published/{version}/sample-{version}-linux-{arch}.tar.gz",
+      "system_packages": {
+        "debian": ["ca-certificates"],
+        "ubuntu": ["ca-certificates"]
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "updated_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}

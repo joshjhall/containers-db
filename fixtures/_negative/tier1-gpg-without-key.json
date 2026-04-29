@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_bad",
+  "version": "1.0.0",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "verification": {
+        "tier": 1,
+        "algorithm": "gpg"
+      },
+      "source_url_template": "https://example.invalid/sample/1.0.0.tar.gz"
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}
