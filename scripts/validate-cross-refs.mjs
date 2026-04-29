@@ -30,6 +30,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = process.cwd();
 
@@ -53,11 +54,11 @@ function readJson(path) {
 }
 
 // Build map: tool_id → { kind, system_package_platforms?, source_path }
-function loadCatalog() {
+export function loadCatalog(repoRoot = REPO_ROOT) {
   const catalog = new Map();
   const indexFiles = [
-    ...walk(join(REPO_ROOT, "tools"), (p) => basename(p) === "index.json"),
-    ...walk(join(REPO_ROOT, "fixtures"), (p) => basename(p) === "index.json"),
+    ...walk(join(repoRoot, "tools"), (p) => basename(p) === "index.json"),
+    ...walk(join(repoRoot, "fixtures"), (p) => basename(p) === "index.json"),
   ];
   for (const file of indexFiles) {
     let doc;
@@ -73,7 +74,7 @@ function loadCatalog() {
         doc.kind === "system_package"
           ? new Set(Object.keys(doc.system_package?.platforms ?? {}))
           : null,
-      source: relative(REPO_ROOT, file),
+      source: relative(repoRoot, file),
     });
   }
   return catalog;
@@ -91,7 +92,7 @@ function loadCatalog() {
 //   - Delete the `*`-only assertion.
 //   - Remove this TODO block.
 //   - The CI step that runs this script will continue to gate the catalog.
-function placeholderCompare(constraint, _targetVersionStyle) {
+export function placeholderCompare(constraint, _targetVersionStyle) {
   if (constraint === "*") return { ok: true };
   return {
     ok: false,
@@ -104,9 +105,9 @@ function placeholderCompare(constraint, _targetVersionStyle) {
 
 // All version-shaped files: tools/<id>/versions/*.json,
 // fixtures/sample-tool/versions/*.json, fixtures/tier*-example.json.
-function discoverVersionFiles() {
+export function discoverVersionFiles(repoRoot = REPO_ROOT) {
   const out = [];
-  for (const dir of [join(REPO_ROOT, "tools"), join(REPO_ROOT, "fixtures")]) {
+  for (const dir of [join(repoRoot, "tools"), join(repoRoot, "fixtures")]) {
     out.push(
       ...walk(dir, (p) => {
         const name = basename(p);
@@ -123,7 +124,7 @@ function discoverVersionFiles() {
   return out;
 }
 
-function* dependenciesOf(versionDoc) {
+export function* dependenciesOf(versionDoc) {
   for (const dep of versionDoc.requires ?? []) {
     yield { dep, location: "requires[]" };
   }
@@ -134,7 +135,7 @@ function* dependenciesOf(versionDoc) {
   }
 }
 
-function checkDependency({ dep, location }, fileLabel, catalog, errors) {
+export function checkDependency({ dep, location }, fileLabel, catalog, errors) {
   const target = catalog.get(dep.tool);
   if (!target) {
     errors.push(
@@ -173,7 +174,7 @@ function checkDependency({ dep, location }, fileLabel, catalog, errors) {
 
 // --- Main -------------------------------------------------------------------
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   let only = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--only") only = argv[++i];
@@ -181,7 +182,7 @@ function parseArgs(argv) {
   return { only };
 }
 
-function main() {
+export function main() {
   const { only } = parseArgs(process.argv.slice(2));
   const catalog = loadCatalog();
 
@@ -223,4 +224,6 @@ function main() {
   process.exit(1);
 }
 
-main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}
