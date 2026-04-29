@@ -93,6 +93,9 @@ jobs:
             -s schema/version.schema.json \
             -d "fixtures/tier*-example.json"
 
+      - name: Unit tests for cross-ref validator
+        run: node --test scripts/validate-cross-refs.test.mjs
+
       - name: Cross-reference + comparator-placeholder check
         run: node scripts/validate-cross-refs.mjs
 
