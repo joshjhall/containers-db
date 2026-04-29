@@ -198,3 +198,23 @@ per-tier conditional validation onto `install_methods[].verification`).
 - Tier-conditional verification spec: joshjhall/containers#402.
 - Luggage crate (consumer): joshjhall/containers#403.
 - Daily scanner: joshjhall/containers#406.
+
+## License
+
+Dual-licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  <https://opensource.org/licenses/MIT>)
+
+at your option. This is the standard dual-license used across the Rust
+ecosystem; it matches the license of [octarine](https://github.com/joshjhall/octarine),
+the foundation crate v5 is built on.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.
