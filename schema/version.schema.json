@@ -327,7 +327,7 @@
               "minLength": 32
             },
             "checksum_url_template": {
-              "description": "Tier 3: URL template the publisher serves the checksum at. Same `{version}` / `{arch}` / `{os}` placeholders as `source_url_template`.",
+              "description": "Tier 3: URL template the publisher serves the checksum at. Accepts the same placeholder vocabulary as `source_url_template` — see that field's description for the full reserved list and resolution rules.",
               "type": "string",
               "minLength": 1
             },
@@ -452,7 +452,7 @@
           ]
         },
         "source_url_template": {
-          "description": "URL template for the artifact to download. Supports `{version}`, `{arch}`, `{os}`, `{os_version}` placeholders, resolved by the consumer at install time.",
+          "description": "URL template for the artifact to download. Reserved placeholder vocabulary, all resolved by the consumer (luggage) at install time:\n\n- `{version}` — the version string from the parent file (`<v>.json` basename).\n- `{arch}` — host CPU arch normalized to amd64/arm64/armv7/riscv64.\n- `{os}` — distro id (`debian`, `ubuntu`, `alpine`, `rhel`, `fedora`, ...).\n- `{os_version}` — distro version string.\n- `{libc}` — `gnu` or `musl`, derived from the distro.\n- `{rustup_target}` — full rust target triple (e.g., `x86_64-unknown-linux-gnu`).\n- `{distro_family}` — family rollup: `debian` (covers debian+ubuntu), `rhel` (covers rhel+fedora+rocky), `alpine`.\n\nResolution rules:\n\n1. Resolution is the consumer's job (luggage); this schema only documents what tool authors may rely on.\n2. Unknown placeholders are passed through verbatim by ajv (the schema does not enforce the vocabulary as a regex). Consumers MUST reject unknown placeholders rather than substituting empty strings — that is luggage's responsibility, not ajv's.\n3. Placeholder names are reserved. Adding a new placeholder is a non-breaking schema change (existing files remain valid); renaming an existing one bumps `schemaVersion`.",
           "type": "string",
           "minLength": 1
         },

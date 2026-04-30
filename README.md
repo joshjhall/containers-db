@@ -188,6 +188,13 @@ The schemas declare JSON Schema 2020-12; that dialect is required for
 `unevaluatedProperties: false` composition (see issue #402, which layers
 per-tier conditional validation onto `install_methods[].verification`).
 
+The reserved placeholder vocabulary for `install_methods[].source_url_template`
+and `install_methods[].verification.checksum_url_template` (`{version}`,
+`{arch}`, `{os}`, `{os_version}`, `{libc}`, `{rustup_target}`,
+`{distro_family}`) is documented inline on the `source_url_template`
+description in `schema/version.schema.json`. Resolution is the consumer's
+job (luggage); ajv does not enforce the vocabulary.
+
 ajv covers shape; the Rust validator under `validator/` covers the
 cross-file rules JSON Schema cannot express (unknown tool references,
 pin-on-system_package, platform narrowing, version/constraint parsing,
