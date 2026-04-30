@@ -134,10 +134,10 @@ expressions are allowed, and they act as guards (e.g. "refuse if
 glibc < 2.31"). This rule cannot be expressed in pure JSON Schema
 across files and is enforced by `scripts/validate-cross-refs.mjs`.
 
-The current comparator is a placeholder that only accepts the literal
-`*`. Real comparator wiring lands in a follow-up issue; the placeholder
-exists with a loud TODO and a CI assertion so production constraints
-cannot be silently parsed through it.
+Constraint expressions are parsed by `containers-common::version`, the
+shared Rust parser/comparator that backs every consumer of the catalog
+(stibbons, luggage, and this repo's CI validator). One library, one
+grammar — see `validator/` for the CI integration.
 
 ### Deliberate handoff to apt
 
@@ -187,6 +187,24 @@ npx --yes ajv-cli@5 validate --spec=draft2020 -c ajv-formats \
 The schemas declare JSON Schema 2020-12; that dialect is required for
 `unevaluatedProperties: false` composition (see issue #402, which layers
 per-tier conditional validation onto `install_methods[].verification`).
+
+ajv covers shape; the Rust validator under `validator/` covers the
+cross-file rules JSON Schema cannot express (unknown tool references,
+pin-on-system_package, platform narrowing, version/constraint parsing,
+mutual exclusion, and `requires[]` intersection across the catalog).
+Run it with:
+
+```bash
+cargo run --release --manifest-path validator/Cargo.toml --bin validate-catalog
+```
+
+To re-run rule checks against a single file (the form CI uses for
+negative fixtures):
+
+```bash
+cargo run --release --manifest-path validator/Cargo.toml \
+  --bin validate-catalog -- --only fixtures/_negative/dep-pin-on-system-package.json
+```
 
 ## Related
 

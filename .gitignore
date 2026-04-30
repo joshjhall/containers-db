@@ -6,6 +6,9 @@ package.json
 # ajv cache
 .ajv-cache/
 
+# Rust validator build artifacts
+validator/target/
+
 # Claude Code per-session state and local settings
 .claude/memory/tmp/
 .claude/settings.local.json
