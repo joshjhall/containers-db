@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_bad_requires",
+  "version": "1.0.0",
+  "requires": [
+    { "tool": "gnupg", "version_constraint": ">=2.0" },
+    { "tool": "gnupg", "version_constraint": "<1.0" }
+  ],
+  "install_methods": [
+    {
+      "name": "tarball",
+      "verification": {
+        "tier": 4,
+        "algorithm": "sha256",
+        "tofu": true
+      },
+      "source_url_template": "https://example.invalid/sample-bad-requires/1.0.0.tar.gz"
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}

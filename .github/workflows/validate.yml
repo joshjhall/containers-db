@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   validate-schemas:
-    name: ajv validate
+    name: ajv + Rust validate
     runs-on: ubuntu-latest
 
     steps:
@@ -26,6 +26,14 @@ jobs:
 
       - name: Install ajv-cli
         run: npm install --no-save ajv-cli@5.0.0 ajv-formats@3.0.1
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: validator
 
       - name: Compile tool schema
         run: |
@@ -93,18 +101,22 @@ jobs:
             -s schema/version.schema.json \
             -d "fixtures/tier*-example.json"
 
-      - name: Unit tests for cross-ref validator
-        run: node --test scripts/validate-cross-refs.test.mjs
+      - name: Build validator
+        run: cargo build --release --manifest-path validator/Cargo.toml --bin validate-catalog
 
-      - name: Cross-reference + comparator-placeholder check
-        run: node scripts/validate-cross-refs.mjs
+      - name: Validator unit + integration tests
+        run: cargo test --release --manifest-path validator/Cargo.toml
+
+      - name: Semantic validation (full catalog walk)
+        run: cargo run --release --manifest-path validator/Cargo.toml --bin validate-catalog
 
       - name: Negative test — broken fixtures must each fail validation
         run: |
           set -e
+          VALIDATOR=validator/target/release/validate-catalog
           for fixture in fixtures/_negative/*.json; do
             ajv_rc=0
-            xref_rc=0
+            sem_rc=0
             set +e
             npx --no-install ajv validate \
               --spec=draft2020 \
@@ -112,12 +124,12 @@ jobs:
               -s schema/version.schema.json \
               -d "$fixture"
             ajv_rc=$?
-            node scripts/validate-cross-refs.mjs --only "$fixture"
-            xref_rc=$?
+            "$VALIDATOR" --only "$fixture"
+            sem_rc=$?
             set -e
-            if [ "$ajv_rc" -eq 0 ] && [ "$xref_rc" -eq 0 ]; then
-              echo "::error::Negative fixture $fixture passed both ajv AND cross-ref — schema/script is too permissive"
+            if [ "$ajv_rc" -eq 0 ] && [ "$sem_rc" -eq 0 ]; then
+              echo "::error::Negative fixture $fixture passed both ajv AND validate-catalog — schema/validator is too permissive"
               exit 1
             fi
-            echo "Negative fixture $fixture correctly rejected (ajv=$ajv_rc, xref=$xref_rc)"
+            echo "Negative fixture $fixture correctly rejected (ajv=$ajv_rc, validate-catalog=$sem_rc)"
           done
