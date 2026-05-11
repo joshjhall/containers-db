@@ -29,12 +29,29 @@ Splitting the catalog out of the main repo means:
 │       ├── versions/<v>.json
 │       └── recipes/<name>.json
 ├── snapshots/                 # frozen catalog snapshots for client pinning (planned)
+├── scanner/                   # daily catalog scanner (Rust crate)
+├── validator/                 # semantic validator (Rust crate)
 └── .github/workflows/
-    └── validate.yml           # ajv-cli validation on every push/PR
+    ├── validate.yml           # ajv-cli + Rust validator on every push/PR
+    └── scan.yml               # hourly upstream scan, opens PRs for new versions
 ```
 
 `tools/`, `snapshots/`, and `recipes/` are scaffolded by the schemas but
 populated by follow-up issues (#401 onward).
+
+## Automation
+
+The `scanner/` crate is a daily catalog scanner that walks every tool,
+queries upstream sources for new releases, recomputes the activity
+block, and opens one PR per tool with new `versions/<v>.json` files.
+Failures open a tracking issue instead of a malformed PR.
+
+Per-tool cadence is driven by `activity.scan_cadence_days` so
+very-active tools (rust, node) are rechecked daily while quiet ones
+are rechecked monthly or longer.
+
+See [`docs/scanner.md`](docs/scanner.md) for the adapter authoring
+guide, the activity tier rule table, and local dry-run usage.
 
 ## Schema versioning
 
