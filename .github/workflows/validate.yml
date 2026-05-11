@@ -33,7 +33,7 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: validator
+          workspaces: .
 
       - name: Compile tool schema
         run: |
@@ -101,19 +101,19 @@ jobs:
             -s schema/version.schema.json \
             -d "fixtures/tier*-example.json"
 
-      - name: Build validator
-        run: cargo build --release --manifest-path validator/Cargo.toml --bin validate-catalog
+      - name: Build workspace (validator + scanner)
+        run: cargo build --release --workspace
 
-      - name: Validator unit + integration tests
-        run: cargo test --release --manifest-path validator/Cargo.toml
+      - name: Workspace unit + integration tests
+        run: cargo test --release --workspace
 
       - name: Semantic validation (full catalog walk)
-        run: cargo run --release --manifest-path validator/Cargo.toml --bin validate-catalog
+        run: cargo run --release -p db-validator --bin validate-catalog
 
       - name: Negative test — broken fixtures must each fail validation
         run: |
           set -e
-          VALIDATOR=validator/target/release/validate-catalog
+          VALIDATOR=target/release/validate-catalog
           for fixture in fixtures/_negative/*.json; do
             ajv_rc=0
             sem_rc=0

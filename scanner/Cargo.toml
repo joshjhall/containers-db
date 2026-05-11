@@ -1,29 +1,37 @@
 [package]
-name = "db-validator"
+name = "scanner"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Semantic validator for the containers-db tool catalog"
+description = "Daily catalog scanner that opens PRs for new tool versions"
 
 [[bin]]
-name = "validate-catalog"
+name = "scanner"
 path = "src/main.rs"
 
 [lib]
-name = "db_validator"
+name = "scanner"
 path = "src/lib.rs"
 
 [dependencies]
+db-validator = { workspace = true }
 containers-common = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 walkdir = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+wiremock = { workspace = true }
 
 [lints]
 workspace = true

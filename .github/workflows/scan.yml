@@ -1,0 +1,95 @@
+name: Catalog scanner
+
+on:
+  schedule:
+    # Hourly — per-tool gating is done in scanner code via
+    # `activity.scan_cadence_days`, so cheap tools won't actually be
+    # scanned every hour.
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: "Force-scan a single tool id (skips cadence). Empty = scan all due tools."
+        required: false
+        type: string
+      dry_run:
+        description: "Print plan but don't write files or open PRs/issues"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Serialize scans so a long-running scan doesn't race with the next
+  # hourly trigger. `cancel-in-progress: false` means a slow scan
+  # finishes; the next cron tick queues behind it.
+  group: catalog-scanner
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Scan upstream releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history needed because the scanner creates branches
+          # and pushes commits back via `git`.
+          fetch-depth: 0
+
+      - name: Configure git identity
+        # Required for the scanner's `git commit` step. The bot identity
+        # makes scan-authored commits distinguishable from human ones.
+        run: |
+          git config user.name "containers-db scanner"
+          git config user.email "containers-db-scanner@users.noreply.github.com"
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ajv-cli
+        # Mirror the version pins from validate.yml so the scanner's
+        # ajv gate matches the PR validation gate exactly.
+        run: npm install --no-save ajv-cli@5.0.0 ajv-formats@3.0.1
+
+      - name: Build scanner
+        run: cargo build --release -p scanner
+
+      - name: Run scanner
+        # Inputs are piped via env to avoid GitHub Actions expression
+        # injection — see
+        # https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TOOL: ${{ inputs.tool }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          dry_run_flag=""
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            dry_run_flag="--dry-run"
+          fi
+          if [ -n "$INPUT_TOOL" ]; then
+            # shellcheck disable=SC2086
+            cargo run --release -p scanner -- tool "$INPUT_TOOL" $dry_run_flag
+          else
+            # shellcheck disable=SC2086
+            cargo run --release -p scanner -- due $dry_run_flag
+          fi
