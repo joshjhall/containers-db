@@ -42,7 +42,7 @@
       "items": { "$ref": "#/$defs/SupportEntry" }
     },
     "tested": {
-      "description": "EVIDENCE: CI run records that demonstrate this version was actually exercised on a given OS/version/arch. Each entry pins to a CI run URL and a result so claims can be audited. May be empty during initial catalog population.",
+      "description": "EVIDENCE: CI run records that demonstrate this version was actually exercised on a given OS/version/arch. Each entry pins to a CI run URL and a result so claims can be audited; rows from v5 evidence-runs additionally carry the signed base-image digest, captured `--version` output, and a structured `error_class` for failures (see `TestEntry`). May be empty during initial catalog population.",
       "type": "array",
       "items": { "$ref": "#/$defs/TestEntry" }
     },
@@ -156,10 +156,14 @@
       }
     },
     "TestEntry": {
-      "description": "One CI run providing evidence that a given (distro, distro version, arch) actually worked.",
+      "description": "One CI run providing evidence that a given (distro, distro version, arch) actually worked. Rows from v5 evidence-runs anchor to a signed base image via `image_ref` + `image_digest` so the run is reproducible.",
       "type": "object",
       "required": ["os", "arch", "tested_at", "result"],
       "additionalProperties": false,
+      "dependentRequired": {
+        "image_ref": ["image_digest"],
+        "image_digest": ["image_ref"]
+      },
       "properties": {
         "os": { "$ref": "#/$defs/Distro" },
         "os_version": {
@@ -181,6 +185,38 @@
           "description": "Outcome of the run for this combination.",
           "type": "string",
           "enum": ["pass", "fail", "skip"]
+        },
+        "image_ref": {
+          "description": "Fully-qualified image repository the install ran inside, without digest (e.g., `ghcr.io/joshjhall/containers/base-debian-12-amd64`). Paired with `image_digest` via `dependentRequired` so either both or neither are present — leaving room for future non-container evidence (bare-metal, VM) that has no image to anchor to.",
+          "type": "string",
+          "minLength": 1
+        },
+        "image_digest": {
+          "description": "Resolved digest of the image the install ran inside, in `sha256:...` form. The pair `(image_ref, image_digest)` is the reproducibility anchor: any reviewer can pull this exact image and re-run the install. Paired with `image_ref` via `dependentRequired`.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "duration_seconds": {
+          "description": "Wall-clock time the install took, in seconds. Sub-second precision is meaningful for fast tools, so this is a number rather than an integer. Used by performance-regression dashboards; not required for correctness.",
+          "type": "number",
+          "minimum": 0
+        },
+        "version_output": {
+          "description": "Captured stdout of the post-install `<tool> --version` check (or the tool's idiomatic equivalent). Preserves the textual evidence that the installed version matched what was requested — a `result: pass` row backed by a `version_output` mismatching the entry's version is a catalog bug worth surfacing.",
+          "type": "string"
+        },
+        "error_class": {
+          "description": "Structured failure category, populated when `result: fail`. Values map to luggage installer stages so categorization is mechanical, not editorial: `download` = artifact fetch failed, `verify` = checksum/signature mismatch, `install_method` = the install-method dispatch failed, `post_install` = post-install steps failed, `validate` = the `<tool> --version` check did not match the requested version, `infra` = CI runner / network / registry failure unrelated to the tool, `unknown` = older runs predating this enum or truly unclassifiable. Free-form context still goes in `notes`.",
+          "type": "string",
+          "enum": [
+            "download",
+            "verify",
+            "install_method",
+            "post_install",
+            "validate",
+            "infra",
+            "unknown"
+          ]
         },
         "notes": {
           "description": "Free-form notes (e.g., flake reason for `fail`, why `skip`).",
