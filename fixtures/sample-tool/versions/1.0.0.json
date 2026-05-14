@@ -40,7 +40,24 @@
       "arch": "amd64",
       "tested_at": "2026-04-22T13:14:15Z",
       "ci_run": "https://github.com/joshjhall/containers-db/actions/runs/0",
-      "result": "pass"
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "duration_seconds": 42.5,
+      "version_output": "sample 1.0.0 (build abc1234)"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.21",
+      "arch": "amd64",
+      "tested_at": "2026-04-22T13:20:00Z",
+      "ci_run": "https://github.com/joshjhall/containers-db/actions/runs/1",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.21-amd64",
+      "image_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "duration_seconds": 3.2,
+      "error_class": "verify",
+      "notes": "Tier-3 checksum did not match published SHA256SUMS"
     }
   ],
   "requires": [
