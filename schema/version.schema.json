@@ -42,7 +42,7 @@
       "items": { "$ref": "#/$defs/SupportEntry" }
     },
     "tested": {
-      "description": "EVIDENCE: CI run records that demonstrate this version was actually exercised on a given OS/version/arch. Each entry pins to a CI run URL and a result so claims can be audited; rows from v5 evidence-runs additionally carry the signed base-image digest, captured `--version` output, and a structured `error_class` for failures (see `TestEntry`). May be empty during initial catalog population.",
+      "description": "EVIDENCE: CI run records that demonstrate this version was actually exercised on a given OS/version/arch. Each entry pins to a CI run URL and a result so claims can be audited; rows from v5 evidence-runs additionally carry the signed base-image digest, captured `--version` output, a structured `error_class` for failures, and the resolved `dependencies[]` versions present at install time (see `TestEntry`). May be empty during initial catalog population.",
       "type": "array",
       "items": { "$ref": "#/$defs/TestEntry" }
     },
@@ -218,9 +218,36 @@
             "unknown"
           ]
         },
+        "dependencies": {
+          "description": "System dependencies resolved to the concrete versions present during this run (e.g., `gcc`, `libc6-dev`, `ca-certificates`). Catalog `install_methods[].dependencies[]` entries are version-less abstract ids; this records what the host package manager actually had installed once luggage translated and installed them, so a `result: pass` row can be correlated with a base-image toolchain bump (`did this pass because of, or despite, gcc 12.2 vs 13.1?`). Best-effort and produced only on pass rows from `luggage install --json-report`; absent when nothing was captured. See `InstalledDependency`.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/InstalledDependency" }
+        },
         "notes": {
           "description": "Free-form notes (e.g., flake reason for `fail`, why `skip`).",
           "type": "string"
+        }
+      }
+    },
+    "InstalledDependency": {
+      "description": "A system dependency resolved to a concrete installed version during an evidence run. Distinct from `Dependency`: that is the catalog's version-less *claim* about what an install method needs (`{tool: gcc}`); this is the *observed* package and version the host package manager actually had at run time. Carried on `TestEntry.dependencies[]`.",
+      "type": "object",
+      "required": ["tool", "package"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "description": "Abstract catalog `Dependency.tool` id this entry resolves (e.g., `gcc`, `libc_dev`). Mirrors the id luggage translated to a per-distro package.",
+          "$ref": "#/$defs/ToolId"
+        },
+        "package": {
+          "description": "Per-distro package name actually installed (e.g., `libc6-dev` on Debian, `glibc-devel` on RHEL). The concrete name the host package manager reported.",
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "description": "Resolved version string as reported by the host package manager (`dpkg-query`, `apk`, `rpm`). Optional — omitted when the version query failed or returned nothing, since a missing version must never block recording the row. Free-form: each package manager's version grammar differs.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },

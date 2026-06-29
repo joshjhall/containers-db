@@ -44,7 +44,12 @@
       "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
       "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "duration_seconds": 42.5,
-      "version_output": "sample 1.0.0 (build abc1234)"
+      "version_output": "sample 1.0.0 (build abc1234)",
+      "dependencies": [
+        { "tool": "gcc", "package": "gcc", "version": "4:12.2.0-3" },
+        { "tool": "libc_dev", "package": "libc6-dev", "version": "2.36-9+deb12u7" },
+        { "tool": "ca_certificates", "package": "ca-certificates" }
+      ]
     },
     {
       "os": "alpine",
