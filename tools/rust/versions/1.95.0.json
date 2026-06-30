@@ -90,6 +90,35 @@
       "image_digest": "sha256:cca0bf7fe783abc570b21dd9b0054ad002bda450b16c8ab0ee4714399b4f5cbf",
       "duration_seconds": 19.868913287,
       "version_output": "rustc 1.95.0 (59807616e 2026-04-14)"
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-06-30T00:37:46.321104797Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/28412149871",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:5542d6082bbc0534df4d172369a78198a302cb77deb6f4d2e6d528848f98b0ef",
+      "duration_seconds": 19.292859941,
+      "version_output": "rustc 1.95.0 (59807616e 2026-04-14)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20230311+deb12u1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:12.2.0-3"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.36-9+deb12u14"
+        }
+      ]
     }
   ],
   "install_methods": [
