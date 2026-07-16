@@ -2,11 +2,22 @@
 //! No live network — `wiremock` serves recorded fixtures so the test is
 //! hermetic and fast.
 
+use chrono::{Duration, SecondsFormat, Utc};
 use scanner::adapter::{Adapter, ToolIndex};
 use scanner::adapters::rust::RustAdapter;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// An RFC3339 timestamp `n` days before wall-clock now, matching the `...Z`
+/// shape the adapter parses. Fixtures below must use this instead of absolute
+/// literals: the adapter's `releases_last_90d` signal is computed against
+/// `Utc::now()`, so hard-coded dates silently age out of the trailing-90-day
+/// window and turn the test into a date bomb (issue #48). Keep the newest
+/// stable release comfortably inside 90 days.
+fn days_ago(n: i64) -> String {
+    (Utc::now() - Duration::days(n)).to_rfc3339_opts(SecondsFormat::Secs, true)
+}
 
 fn rust_index(server_uri: &str) -> ToolIndex {
     // server_uri is unused by ToolIndex itself — the adapter pulls
@@ -36,20 +47,23 @@ async fn returns_only_stable_semver_releases_with_signals_and_advisories() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "archived": false,
             "disabled": false,
-            "pushed_at": "2026-04-30T12:00:00Z"
+            "pushed_at": days_ago(5)
         })))
         .mount(&server)
         .await;
 
+    // Dates are window-relative (see `days_ago`): the newest stable release sits
+    // ~12 days back so it stays inside the adapter's trailing-90-day window
+    // regardless of when CI runs. Do not reintroduce absolute date literals here.
     Mock::given(method("GET"))
         .and(path("/repos/rust-lang/rust/releases"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "tag_name": "1.95.0", "published_at": "2026-04-15T00:00:00Z" },
-            { "tag_name": "1.94.1", "published_at": "2026-03-01T00:00:00Z" },
-            { "tag_name": "1.94.0", "published_at": "2026-02-01T00:00:00Z" },
-            { "tag_name": "1.95.0-beta.1", "published_at": "2026-04-01T00:00:00Z", "prerelease": true },
+            { "tag_name": "1.95.0", "published_at": days_ago(12) },
+            { "tag_name": "1.94.1", "published_at": days_ago(55) },
+            { "tag_name": "1.94.0", "published_at": days_ago(120) },
+            { "tag_name": "1.95.0-beta.1", "published_at": days_ago(20), "prerelease": true },
             { "tag_name": "draft-internal", "published_at": null, "draft": true },
-            { "tag_name": "nightly-2026-04-29", "published_at": "2026-04-29T00:00:00Z" }
+            { "tag_name": "nightly-2026-04-29", "published_at": days_ago(6) }
         ])))
         .mount(&server)
         .await;
