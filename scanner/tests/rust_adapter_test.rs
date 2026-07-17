@@ -112,6 +112,83 @@ async fn returns_only_stable_semver_releases_with_signals_and_advisories() {
     assert_eq!(result.signals.releases_last_90d, Some(2));
 }
 
+/// An RFC3339 timestamp offset a small amount from the exact trailing-90-day
+/// cutoff: `offset_minutes` minutes *inside* the boundary when positive (newer
+/// than 90 days ago), *outside* when negative. Used to straddle the window edge
+/// far more tightly than a whole-day margin while staying robust to clock skew.
+fn near_90d_boundary(offset_minutes: i64) -> String {
+    (Utc::now() - Duration::days(90) + Duration::minutes(offset_minutes))
+        .to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+/// Boundary guard for the trailing-90-day release window (issue #51).
+///
+/// The adapter counts a release when `published_at >= now - 90 days`
+/// (`scanner/src/adapters/rust.rs`). The end-to-end test above only exercises
+/// releases comfortably inside (12, 55 days) and comfortably outside (120
+/// days) the window, so an off-by-one that shifted the cutoff to 89 or 91 days
+/// instead of 90 would go uncaught.
+///
+/// This test straddles the exact 90-day edge with a ±5-minute margin: one
+/// release sits 5 minutes *inside* the cutoff (must be counted) and one 5
+/// minutes *outside* (must not). Pinning both flanks a hair from the exact
+/// boundary catches a one-day off-by-one in *either* direction — a cutoff
+/// widened to 91 days would wrongly pull the outside release in (count 2), and
+/// one narrowed to 89 days would wrongly push the inside release out (count 0)
+/// — whereas a 89/91-day straddle would only catch the widening direction.
+///
+/// The 5-minute margin (not exactly-90) is deliberate: the adapter samples
+/// `Utc::now()` a moment after the fixtures are built, so an *exactly*-90-day
+/// timestamp would land a hair outside the window and make the assertion
+/// hostage to sub-second clock drift. Five minutes dwarfs that drift while
+/// staying tight enough that any day-granularity boundary error still flips a
+/// count.
+#[tokio::test]
+async fn counts_releases_at_90_day_window_boundary() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "archived": false,
+            "disabled": false,
+            "pushed_at": days_ago(5)
+        })))
+        .mount(&server)
+        .await;
+
+    // 1.95.0 sits 5 minutes inside the 90-day cutoff (counted); 1.94.0 sits 5
+    // minutes outside (not counted). Both are stable semver releases, so the
+    // only thing separating them is the window cutoff.
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust/releases"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "tag_name": "1.95.0", "published_at": near_90d_boundary(5) },
+            { "tag_name": "1.94.0", "published_at": near_90d_boundary(-5) }
+        ])))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust/security-advisories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&server)
+        .await;
+
+    let adapter = RustAdapter::with_api_base(server.uri());
+    let result = adapter.fetch(&rust_index(&server.uri())).await.unwrap();
+
+    // Both releases pass the draft/prerelease/semver filters, so both land in
+    // upstream_versions — this isolates the assertion to the window cutoff
+    // rather than the semver filter.
+    assert_eq!(result.upstream_versions.len(), 2);
+    assert_eq!(
+        result.signals.releases_last_90d,
+        Some(1),
+        "release just inside 90d must count, just outside must not"
+    );
+}
+
 #[tokio::test]
 async fn archived_repo_sets_source_archived_flag() {
     let server = MockServer::start().await;
