@@ -105,7 +105,11 @@ async fn returns_only_stable_semver_releases_with_signals_and_advisories() {
     assert_eq!(result.signals.open_advisories, Some(2));
     assert!(result.signals.last_release_at.is_some());
     assert!(result.signals.last_commit_at.is_some());
-    assert!(result.signals.releases_last_90d.unwrap() >= 1);
+    // Exactly 2 stable semver releases fall inside the trailing-90-day window:
+    // 1.95.0 (~12d) and 1.94.1 (~55d). 1.94.0 (~120d) is stable semver but
+    // outside the window, so a broken cutoff that failed to exclude it would
+    // count 3 and fail here — which a `>= 1` check would have silently passed.
+    assert_eq!(result.signals.releases_last_90d, Some(2));
 }
 
 #[tokio::test]
