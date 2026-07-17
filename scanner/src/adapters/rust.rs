@@ -26,6 +26,11 @@ const USER_AGENT: &str = "containers-db-scanner/0.1";
 pub struct RustAdapter {
     client: reqwest::Client,
     api_base: String,
+    /// Fixed "now" for the trailing-90-day window, or `None` to sample the
+    /// wall clock. Production always leaves this `None` (see `new`); only
+    /// `with_fixed_now` sets it, so tests can pin the window edge to the
+    /// second instead of straddling it with a clock-drift margin.
+    now_override: Option<DateTime<Utc>>,
 }
 
 impl Default for RustAdapter {
@@ -42,6 +47,18 @@ impl RustAdapter {
     /// Construct an adapter pointed at a custom API base — used by
     /// `wiremock`-based integration tests.
     pub fn with_api_base(api_base: impl Into<String>) -> Self {
+        Self::build(api_base, None)
+    }
+
+    /// Like `with_api_base`, but pins the adapter's notion of "now" to a fixed
+    /// instant. Test-only: lets a test place a release at *exactly*
+    /// `now - 90 days` and assert the window cutoff to the second, rather than
+    /// inferring the `>=` comparison from a ±5-minute margin (issue #56).
+    pub fn with_fixed_now(api_base: impl Into<String>, now: DateTime<Utc>) -> Self {
+        Self::build(api_base, Some(now))
+    }
+
+    fn build(api_base: impl Into<String>, now_override: Option<DateTime<Utc>>) -> Self {
         let client = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .build()
@@ -49,6 +66,7 @@ impl RustAdapter {
         Self {
             client,
             api_base: api_base.into(),
+            now_override,
         }
     }
 }
@@ -144,7 +162,7 @@ impl Adapter for RustAdapter {
             )
             .await?;
 
-        let now = Utc::now();
+        let now = self.now_override.unwrap_or_else(Utc::now);
         let ninety_days_ago = now - Duration::days(90);
 
         let stable: Vec<GhRelease> = releases
