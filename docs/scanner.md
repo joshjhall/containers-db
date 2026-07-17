@@ -110,9 +110,14 @@ for the pattern:
 
 ```rust
 let server = MockServer::start().await;
+// Fixture dates MUST be window-relative, never absolute literals: the
+// `releases_last_90d` signal is computed against `Utc::now()`, so a
+// hard-coded date silently ages out of the trailing-90-day window and
+// turns the test into a date bomb (issue #48). Use the `days_ago` helper
+// from `rust_adapter_test.rs` and keep the newest release inside 90 days.
 Mock::given(method("GET")).and(path("/repos/o/r/releases"))
     .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-        { "tag_name": "1.0.0", "published_at": "2026-04-15T00:00:00Z" }
+        { "tag_name": "1.0.0", "published_at": days_ago(12) }
     ])))
     .mount(&server).await;
 
