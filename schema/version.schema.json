@@ -319,9 +319,19 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "description": "Method identifier (e.g., `rustup`, `apt`, `tarball`, `script`). Used in luggage logs and error messages.",
+          "description": "Human-readable method label (e.g., `rustup-init`, `nodejs-tarball`). Used in luggage logs and error messages only — it carries no dispatch semantics. See `method_kind` for the field luggage actually switches on.",
           "type": "string",
           "minLength": 1
+        },
+        "method_kind": {
+          "description": "Which luggage installer implementation runs this method. Distinct from the tool-level `kind` in `tool.schema.json`, which is a coarse category (`language`, `cli`, ...); this is the install *shape*. `script-installer` runs a downloaded executable (rustup-init, nvm); `binary-tarball` unpacks a prebuilt archive; `package-manager` defers to the host package manager; `source-build` compiles from source. Optional pending the luggage-side backfill; will become required.",
+          "type": "string",
+          "enum": [
+            "script-installer",
+            "binary-tarball",
+            "package-manager",
+            "source-build"
+          ]
         },
         "platform": {
           "description": "Predicate restricting which hosts this method applies to. Omit to mean any platform. luggage AND-combines all listed fields. String values match exactly; arrays match if the host's value is in the array.",

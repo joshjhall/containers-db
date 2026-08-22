@@ -122,6 +122,28 @@ prerequisites the platform needs before luggage runs the method's
 fetch/extract/invoke steps (typically the system_package entries the
 host package manager will install).
 
+### Two `kind` fields, one nesting level apart
+
+The catalog has two unrelated fields named for a "kind". They live in
+different files on different objects, so JSON Schema keeps them apart —
+but an author editing an entry should know which is which:
+
+| Field                          | File                  | Meaning                                                                  |
+| ------------------------------ | --------------------- | ------------------------------------------------------------------------ |
+| `kind`                         | `tool.schema.json`    | Coarse category of the tool: `language`, `cli`, `library`, `runtime`, `service`, `system_package` |
+| `install_methods[].method_kind`| `version.schema.json` | Install *shape* — which luggage installer implementation runs the method |
+
+`method_kind` is deliberately not called `kind` for exactly that reason.
+Its four values are `script-installer` (run a downloaded executable —
+rustup-init, nvm), `binary-tarball` (unpack a prebuilt archive),
+`package-manager` (defer to the host package manager), and `source-build`
+(compile from source).
+
+`method_kind` carries the dispatch semantics; the sibling `name` is a
+human-readable label for logs and error messages only. luggage switches
+on `method_kind`, so a new catalog entry using an already-implemented
+shape needs no luggage code change.
+
 ### `kind: "system_package"` entries
 
 A system_package catalog entry is a tracking record only. It carries:
