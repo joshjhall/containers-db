@@ -129,6 +129,11 @@
         "tier4": { "$ref": "#/$defs/TierSummary" }
       }
     },
+    "primary_binary": {
+      "description": "Name of the binary luggage `--version`-checks to decide whether this tool is already installed and to validate a completed install, resolved under the install `bin_root` (e.g. `/usr/local/bin`). Omit when the binary name equals the tool `id` — luggage falls back to the id. Set it whenever they differ: `rust` installs `rustc`, `python` installs `python3`. Getting this wrong is loud rather than silent (validation fails on a path that does not exist), but it fails the install of an otherwise-healthy tool.",
+      "type": "string",
+      "minLength": 1
+    },
     "version_style": {
       "description": "How this tool's version strings should be parsed. `semver` is the implicit default when omitted; `prefix` is for tools that use a leading `v` or similar token; `calver` is for date-derived schemes; `opaque` disables comparator parsing entirely (constraints involving this tool can only check string equality).",
       "type": "string",

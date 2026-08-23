@@ -25,6 +25,7 @@
       "notes": "rustup-init verified against publisher SHA256 at static.rust-lang.org/rustup/dist/<triple>/rustup-init.sha256; the rust toolchain itself is then verified by rustup's built-in signed-channel mechanism."
     }
   },
+  "primary_binary": "rustc",
   "default_version": "1.95.0",
   "minimum_recommended": "1.93.0",
   "channels": {

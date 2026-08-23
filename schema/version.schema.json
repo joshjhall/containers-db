@@ -591,6 +591,24 @@
           "description": "Method-level install chain: physical packages and tools that must be installed BEFORE this install method runs. Each entry references another catalog tool (typically `kind: system_package`) by id. Distinct from the version-level `requires[]`, which expresses compatibility expectations across all install methods rather than what to fetch for THIS one. Replaces the pre-#6 `system_packages: { distro: [strings] }` shape, which is gone — files carrying `system_packages` are rejected by `additionalProperties: false`.",
           "type": "array",
           "items": { "$ref": "#/$defs/Dependency" }
+        },
+        "binaries": {
+          "description": "Binary names this method must surface in the install `bin_root` (e.g. `/usr/local/bin`) by symlinking them out of `bin_source_dir`. Names only — a symlink is created under the same name, so this cannot express a rename (`python3` → `python` aliases stay the installing script's job). Omit when the method surfaces nothing; luggage symlinks exactly what is listed and never guesses a per-tool default. Requires `bin_source_dir` to say where the targets live.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "bin_source_dir": {
+          "description": "Directory the `binaries` symlink targets live in, relative to the install cache root (e.g. `cargo/bin` under a `/cache` root resolves to `/cache/cargo/bin`). Relative because the cache root is chosen by the installer at run time, not by the catalog. Only meaningful alongside `binaries`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "cache_dirs": {
+          "description": "Persistent cache/state directories this method needs, as a map of environment-variable name to a path relative to the install cache root — e.g. `{\"CARGO_HOME\": \"cargo\", \"RUSTUP_HOME\": \"rustup\"}` under a `/cache` root creates `/cache/cargo` and `/cache/rustup` and exports each var to the installer, its post-install steps, and the validation call. luggage also chowns each directory to the install user so an unprivileged installer can write into it. Distinct from `invoke.env`, which carries literal values that need no directory created; an `invoke.env` entry for the same variable takes precedence over the path derived here.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "minLength": 1 }
         }
       }
     }
