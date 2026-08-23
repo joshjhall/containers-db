@@ -315,7 +315,7 @@
     "InstallMethod": {
       "description": "One way to install this version. luggage selects the first method whose `platform` matches and whose `verification` tier is acceptable to the active policy.",
       "type": "object",
-      "required": ["name", "verification"],
+      "required": ["name", "method_kind", "verification"],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -324,7 +324,7 @@
           "minLength": 1
         },
         "method_kind": {
-          "description": "Which luggage installer implementation runs this method. Distinct from the tool-level `kind` in `tool.schema.json`, which is a coarse category (`language`, `cli`, ...); this is the install *shape*. `script-installer` runs a downloaded executable (rustup-init, nvm); `binary-tarball` unpacks a prebuilt archive; `package-manager` defers to the host package manager; `source-build` compiles from source. Optional pending the luggage-side backfill; will become required.",
+          "description": "Which luggage installer implementation runs this method. Distinct from the tool-level `kind` in `tool.schema.json`, which is a coarse category (`language`, `cli`, ...); this is the install *shape*. `script-installer` runs a downloaded executable (rustup-init, nvm); `binary-tarball` unpacks a prebuilt archive; `package-manager` defers to the host package manager; `source-build` compiles from source.",
           "type": "string",
           "enum": [
             "script-installer",
