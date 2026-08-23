@@ -5,6 +5,7 @@
   "install_methods": [
     {
       "name": "tarball",
+      "method_kind": "binary-tarball",
       "verification": {
         "tier": 3,
         "algorithm": "sha256",

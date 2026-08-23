@@ -24,6 +24,7 @@
   "install_methods": [
     {
       "name": "tarball",
+      "method_kind": "binary-tarball",
       "platform": {
         "os": ["debian"],
         "arch": ["amd64"]
