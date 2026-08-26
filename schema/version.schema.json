@@ -404,6 +404,10 @@
               "type": "string",
               "minLength": 1
             },
+            "checksum_manifest": {
+              "description": "Tier 3: set to `true` when `checksum_url_template` serves a MULTI-ENTRY manifest — one `<digest>  <filename>` line per artifact in the release, as in Node's `SHASUMS256.txt` — rather than a single checksum for a single artifact (rust's `rustup-init.sha256`). Consumers MUST select the line whose filename matches the resolved artifact, and MUST fail verification when no line matches or a line is malformed; selecting by position would verify a different architecture's binary and pass. Omit (or `false`) for the single-checksum shape.",
+              "type": "boolean"
+            },
             "gpg_key_url": {
               "description": "Tier 1 (GPG): URL of the publisher's public key.",
               "type": "string",
@@ -454,6 +458,7 @@
                 "allOf": [
                   { "not": { "required": ["pinned_checksum"] } },
                   { "not": { "required": ["checksum_url_template"] } },
+                  { "not": { "required": ["checksum_manifest"] } },
                   { "not": { "required": ["tofu"] } }
                 ]
               }
@@ -471,6 +476,7 @@
                 },
                 "allOf": [
                   { "not": { "required": ["checksum_url_template"] } },
+                  { "not": { "required": ["checksum_manifest"] } },
                   { "not": { "required": ["gpg_key_url"] } },
                   { "not": { "required": ["signature_url_template"] } },
                   { "not": { "required": ["sigstore_identity"] } },
@@ -485,7 +491,7 @@
                 "required": ["tier"]
               },
               "then": {
-                "description": "Tier 3: publisher-served checksum. Requires `algorithm` ∈ {sha256, sha512} and `checksum_url_template`. Forbids tier 1/2/4 carriers.",
+                "description": "Tier 3: publisher-served checksum. Requires `algorithm` ∈ {sha256, sha512} and `checksum_url_template`; optionally carries `checksum_manifest` when that URL serves a multi-entry manifest. Forbids tier 1/2/4 carriers.",
                 "required": ["algorithm", "checksum_url_template"],
                 "properties": {
                   "algorithm": { "enum": ["sha256", "sha512"] }
@@ -515,6 +521,7 @@
                 "allOf": [
                   { "not": { "required": ["pinned_checksum"] } },
                   { "not": { "required": ["checksum_url_template"] } },
+                  { "not": { "required": ["checksum_manifest"] } },
                   { "not": { "required": ["gpg_key_url"] } },
                   { "not": { "required": ["signature_url_template"] } },
                   { "not": { "required": ["sigstore_identity"] } },
