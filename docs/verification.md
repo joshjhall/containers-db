@@ -63,7 +63,7 @@ read this paragraph.
 | ---- | ------------------------------------------------------------------ | ------------------------------------ | ---------------------- |
 | 1    | `algorithm` ∈ {`gpg`, `sigstore`} + matching key/identity pair     | tier 2/3/4 carriers                  | `gpg`, `sigstore`      |
 | 2    | `algorithm` ∈ {`sha256`, `sha512`}, `pinned_checksum`              | tier 1/3/4 carriers                  | `sha256`, `sha512`     |
-| 3    | `algorithm` ∈ {`sha256`, `sha512`}, `checksum_url_template`        | tier 1/2/4 carriers                  | `sha256`, `sha512`     |
+| 3    | `algorithm` ∈ {`sha256`, `sha512`}, `checksum_url_template`; optional `checksum_manifest` | tier 1/2/4 carriers                  | `sha256`, `sha512`     |
 | 4    | `tofu: true`                                                       | tier 1/2/3 carriers                  | optional, hash only    |
 
 The "matching key/identity pair" for Tier 1 is one of:
@@ -108,6 +108,29 @@ Tier 3 (published):
 }
 ```
 
+Tier 3 (published, multi-entry manifest):
+
+```json
+{
+  "tier": 3,
+  "algorithm": "sha256",
+  "checksum_url_template": "https://example.invalid/v{version}/SHASUMS256.txt",
+  "checksum_manifest": true
+}
+```
+
+Set `checksum_manifest: true` when the checksum URL serves one
+`<digest>  <filename>` line per artifact in the release (Node's
+`SHASUMS256.txt` is the canonical example) rather than a single checksum for
+a single artifact (rust's `rustup-init.sha256`).
+
+Consumers MUST select the line whose filename matches the resolved artifact,
+and MUST fail verification when no line matches or any line is malformed.
+This is not a robustness nicety: a manifest lists every architecture's
+artifact, so selecting by position rather than by filename verifies a
+*different* architecture's binary and **passes**. There is no safe fallback,
+so there is no fallback.
+
 Tier 4 (TOFU):
 
 ```json
@@ -119,5 +142,6 @@ Tier 4 (TOFU):
 ```
 
 Complete fixture documents for every tier live in
-`fixtures/tier{1,2,3,4}-example.json`. Counter-examples that the schema
-must reject live in `fixtures/_negative/`.
+`fixtures/tier{1,2,3,4}-example.json`, plus
+`fixtures/tier3-manifest-example.json` for the manifest variant.
+Counter-examples that the schema must reject live in `fixtures/_negative/`.
