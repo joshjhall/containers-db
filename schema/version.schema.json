@@ -616,6 +616,17 @@
           "type": "object",
           "minProperties": 1,
           "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "prefix": {
+          "description": "Absolute directory a `binary-tarball` method extracts into (go and node both use `/usr/local`). Absolute, unlike `bin_source_dir` and `cache_dirs`, which are cache-root-relative because the cache root is an installer run-time choice — an extraction prefix is a system location the catalog names outright. Omit to accept luggage's default of `/usr/local`. Only meaningful for `method_kind: binary-tarball`.",
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 1
+        },
+        "strip_components": {
+          "description": "Leading path components to strip from each archive entry, matching `tar --strip-components`. Omit (or `0`) to keep the archive's own top-level directory — go's tarball carries `go/`, which becomes `<prefix>/go`. Use `1` to flatten a versioned root directly into the prefix — node's `node-v22.../bin/node` becomes `<prefix>/bin/node`. Only meaningful for `method_kind: binary-tarball`.",
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

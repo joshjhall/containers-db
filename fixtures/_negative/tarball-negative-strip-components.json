@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_bad",
+  "version": "1.0.0",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "method_kind": "binary-tarball",
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "source_url_template": "https://example.invalid/sample/1.0.0.tar.gz",
+      "strip_components": -1
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-08-27T00:00:00Z",
+    "schema_version": 1
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_tarball",
+  "version": "1.2.3",
+  "released": "2026-08-01",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "tarball-strip",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": ["debian", "ubuntu"],
+        "arch": ["amd64", "arm64"]
+      },
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "source_url_template": "https://example.invalid/sample-tarball/{version}/sample-{version}-linux-{arch}.tar.xz",
+      "prefix": "/usr/local",
+      "strip_components": 1,
+      "binaries": ["sample"],
+      "bin_source_dir": "bin"
+    },
+    {
+      "name": "tarball-no-strip",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": "alpine"
+      },
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "source_url_template": "https://example.invalid/sample-tarball/{version}/sample-{version}-musl-{arch}.tar.gz"
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-08-27T00:00:00Z",
+    "updated_at": "2026-08-27T00:00:00Z",
+    "schema_version": 1
+  }
+}
