@@ -4,6 +4,28 @@
   "version": "0.1.0",
   "released": "2026-04-01",
   "channel": "stable",
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-04-29T00:00:00Z",
+      "ci_run": "https://example.invalid/runs/1",
+      "result": "pass",
+      "image_ref": "ghcr.io/example/base-debian-12-amd64",
+      "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "verification_warnings": [
+        {
+          "tier": 4,
+          "tool": "sample_tofu",
+          "version": "0.1.0",
+          "algorithm": "sha256",
+          "digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "message": "TIER 4 TOFU: accepted sample_tofu@0.1.0 on trust-on-first-use; no publisher checksum establishes the artifact's authenticity."
+        }
+      ]
+    }
+  ],
   "install_methods": [
     {
       "name": "tarball",

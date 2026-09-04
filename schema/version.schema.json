@@ -223,9 +223,52 @@
           "type": "array",
           "items": { "$ref": "#/$defs/InstalledDependency" }
         },
+        "verification_warnings": {
+          "description": "Verifications that succeeded on weaker grounds than the tier name alone suggests — currently only tier-4 TOFU acceptances, where an artifact was installed with nothing establishing its authenticity. Structured rather than prose so the evidence database can answer `which shipped images installed something with no authenticity check?` as a field query: a reworded warning must not silently break that query. Produced by `luggage install --json-report` and carried through `record-evidence`; absent on the ordinary verified install, which is what keeps it a signal rather than noise in every row. See `VerificationWarning`.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/VerificationWarning" }
+        },
         "notes": {
           "description": "Free-form notes (e.g., flake reason for `fail`, why `skip`).",
           "type": "string"
+        }
+      }
+    },
+    "VerificationWarning": {
+      "description": "One verification that passed on weaker grounds than its tier name suggests. Carried on `TestEntry.verification_warnings[]`. Distinct from `error_class: verify`: that records a verification that *failed* and sank the install; this records one that *succeeded* while establishing less than a reader would assume — the install proceeded, and the row is the only durable trace of on what basis.",
+      "type": "object",
+      "required": ["tier", "tool", "version", "digest", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "description": "Verification tier that produced the warning. Only tier 4 (trust-on-first-use) currently warns: the digest was recorded from the artifact itself rather than checked against a publisher-published checksum, so it detects later tampering but establishes nothing about the first fetch.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "tool": {
+          "description": "Catalog id of the tool whose artifact was accepted on these grounds.",
+          "$ref": "#/$defs/ToolId"
+        },
+        "version": {
+          "description": "Version of the tool that was accepted.",
+          "type": "string",
+          "minLength": 1
+        },
+        "algorithm": {
+          "description": "Digest algorithm used. Optional — omitted when the catalog named none and the build's default applied.",
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "description": "Hex digest recorded for the artifact. Under TOFU this is the value the artifact will be pinned against on subsequent installs, so it is the anchor for any later authenticity investigation.",
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "description": "Human-readable explanation of what the verification did and did not establish, and what to do about it. Retained alongside the structured fields for readability; queries should key off the structured fields, never this string.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },
