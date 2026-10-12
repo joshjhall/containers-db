@@ -42,14 +42,50 @@
       "status": "supported"
     },
     {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "status": "supported"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "arm64",
+      "status": "supported"
+    },
+    {
       "os": "alpine",
-      "os_version": "3.21",
+      "os_version": "3.22",
       "arch": "amd64",
       "status": "supported"
     },
     {
       "os": "alpine",
-      "os_version": "3.21",
+      "os_version": "3.22",
+      "arch": "arm64",
+      "status": "supported"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "amd64",
+      "status": "supported"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "arm64",
+      "status": "supported"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.24",
+      "arch": "amd64",
+      "status": "supported"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.24",
       "arch": "arm64",
       "status": "supported"
     },
@@ -62,6 +98,18 @@
     {
       "os": "rhel",
       "os_version": "9",
+      "arch": "arm64",
+      "status": "supported"
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "amd64",
+      "status": "supported"
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
       "arch": "arm64",
       "status": "supported"
     }
@@ -294,4 +342,3 @@
     "schema_version": 1
   }
 }
-
