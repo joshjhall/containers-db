@@ -37,6 +37,11 @@ pub fn render_version(
 
     if let Some(obj) = out.as_object_mut() {
         obj.insert("version".into(), Value::String(new.version.clone()));
+        // Evidence belongs to the version it was recorded for. The template
+        // is an existing entry, often one evidence-run has already proven, so
+        // carrying its rows over would make a never-tested release claim
+        // another version's results.
+        obj.insert("tested".into(), json!([]));
         obj.insert(
             "released".into(),
             Value::String(new.released_at.format("%Y-%m-%d").to_string()),
@@ -57,8 +62,9 @@ pub fn render_version(
     out
 }
 
-/// Mutate `index.raw` in place: append new versions to `available[]`
-/// and replace the entire `activity` block with the recomputed values.
+/// Mutate `index.raw` in place: add new versions to `available[]`, keep it
+/// in ascending version order, and replace the entire `activity` block with
+/// the recomputed values.
 pub fn update_index(
     index: &mut ToolIndex,
     new_versions: &[String],
@@ -86,6 +92,9 @@ pub fn update_index(
             available.push(json!({ "version": v }));
         }
     }
+    // A backfill adds versions older than every existing entry; a plain push
+    // would list 1.82.0 after 1.99.0.
+    available.sort_by_cached_key(|e| version_key(e.get("version").and_then(Value::as_str)));
 
     obj.insert(
         "activity".into(),
@@ -96,6 +105,15 @@ pub fn update_index(
             "scanned_at": now_str,
         }),
     );
+}
+
+/// Sort key for a dotted numeric version: `1.9.0` < `1.10.0`. Non-numeric
+/// segments sort as 0, and a missing version sorts first.
+fn version_key(v: Option<&str>) -> Vec<u64> {
+    v.unwrap_or("")
+        .split('.')
+        .map(|p| p.parse().unwrap_or(0))
+        .collect()
 }
 
 /// Walk every string in `value` and replace whole-string matches of
@@ -170,6 +188,49 @@ mod tests {
         assert_eq!(out["metadata"]["added_at"], "2026-05-28T00:00:00Z");
         assert_eq!(out["metadata"]["updated_at"], "2026-05-28T00:00:00Z");
         assert_eq!(out["metadata"]["schema_version"], 1);
+    }
+
+    #[test]
+    fn render_version_drops_template_evidence() {
+        let mut t = template();
+        t["tested"] = json!([{ "os": "debian", "arch": "amd64", "result": "pass" }]);
+        let upstream = UpstreamVersion {
+            version: "1.95.0".into(),
+            released_at: at(2026, 5, 28),
+            channel: "stable".into(),
+        };
+        let out = render_version(&t, "1.94.0", &upstream, at(2026, 5, 28));
+        assert_eq!(
+            out["tested"],
+            json!([]),
+            "a new version must not inherit evidence"
+        );
+    }
+
+    #[test]
+    fn update_index_keeps_available_in_version_order() {
+        let mut idx = ToolIndex {
+            id: "rust".into(),
+            source_repo: None,
+            raw: json!({ "available": [{ "version": "1.93.0" }, { "version": "1.99.0" }] }),
+            path: std::path::PathBuf::from("/tmp/index.json"),
+        };
+        let signals = ActivitySignals::default();
+        update_index(
+            &mut idx,
+            &["1.9.0".into(), "1.82.0".into()],
+            &signals,
+            Score::VeryActive,
+            1,
+            at(2026, 10, 12),
+        );
+        let order: Vec<&str> = idx.raw["available"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["version"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, vec!["1.9.0", "1.82.0", "1.93.0", "1.99.0"]);
     }
 
     #[test]

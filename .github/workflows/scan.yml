@@ -17,6 +17,10 @@ on:
         required: false
         type: boolean
         default: false
+      backfill_from:
+        description: "With `tool`: backfill releases from this version up to the oldest cataloged one (e.g. 1.82.0) instead of scanning forward."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -80,13 +84,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_TOOL: ${{ inputs.tool }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_BACKFILL_FROM: ${{ inputs.backfill_from }}
         run: |
           set -euo pipefail
           dry_run_flag=""
           if [ "$INPUT_DRY_RUN" = "true" ]; then
             dry_run_flag="--dry-run"
           fi
-          if [ -n "$INPUT_TOOL" ]; then
+          if [ -n "$INPUT_BACKFILL_FROM" ]; then
+            if [ -z "$INPUT_TOOL" ]; then
+              echo "::error::backfill_from requires tool" >&2
+              exit 1
+            fi
+            # shellcheck disable=SC2086
+            cargo run --release -p scanner -- backfill "$INPUT_TOOL" --from "$INPUT_BACKFILL_FROM" $dry_run_flag
+          elif [ -n "$INPUT_TOOL" ]; then
             # shellcheck disable=SC2086
             cargo run --release -p scanner -- tool "$INPUT_TOOL" $dry_run_flag
           else
