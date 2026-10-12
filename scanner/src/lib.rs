@@ -83,37 +83,64 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 println!("scanner: no tools due for scanning");
                 return Ok(());
             }
+            let mut failed = Vec::new();
             for tool in due_tools {
                 let Some(adapter) = registry.get(&tool.id).cloned() else {
                     println!("scanner: {}: no adapter registered, skipping", tool.id);
                     continue;
                 };
-                scan_one_with_failure_reporting(&repo_root, &tool.id, adapter, now, dry_run).await;
+                if !scan_one_with_failure_reporting(&repo_root, &tool.id, adapter, now, dry_run)
+                    .await
+                {
+                    failed.push(tool.id);
+                }
             }
+            fail_if_any(&failed)?;
         }
         Command::Tool { id, dry_run } => {
             let adapter = registry
                 .get(&id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("no adapter registered for `{id}`"))?;
-            scan_one_with_failure_reporting(&repo_root, &id, adapter, now, dry_run).await;
+            if !scan_one_with_failure_reporting(&repo_root, &id, adapter, now, dry_run).await {
+                fail_if_any(&[id])?;
+            }
         }
     }
     Ok(())
 }
 
+/// Turn the per-tool failures collected during a run into the run's
+/// result, so a scan that failed for any tool exits non-zero.
+///
+/// The tracking issue alone is not enough: if filing it fails too (a
+/// missing label, a permissions change), a run that reports success
+/// leaves nothing anywhere to show that the catalog stopped updating.
+fn fail_if_any(failed: &[String]) -> anyhow::Result<()> {
+    if failed.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!("scan failed for: {}", failed.join(", "))
+}
+
 /// Wrap [`scan_one`] so any error surfaces as a tracking issue (unless
 /// we're in dry-run mode). The orchestrator continues to the next tool
-/// — one broken adapter shouldn't take down the whole scan.
+/// — one broken adapter shouldn't take down the whole scan — and the
+/// caller turns a `false` return into a failed run via [`fail_if_any`].
+///
+/// Returns `true` when the tool scanned cleanly.
 async fn scan_one_with_failure_reporting(
     repo_root: &Path,
     tool_id: &str,
     adapter: Arc<dyn Adapter>,
     now: DateTime<Utc>,
     dry_run: bool,
-) {
+) -> bool {
     match scan_one(repo_root, tool_id, adapter, now, dry_run).await {
-        Ok(outcome) => println!("scanner: {tool_id}: {outcome:?}"),
+        Ok(outcome) => {
+            println!("scanner: {tool_id}: {outcome:?}");
+            true
+        }
         Err(e) => {
             eprintln!("scanner: {tool_id} FAILED: {e:#}");
             if !dry_run
@@ -122,6 +149,7 @@ async fn scan_one_with_failure_reporting(
             {
                 eprintln!("scanner: {tool_id}: failure-reporting itself failed: {report_err:#}");
             }
+            false
         }
     }
 }
@@ -312,6 +340,17 @@ mod tests {
             }),
             path: PathBuf::from("/tmp/index.json"),
         }
+    }
+
+    #[test]
+    fn fail_if_any_passes_a_clean_run() {
+        assert!(fail_if_any(&[]).is_ok());
+    }
+
+    #[test]
+    fn fail_if_any_names_every_failed_tool() {
+        let err = fail_if_any(&["rust".to_string(), "gcc".to_string()]).unwrap_err();
+        assert_eq!(err.to_string(), "scan failed for: rust, gcc");
     }
 
     #[test]
