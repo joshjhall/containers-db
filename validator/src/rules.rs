@@ -8,8 +8,9 @@
 //!   2. When a `Dependency` targets a `kind: system_package` entry,
 //!      `version` (an exact pin) is forbidden — apt selects, the
 //!      catalog only guards via `version_constraint`.
-//!   3. When a `Dependency` narrows `platforms`, every listed platform
-//!      must appear in the target system_package's `platforms` map.
+//!   3. When a `Dependency` narrows `platforms`, every listed platform's
+//!      distro (the part before any `:version`) must appear in the target
+//!      system_package's `platforms` map.
 //!   4. Every `version` and `version_constraint` parses through
 //!      `containers_common::version` against the target tool's
 //!      `version_style`.
@@ -108,7 +109,13 @@ pub fn check_all(
 
         let label = relative_path(repo_root, file);
 
-        for (idx, dep) in doc.requires.as_deref().unwrap_or_default().iter().enumerate() {
+        for (idx, dep) in doc
+            .requires
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             let pointer = format!("/requires/{idx}");
             check_dep(dep, &pointer, &label, catalog, &mut diagnostics);
             // Stash for rule 6.
@@ -170,9 +177,7 @@ fn discover_version_files(repo_root: &Path) -> Result<Vec<PathBuf>, RulesError> 
             }
 
             // versions/<v>.json — under any directory called `versions`
-            let in_versions = path
-                .components()
-                .any(|c| c.as_os_str() == "versions");
+            let in_versions = path.components().any(|c| c.as_os_str() == "versions");
             // fixtures/tier{N}-example.json
             let is_tier_example = name.starts_with("tier") && name.ends_with("-example.json");
             if in_versions || is_tier_example {
@@ -264,11 +269,17 @@ fn check_dep(
 
     // Rule 3: platform narrowing must intersect target's platform map.
     if target.kind == "system_package"
-        && let (Some(narrowed), Some(declared)) =
-            (dep.platforms.as_ref(), target.system_package_platforms.as_ref())
+        && let (Some(narrowed), Some(declared)) = (
+            dep.platforms.as_ref(),
+            target.system_package_platforms.as_ref(),
+        )
     {
-        for distro in narrowed {
-            if !declared.contains(distro) {
+        for selector in narrowed {
+            // `rhel:10` narrows to one release; the package map is per distro.
+            let distro = selector
+                .split_once(':')
+                .map_or(selector.as_str(), |(d, _)| d);
+            if !declared.iter().any(|d| d == distro) {
                 let declared_list: Vec<&str> = declared.iter().map(String::as_str).collect();
                 let declared_str = if declared_list.is_empty() {
                     "none".to_string()
@@ -279,8 +290,8 @@ fn check_dep(
                     origin: origin.to_string(),
                     pointer: pointer.to_string(),
                     message: format!(
-                        "dep on system_package `{}` narrows to platform `{}`, but `{}` does not declare that platform (declared: [{}])",
-                        dep.tool, distro, dep.tool, declared_str,
+                        "dep on system_package `{}` narrows to platform `{}`, but `{}` does not declare distro `{}` (declared: [{}])",
+                        dep.tool, selector, dep.tool, distro, declared_str,
                     ),
                 });
             }

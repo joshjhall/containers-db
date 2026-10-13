@@ -100,6 +100,11 @@
       "minLength": 1,
       "maxLength": 64
     },
+    "PlatformSelector": {
+      "description": "A distro, optionally narrowed to one release: `rhel` matches every RHEL release, `rhel:10` only RHEL 10. The version part matches the host's normalized os_version exactly (luggage keys RHEL by major, Alpine by major.minor, Debian/Ubuntu as reported). For requirements that differ between releases of one distro, e.g. RHEL 10 UBI minimal lacking `su`.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*(:[0-9][0-9.]*)?$"
+    },
     "Distro": {
       "description": "OS / distribution identifier. Free-form string so non-Linux targets can be added later (e.g., `darwin`, `windows`). Common Linux values: `debian`, `ubuntu`, `alpine`, `rhel`, `fedora`, `arch`.",
       "type": "string",
@@ -347,9 +352,9 @@
           "default": true
         },
         "platforms": {
-          "description": "Optional narrowing — restrict this Dependency to the listed distros. When a Dependency targets a `kind: system_package`, every listed platform must appear in the target's `system_package.platforms` map; the cross-ref validator enforces this.",
+          "description": "Optional narrowing — restrict this Dependency to the listed platforms, each a `$defs/PlatformSelector` (`rhel` = every release, `rhel:10` = one release). When a Dependency targets a `kind: system_package`, every listed platform's distro must appear in the target's `system_package.platforms` map; the cross-ref validator enforces this.",
           "type": "array",
-          "items": { "$ref": "#/$defs/Distro" },
+          "items": { "$ref": "#/$defs/PlatformSelector" },
           "minItems": 1,
           "uniqueItems": true
         }

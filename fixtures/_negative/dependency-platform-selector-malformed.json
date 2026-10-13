@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_bad",
+  "version": "1.0.0",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "method_kind": "binary-tarball",
+      "verification": {
+        "tier": 4,
+        "algorithm": "sha256",
+        "tofu": true
+      },
+      "source_url_template": "https://example.invalid/sample-bad/1.0.0.tar.gz",
+      "dependencies": [
+        {
+          "tool": "gcc",
+          "platforms": [
+            "RHEL 10"
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-04-29T00:00:00Z",
+    "schema_version": 1
+  }
+}

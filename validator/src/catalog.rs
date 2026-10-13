@@ -205,7 +205,13 @@ mod tests {
         let catalog = load(root).unwrap();
         assert_eq!(catalog.len(), 2);
         assert_eq!(catalog.get("foo").unwrap().kind, "cli");
-        assert!(catalog.get("foo").unwrap().system_package_platforms.is_none());
+        assert!(
+            catalog
+                .get("foo")
+                .unwrap()
+                .system_package_platforms
+                .is_none()
+        );
         let bar = catalog.get("bar").unwrap();
         assert_eq!(bar.kind, "system_package");
         let plats = bar.system_package_platforms.as_ref().unwrap();
@@ -250,7 +256,10 @@ mod tests {
             r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli" }"#,
         );
         let catalog = load(root).unwrap();
-        assert_eq!(catalog.get("foo").unwrap().version_style, VersionStyle::Semver);
+        assert_eq!(
+            catalog.get("foo").unwrap().version_style,
+            VersionStyle::Semver
+        );
     }
 
     #[test]

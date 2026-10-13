@@ -163,7 +163,11 @@ fn unparseable_version_pin_fails() {
     );
     let cat = catalog::load(root).unwrap();
     let diags = rules::check_all(root, &cat, None).unwrap();
-    let msg = diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
+    let msg = diags
+        .iter()
+        .map(|d| d.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(msg.contains("unparseable version literal"), "got: {msg}");
 }
 
@@ -187,7 +191,11 @@ fn version_and_constraint_on_same_edge_is_mutually_exclusive() {
     );
     let cat = catalog::load(root).unwrap();
     let diags = rules::check_all(root, &cat, None).unwrap();
-    let msg = diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
+    let msg = diags
+        .iter()
+        .map(|d| d.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         msg.contains("mutually exclusive"),
         "expected mutual-exclusion diagnostic, got: {msg}",
@@ -228,7 +236,10 @@ fn requires_intersection_across_catalog_passes_when_compatible() {
     );
     let cat = catalog::load(root).unwrap();
     let diags = rules::check_all(root, &cat, None).unwrap();
-    assert!(diags.is_empty(), "expected compatible ranges to pass: {diags:?}");
+    assert!(
+        diags.is_empty(),
+        "expected compatible ranges to pass: {diags:?}"
+    );
 }
 
 #[test]
@@ -265,7 +276,11 @@ fn requires_intersection_fails_on_disjoint_ranges() {
     );
     let cat = catalog::load(root).unwrap();
     let diags = rules::check_all(root, &cat, None).unwrap();
-    let msg = diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
+    let msg = diags
+        .iter()
+        .map(|d| d.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         msg.contains("requires[] intersection on `cli_b` is unsatisfiable"),
         "expected unsatisfiable-intersection diagnostic, got: {msg}",
@@ -297,4 +312,50 @@ fn only_mode_skips_intersection_check() {
     // aggregation path and only reports per-edge violations.
     let diags = rules::check_all(root, &cat, Some(&path)).unwrap();
     assert!(diags.is_empty(), "got: {diags:?}");
+}
+
+/// Write cli_a@1.0.0 depending on `gcc` narrowed to `platforms`.
+fn dep_with_platforms(root: &Path, platforms: &str) {
+    write(
+        &root.join("tools/cli_a/versions/1.0.0.json"),
+        &format!(
+            r#"{{
+            "schemaVersion": 1, "tool": "cli_a", "version": "1.0.0",
+            "install_methods": [
+                {{ "name": "tarball",
+                  "verification": {{ "tier": 4, "algorithm": "sha256", "tofu": true }},
+                  "source_url_template": "https://x/{{version}}",
+                  "dependencies": [ {{ "tool": "gcc", "platforms": {platforms} }} ] }}
+            ]
+        }}"#
+        ),
+    );
+}
+
+#[test]
+fn platform_selector_with_release_checks_only_the_distro() {
+    // `debian:12` narrows to one Debian release; gcc's package map is keyed
+    // per distro, and debian is declared.
+    let tmp = fixture_repo();
+    let root = tmp.path();
+    dep_with_platforms(root, r#"["debian:12", "alpine"]"#);
+    let cat = catalog::load(root).unwrap();
+    let diags = rules::check_all(root, &cat, None).unwrap();
+    assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+}
+
+#[test]
+fn platform_selector_with_release_on_undeclared_distro_fails() {
+    // gcc declares debian + alpine only; `rhel:10` names an undeclared distro.
+    let tmp = fixture_repo();
+    let root = tmp.path();
+    dep_with_platforms(root, r#"["rhel:10"]"#);
+    let cat = catalog::load(root).unwrap();
+    let diags = rules::check_all(root, &cat, None).unwrap();
+    assert_eq!(diags.len(), 1, "expected one diagnostic, got: {diags:?}");
+    let msg = &diags[0].message;
+    assert!(
+        msg.contains("`rhel:10`") && msg.contains("distro `rhel`"),
+        "message should name the selector and its distro: {msg}"
+    );
 }
