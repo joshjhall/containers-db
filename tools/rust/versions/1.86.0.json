@@ -267,7 +267,35 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "alpine",
+      "os_version": "3.24",
+      "arch": "amd64",
+      "tested_at": "2026-10-13T02:55:20.762420182Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38338130148",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.24-amd64",
+      "image_digest": "sha256:948be56b5d32c361a94b33f5e3bf4ffec21626bdf176e0608cae61b1a0afbb22",
+      "duration_seconds": 19.524597102,
+      "version_output": "rustc 1.86.0 (05f9846f8 2025-03-31)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ]
+    }
+  ],
   "tool": "rust",
   "version": "1.86.0"
 }
+
