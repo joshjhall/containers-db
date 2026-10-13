@@ -274,7 +274,21 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "arm64",
+      "tested_at": "2026-10-13T16:31:43.782968589Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38430418680",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-arm64",
+      "image_digest": "sha256:7418e0428bd9e9354a5d740a96c6c8f0fe30b6a466c512a8066ee095ef773981",
+      "duration_seconds": 0.000591872,
+      "error_class": "infra"
+    }
+  ],
   "tool": "rust",
   "version": "1.85.1"
 }
+
