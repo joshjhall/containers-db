@@ -274,7 +274,21 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-10-13T16:26:47.340053581Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38430418680",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:b02a145e6d8a6c2b6e9bf7cacda21c0b5adca69c4e9b56a4652160b6e0d44d1a",
+      "duration_seconds": 0.001043331,
+      "error_class": "infra"
+    }
+  ],
   "tool": "rust",
   "version": "1.82.0"
 }
+
