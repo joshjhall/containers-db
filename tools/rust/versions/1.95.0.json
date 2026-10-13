@@ -184,6 +184,35 @@
           "version": "2.36-9+deb12u14"
         }
       ]
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "arm64",
+      "tested_at": "2026-10-13T02:24:24.608827359Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38335694125",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-arm64",
+      "image_digest": "sha256:d57145cbc17afd0cecb70e6f94684c7cdfb581f44ef547e9cf6fca33de7ef05e",
+      "duration_seconds": 18.114353624,
+      "version_output": "rustc 1.95.0 (59807616e 2026-04-14)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:14.2.0-1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.41-12+deb13u4"
+        }
+      ]
     }
   ],
   "install_methods": [
@@ -342,3 +371,4 @@
     "schema_version": 1
   }
 }
+
