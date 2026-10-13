@@ -114,7 +114,37 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-10-13T02:26:48.420998265Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38335694125",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:f84c1d1ee281674a8d6febfe48e25a6977f5e8d8dc36f4cbb4e0b6d6dbfc2c99",
+      "duration_seconds": 19.207378109,
+      "version_output": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:12.2.0-3"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.36-9+deb12u14"
+        }
+      ]
+    }
+  ],
   "install_methods": [
     {
       "name": "rustup-init",
@@ -271,3 +301,4 @@
     "schema_version": 1
   }
 }
+
