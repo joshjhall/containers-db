@@ -267,7 +267,21 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "amd64",
+      "tested_at": "2026-10-13T02:58:30.688642637Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38338130148",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-amd64",
+      "image_digest": "sha256:71a235234a56773ccf597404244da2c7c6beb4eed29c2716f6b4d058ca956da5",
+      "duration_seconds": 0.001072069,
+      "error_class": "infra"
+    }
+  ],
   "tool": "rust",
   "version": "1.90.0"
 }
+
