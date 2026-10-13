@@ -267,7 +267,38 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "amd64",
+      "tested_at": "2026-10-13T03:09:19.643338714Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38338130148",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-amd64",
+      "image_digest": "sha256:1ca693813e6ba53781760f246fe2012ca438afdf849dd1f30ed05bafd388fe3b",
+      "duration_seconds": 25.324948923,
+      "version_output": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260601~24.04.1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:13.2.0-7ubuntu1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.39-0ubuntu8.9"
+        }
+      ]
+    }
+  ],
   "tool": "rust",
   "version": "1.92.0"
 }
+
