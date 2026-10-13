@@ -66,7 +66,10 @@ fn main() -> ExitCode {
     for d in &diagnostics {
         eprintln!("validate-catalog: {d}");
     }
-    eprintln!("validate-catalog FAILED: {} violation(s)", diagnostics.len());
+    eprintln!(
+        "validate-catalog FAILED: {} violation(s)",
+        diagnostics.len()
+    );
     ExitCode::from(1)
 }
 
