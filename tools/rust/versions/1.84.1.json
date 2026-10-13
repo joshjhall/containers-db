@@ -274,7 +274,21 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-10-13T16:29:31.461426419Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38430418680",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:0662148ac2db45b31d0492071f829c09ed39eb1f110f91b7331dcea301f5d71f",
+      "duration_seconds": 0.000742848,
+      "error_class": "infra"
+    }
+  ],
   "tool": "rust",
   "version": "1.84.1"
 }
+
