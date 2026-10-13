@@ -274,7 +274,21 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "arm64",
+      "tested_at": "2026-10-13T16:31:24.343175762Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38430418680",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-arm64",
+      "image_digest": "sha256:e63f41fd1a65a9178a8afe2b54e2231787af32b2349a6e35703ff46d664f4fd2",
+      "duration_seconds": 0.00056653,
+      "error_class": "infra"
+    }
+  ],
   "tool": "rust",
   "version": "1.86.0"
 }
+
