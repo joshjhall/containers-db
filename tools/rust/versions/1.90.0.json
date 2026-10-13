@@ -267,7 +267,38 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "arm64",
+      "tested_at": "2026-10-13T02:56:52.647925811Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38338130148",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-arm64",
+      "image_digest": "sha256:7418e0428bd9e9354a5d740a96c6c8f0fe30b6a466c512a8066ee095ef773981",
+      "duration_seconds": 17.729804867,
+      "version_output": "rustc 1.90.0 (1159e78c4 2025-09-14)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:14.2.0-1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.41-12+deb13u4"
+        }
+      ]
+    }
+  ],
   "tool": "rust",
   "version": "1.90.0"
 }
+
