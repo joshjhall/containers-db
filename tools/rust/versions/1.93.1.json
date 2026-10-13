@@ -114,7 +114,20 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "arm64",
+      "tested_at": "2026-10-13T02:22:51.201267977Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38335694125",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-arm64",
+      "image_digest": "sha256:edd43e282ac0df464435e240aeae5a2a600a394aa12596ff60ae3e1a6f382c1d",
+      "duration_seconds": 0.001638238,
+      "error_class": "infra"
+    }
+  ],
   "install_methods": [
     {
       "name": "rustup-init",
@@ -271,3 +284,4 @@
     "schema_version": 1
   }
 }
+
