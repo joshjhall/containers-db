@@ -96,13 +96,13 @@
       "description": "Production-grade releases. New stable cuts roughly every six weeks; patch releases as needed."
     }
   },
-  "default_version": "1.95.0",
+  "default_version": "1.99.0",
   "display_name": "Rust",
   "homepage": "https://www.rust-lang.org",
   "id": "rust",
   "kind": "language",
   "license": "MIT OR Apache-2.0",
-  "minimum_recommended": "1.93.0",
+  "minimum_recommended": "1.82.0",
   "ordering": {},
   "primary_binary": "rustc",
   "schemaVersion": 1,
