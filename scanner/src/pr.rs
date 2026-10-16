@@ -154,11 +154,7 @@ pub fn deliver(
                 "scanner: {tool_id}: open scan PR #{pr} already covers {}, skipping",
                 covered.join(", ")
             );
-            // Drop the regenerated files so a later tool in the same run
-            // doesn't commit them.
-            let dir = format!("tools/{tool_id}");
-            git(repo_root, &["checkout", "--", &dir])?;
-            git(repo_root, &["clean", "-fd", "--", &dir])?;
+            discard_generated(repo_root, tool_id)?;
             Ok(Delivery::Skipped(pr))
         }
         Decision::UpdateExisting(pr) => on_branch_then_return(repo_root, || {
@@ -173,17 +169,47 @@ pub fn deliver(
 /// Run `f` (which commits onto a PR branch), then switch back to the
 /// branch the run started on. Without this, the next tool in a `due` run
 /// would cut its branch from this tool's commit and carry it into its PR.
+///
+/// A detached start is returned to by commit (`checkout --detach <sha>`):
+/// `--abbrev-ref` alone would yield the literal `HEAD`, a no-op checkout.
 fn on_branch_then_return<T>(repo_root: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    let start = git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
-    let start = start.trim();
+    let name = git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let start: Vec<String> = match name.trim() {
+        "HEAD" => {
+            let sha = git(repo_root, &["rev-parse", "HEAD"])?;
+            vec!["checkout".into(), "--detach".into(), sha.trim().into()]
+        }
+        branch => vec!["checkout".into(), branch.into()],
+    };
     let result = f();
-    let back = git(repo_root, &["checkout", start])
-        .with_context(|| format!("returning to `{start}` after delivering"));
-    // A delivery failure is the more useful error; report it over a
-    // failed return.
-    let value = result?;
-    back?;
-    Ok(value)
+    let args: Vec<&str> = start.iter().map(String::as_str).collect();
+    let back = git(repo_root, &args)
+        .with_context(|| format!("returning to the start (`git {}`)", args.join(" ")));
+    match (result, back) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Ok(_), Err(back_err)) => Err(back_err),
+        (Err(e), back) => {
+            // A delivery failure is the more useful error; still surface a
+            // failed return, since the next tool would branch from here.
+            if let Err(back_err) = back {
+                eprintln!("scanner: {back_err:#}");
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Drop regenerated `tools/<tool_id>/` changes after a skip, so a later
+/// tool in the same run doesn't commit them. Untracked files go first; the
+/// restore runs only when the directory has tracked files — for a tool new
+/// on the base, `git checkout -- <dir>` would fail on an unknown pathspec.
+fn discard_generated(repo_root: &Path, tool_id: &str) -> Result<()> {
+    let dir = format!("tools/{tool_id}");
+    git(repo_root, &["clean", "-fd", "--", &dir])?;
+    if !git(repo_root, &["ls-files", "--", &dir])?.trim().is_empty() {
+        git(repo_root, &["checkout", "--", &dir])?;
+    }
+    Ok(())
 }
 
 /// Upper bound on listed open PRs. Hitting it errors rather than risk
@@ -345,6 +371,63 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("push rejected"));
         assert_eq!(current_branch(p), "main");
+    }
+
+    #[test]
+    fn detached_start_is_returned_to_by_commit() {
+        let dir = temp_repo();
+        let p = dir.path();
+        let base = git(p, &["rev-parse", "HEAD"]).unwrap();
+        git(p, &["checkout", "-q", "--detach"]).unwrap();
+        on_branch_then_return(p, || {
+            git(p, &["checkout", "-q", "-b", "scan/a/x"])?;
+            std::fs::write(p.join("b"), "b").unwrap();
+            git(p, &["add", "b"])?;
+            git(p, &["commit", "-q", "-m", "tool a"])
+        })
+        .unwrap();
+        assert_eq!(current_branch(p), "HEAD", "still detached");
+        assert_eq!(git(p, &["rev-parse", "HEAD"]).unwrap(), base);
+    }
+
+    #[test]
+    fn failed_return_is_an_error() {
+        let dir = temp_repo();
+        let p = dir.path();
+        let err = on_branch_then_return(p, || {
+            git(p, &["checkout", "-q", "-b", "scan/a/x"])?;
+            git(p, &["branch", "-q", "-D", "main"])
+        })
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("returning to the start"));
+    }
+
+    #[test]
+    fn skip_cleanup_handles_a_tool_new_on_the_base() {
+        let dir = temp_repo();
+        let p = dir.path();
+        std::fs::create_dir_all(p.join("tools/newtool/versions")).unwrap();
+        std::fs::write(p.join("tools/newtool/versions/1.0.0.json"), "{}").unwrap();
+        discard_generated(p, "newtool").unwrap();
+        assert!(!p.join("tools/newtool").exists());
+    }
+
+    #[test]
+    fn skip_cleanup_restores_tracked_and_drops_untracked() {
+        let dir = temp_repo();
+        let p = dir.path();
+        std::fs::create_dir_all(p.join("tools/rust/versions")).unwrap();
+        std::fs::write(p.join("tools/rust/index.json"), "old").unwrap();
+        git(p, &["add", "tools"]).unwrap();
+        git(p, &["commit", "-q", "-m", "rust"]).unwrap();
+        std::fs::write(p.join("tools/rust/index.json"), "new").unwrap();
+        std::fs::write(p.join("tools/rust/versions/2.0.0.json"), "{}").unwrap();
+        discard_generated(p, "rust").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(p.join("tools/rust/index.json")).unwrap(),
+            "old"
+        );
+        assert!(!p.join("tools/rust/versions/2.0.0.json").exists());
     }
 
     fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
