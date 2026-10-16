@@ -590,7 +590,8 @@ mod tests {
         git(dir.path(), &["fetch", "-q", "origin"]).unwrap();
 
         let err = push_regenerated(dir.path(), "rust", &pr, "feat(rust): x").unwrap_err();
-        assert!(format!("{err:#}").contains("git push"), "{err:#}");
+        // `stale info` is git's lease rejection, not any push failure.
+        assert!(format!("{err:#}").contains("stale info"), "{err:#}");
         assert_eq!(
             rev(origin.path(), "scan/rust/old"),
             raced,
