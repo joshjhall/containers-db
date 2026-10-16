@@ -184,6 +184,8 @@ mod tests {
         assert_eq!(parse_pr_versions(b), vs(&["1.0.0"]));
     }
 
+    /// Two independent guards cover `\r`: `str::lines` strips `\r\n` and
+    /// the per-line `trim` strips a stray `\r`, so this fails only if both go.
     #[test]
     fn parse_accepts_crlf_line_endings() {
         let b = "## New versions\r\n\r\n- `1.0.0`\r\n- `1.0.1`\r\n\r\n## Activity\r\n- `2.0.0`\r\n";
@@ -210,8 +212,9 @@ mod tests {
 
     #[test]
     fn empty_new_versions_skip_vacuously() {
+        // Characterizes current behaviour; #407 decides the intended rule.
         // Callers return `NoChange` before `deliver` on an empty list
-        // (`lib.rs` scan + backfill), so the vacuous Skip is a no-op.
+        // (`lib.rs` scan + backfill), so the vacuous Skip is a no-op today.
         let prs = [pr(398, "scan/rust/2026-10-16", &["1.99.1"])];
         assert_eq!(
             decide("scan/rust/", &prs, &[]),
