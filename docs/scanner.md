@@ -158,6 +158,12 @@ from forks are ignored — their branch name and body are not trusted:
 If the open-PR listing is truncated or malformed, the scan fails rather
 than guessing.
 
+`scanner due` delivers several tools from one checkout. It records the
+starting branch and commit once, returns there after each PR, and checks
+it before every tool: if a previous tool left the checkout anywhere else,
+the run aborts instead of branching the next tool's PR from the wrong
+commit.
+
 The versions an open PR covers are read from the `## New versions`
 bullet list in its body (written by `pr_body`), not from the title — a
 backfill title names only a range. Hand-edit that list and the guard

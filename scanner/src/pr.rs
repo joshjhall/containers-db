@@ -166,6 +166,48 @@ pub fn deliver(
     }
 }
 
+/// Where a scan run started: the checked-out branch (or `None` when
+/// detached) and its commit. Every tool must start from here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Base {
+    branch: Option<String>,
+    sha: String,
+}
+
+impl Base {
+    /// Record the current checkout as the run's base.
+    pub fn capture(repo_root: &Path) -> Result<Self> {
+        let name = git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+        let sha = git(repo_root, &["rev-parse", "HEAD"])?;
+        let branch = match name.trim() {
+            "HEAD" => None,
+            b => Some(b.to_string()),
+        };
+        Ok(Base {
+            branch,
+            sha: sha.trim().to_string(),
+        })
+    }
+
+    /// Fail unless the checkout is still exactly at the base. A tool that
+    /// started anywhere else would cut its PR branch from a previous tool's
+    /// commit, so a `due` run stops here rather than continue (#403).
+    pub fn verify(&self, repo_root: &Path) -> Result<()> {
+        let now = Base::capture(repo_root)?;
+        if now != *self {
+            anyhow::bail!(
+                "checkout left at {} ({}), not the run's base {} ({}); \
+                 refusing to scan further tools from the wrong commit",
+                now.branch.as_deref().unwrap_or("detached HEAD"),
+                now.sha,
+                self.branch.as_deref().unwrap_or("detached HEAD"),
+                self.sha,
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Run `f` (which commits onto a PR branch), then switch back to the
 /// branch the run started on. Without this, the next tool in a `due` run
 /// would cut its branch from this tool's commit and carry it into its PR.
@@ -371,6 +413,51 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("push rejected"));
         assert_eq!(current_branch(p), "main");
+    }
+
+    #[test]
+    fn base_verify_passes_at_the_base() {
+        let dir = temp_repo();
+        let p = dir.path();
+        let base = Base::capture(p).unwrap();
+        base.verify(p).unwrap();
+    }
+
+    #[test]
+    fn base_verify_stops_a_run_left_on_a_pr_branch() {
+        // #403: tool A's return to base failed, leaving HEAD on its PR
+        // branch; the run must stop before tool B branches from there.
+        let dir = temp_repo();
+        let p = dir.path();
+        let base = Base::capture(p).unwrap();
+        git(p, &["checkout", "-q", "-b", "scan/a/x"]).unwrap();
+        std::fs::write(p.join("b"), "b").unwrap();
+        git(p, &["add", "b"]).unwrap();
+        git(p, &["commit", "-q", "-m", "tool a"]).unwrap();
+        let err = base.verify(p).unwrap_err();
+        assert!(err.to_string().contains("scan/a/x"), "{err:#}");
+    }
+
+    #[test]
+    fn base_verify_catches_same_branch_new_commit() {
+        let dir = temp_repo();
+        let p = dir.path();
+        let base = Base::capture(p).unwrap();
+        std::fs::write(p.join("b"), "b").unwrap();
+        git(p, &["add", "b"]).unwrap();
+        git(p, &["commit", "-q", "-m", "stray"]).unwrap();
+        assert!(base.verify(p).is_err());
+    }
+
+    #[test]
+    fn base_verify_detached_start() {
+        let dir = temp_repo();
+        let p = dir.path();
+        git(p, &["checkout", "-q", "--detach"]).unwrap();
+        let base = Base::capture(p).unwrap();
+        base.verify(p).unwrap();
+        git(p, &["checkout", "-q", "main"]).unwrap();
+        assert!(base.verify(p).is_err(), "on a branch, not detached");
     }
 
     #[test]
