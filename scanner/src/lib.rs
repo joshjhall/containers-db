@@ -10,6 +10,7 @@
 pub mod activity;
 pub mod adapter;
 pub mod adapters;
+pub mod dedup;
 pub mod due;
 pub mod failure;
 pub mod generate;
@@ -81,8 +82,25 @@ pub enum Outcome {
         url: String,
         new_versions: Vec<String>,
     },
+    /// An open PR was updated in place to cover the new versions.
+    PrUpdated {
+        url: String,
+        new_versions: Vec<String>,
+    },
+    /// An open PR already covered every new version; nothing was opened.
+    AlreadyCovered { pr: u64, new_versions: Vec<String> },
     /// Tool has no registered adapter — the orchestrator skipped it.
     NoAdapter,
+}
+
+impl Outcome {
+    fn delivered(delivery: pr::Delivery, new_versions: Vec<String>) -> Self {
+        match delivery {
+            pr::Delivery::Opened(url) => Outcome::PrOpened { url, new_versions },
+            pr::Delivery::Updated(url) => Outcome::PrUpdated { url, new_versions },
+            pr::Delivery::Skipped(pr) => Outcome::AlreadyCovered { pr, new_versions },
+        }
+    }
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -282,12 +300,17 @@ async fn scan_one(
         &result.signals,
         cadence_days,
     );
-    let url = pr::open_pr(repo_root, tool_id, &branch, &title, &body, "main")?;
-
-    Ok(Outcome::PrOpened {
-        url,
-        new_versions: new_version_strings,
-    })
+    let prefix = format!("scan/{tool_id}/");
+    let delivery = pr::deliver(
+        repo_root,
+        tool_id,
+        &prefix,
+        &branch,
+        &new_version_strings,
+        &title,
+        &body,
+    )?;
+    Ok(Outcome::delivered(delivery, new_version_strings))
 }
 
 /// `scanner backfill`: add releases older than the catalog's oldest entry.
@@ -382,11 +405,11 @@ async fn backfill_one(
         &result.signals,
         cadence_days,
     );
-    let url = pr::open_pr(repo_root, tool_id, &branch, &title, &body, "main")?;
-    Ok(Outcome::PrOpened {
-        url,
-        new_versions: versions,
-    })
+    let prefix = format!("backfill/{tool_id}/");
+    let delivery = pr::deliver(
+        repo_root, tool_id, &prefix, &branch, &versions, &title, &body,
+    )?;
+    Ok(Outcome::delivered(delivery, versions))
 }
 
 /// Upstream stable releases `v` with `from <= v < oldest`, ascending.

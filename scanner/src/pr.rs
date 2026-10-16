@@ -9,9 +9,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::activity::{ActivitySignals, Score};
+use crate::dedup::{self, Decision, OpenPr};
 
-/// Branch name for a scan PR: `scan/<tool>/<YYYY-MM-DD>`. Including the
-/// date keeps reruns from clobbering an open PR on the same tool.
+/// Branch name for a new scan PR: `scan/<tool>/<YYYY-MM-DD>`. An open PR
+/// on any earlier date is reused by [`deliver`] rather than duplicated.
 pub fn branch_name(tool_id: &str, now: DateTime<Utc>) -> String {
     format!("scan/{tool_id}/{}", now.format("%Y-%m-%d"))
 }
@@ -121,6 +122,113 @@ pub fn open_pr(
         &[
             "pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body,
         ],
+    )?;
+    Ok(url.trim().to_string())
+}
+
+/// How [`deliver`] handled a set of new versions.
+#[derive(Debug)]
+pub enum Delivery {
+    Opened(String),
+    Updated(String),
+    /// An open PR (by number) already covered every version.
+    Skipped(u64),
+}
+
+/// Open, update, or skip the PR for freshly generated `tools/<tool_id>/`
+/// files, so a tool never has more than one open PR per `prefix` (see
+/// [`crate::dedup`]). `branch` is used only when a new PR is opened.
+pub fn deliver(
+    repo_root: &Path,
+    tool_id: &str,
+    prefix: &str,
+    branch: &str,
+    new_versions: &[String],
+    title: &str,
+    body: &str,
+) -> Result<Delivery> {
+    let open = list_open_prs(repo_root)?;
+    match dedup::decide(prefix, &open, new_versions) {
+        Decision::Skip { pr, covered } => {
+            println!(
+                "scanner: {tool_id}: open scan PR #{pr} already covers {}, skipping",
+                covered.join(", ")
+            );
+            // Drop the regenerated files so a later tool in the same run
+            // doesn't commit them.
+            let dir = format!("tools/{tool_id}");
+            git(repo_root, &["checkout", "--", &dir])?;
+            git(repo_root, &["clean", "-fd", "--", &dir])?;
+            Ok(Delivery::Skipped(pr))
+        }
+        Decision::UpdateExisting(pr) => {
+            update_pr(repo_root, tool_id, &pr, title, body).map(Delivery::Updated)
+        }
+        Decision::OpenNew => {
+            open_pr(repo_root, tool_id, branch, title, body, "main").map(Delivery::Opened)
+        }
+    }
+}
+
+/// Open PRs in the repo, as [`OpenPr`]s.
+fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
+    let out = gh(
+        repo_root,
+        &[
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "200",
+            "--json",
+            "number,headRefName,body",
+        ],
+    )?;
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&out).context("parsing `gh pr list` output")?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            Some(OpenPr {
+                number: r.get("number")?.as_u64()?,
+                head: r.get("headRefName")?.as_str()?.to_string(),
+                body: r.get("body")?.as_str().unwrap_or_default().to_string(),
+            })
+        })
+        .collect())
+}
+
+/// Regenerate onto an existing PR's branch: reset it to the current HEAD
+/// (main + regenerated files), commit, force-push, and refresh the title
+/// and body. Returns the PR URL.
+fn update_pr(
+    repo_root: &Path,
+    tool_id: &str,
+    pr: &OpenPr,
+    title: &str,
+    body: &str,
+) -> Result<String> {
+    let number = pr.number.to_string();
+    // Refresh the tracking ref so --force-with-lease has a lease to check.
+    git(repo_root, &["fetch", "origin", &pr.head])?;
+    git(repo_root, &["checkout", "-B", &pr.head])?;
+    git(repo_root, &["add", &format!("tools/{tool_id}")])?;
+    git(
+        repo_root,
+        &["commit", "-m", &commit_message_from_title(title)],
+    )?;
+    git(
+        repo_root,
+        &["push", "--force-with-lease", "-u", "origin", &pr.head],
+    )?;
+    gh(
+        repo_root,
+        &["pr", "edit", &number, "--title", title, "--body", body],
+    )?;
+    let url = gh(
+        repo_root,
+        &["pr", "view", &number, "--json", "url", "--jq", ".url"],
     )?;
     Ok(url.trim().to_string())
 }
