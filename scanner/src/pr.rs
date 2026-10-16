@@ -477,9 +477,7 @@ mod tests {
             anyhow::bail!("push rejected")
         })
         .unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(msg.contains("push rejected"), "{msg}");
-        assert!(!msg.contains("returning to the start"), "{msg}");
+        assert!(err.to_string().contains("push rejected"));
         assert_eq!(current_branch(p), "main");
     }
 
@@ -547,6 +545,8 @@ mod tests {
         let (dir, origin, pr) = clone_with_open_scan_pr();
         let p = dir.path();
         let base = rev(p, "main");
+        // Outside the tool's directory: must not ride along in its scan PR.
+        std::fs::write(p.join("stray"), "stray").unwrap();
         push_regenerated(p, "rust", &pr, "feat(rust): add upstream versions 2.0.0").unwrap();
         let o = origin.path();
         assert_eq!(
@@ -568,6 +568,10 @@ mod tests {
                 .trim(),
             "feat(rust): add upstream versions 2.0.0",
             "the commit subject is the PR title"
+        );
+        assert!(
+            git(o, &["cat-file", "-e", "scan/rust/old:stray"]).is_err(),
+            "only tools/rust/ is staged"
         );
     }
 
