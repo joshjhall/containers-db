@@ -497,6 +497,11 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("push rejected"), "{msg}");
         assert!(!msg.contains("returning to the start"), "{msg}");
+        assert_eq!(
+            current_branch(p),
+            "scan/a/x",
+            "the return must have failed, or this covers the (Err, Ok) arm"
+        );
     }
 
     /// A clone of a bare `origin` whose open scan PR branch `scan/rust/old`
@@ -504,10 +509,12 @@ mod tests {
     /// regenerated `tools/rust/` files. Returns (clone, origin, the PR as
     /// listed — `head_oid` is the branch's real head).
     fn clone_with_open_scan_pr() -> (tempfile::TempDir, tempfile::TempDir, OpenPr) {
-        let origin = tempfile::tempdir().unwrap();
-        git(origin.path(), &["init", "-q", "--bare", "-b", "main"]).unwrap();
+        // temp_repo() first: its GIT_DIR guard must run before any git call,
+        // or a leaked GIT_DIR would `init --bare` the real repo.
         let dir = temp_repo();
         let p = dir.path();
+        let origin = tempfile::tempdir().unwrap();
+        git(origin.path(), &["init", "-q", "--bare", "-b", "main"]).unwrap();
         std::fs::create_dir_all(p.join("tools/rust")).unwrap();
         std::fs::write(p.join("tools/rust/index.json"), "old").unwrap();
         git(p, &["add", "tools"]).unwrap();
@@ -554,6 +561,13 @@ mod tests {
         assert_eq!(
             git(o, &["show", "scan/rust/old:tools/rust/versions/2.0.0.json"]).unwrap(),
             "{}"
+        );
+        assert_eq!(
+            git(o, &["log", "-1", "--format=%s", "scan/rust/old"])
+                .unwrap()
+                .trim(),
+            "feat(rust): add upstream versions 2.0.0",
+            "the commit subject is the PR title"
         );
     }
 
