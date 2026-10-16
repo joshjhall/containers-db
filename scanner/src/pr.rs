@@ -170,8 +170,13 @@ pub fn deliver(
     }
 }
 
+/// Upper bound on listed open PRs. Hitting it errors rather than risk
+/// missing the tool's scan PR and opening a duplicate.
+const PR_LIST_LIMIT: usize = 1000;
+
 /// Open PRs in the repo, as [`OpenPr`]s.
 fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
+    let limit = PR_LIST_LIMIT.to_string();
     let out = gh(
         repo_root,
         &[
@@ -180,28 +185,28 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
             "--state",
             "open",
             "--limit",
-            "200",
+            &limit,
             "--json",
-            "number,headRefName,body",
+            dedup::GH_PR_FIELDS,
         ],
     )?;
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_str(&out).context("parsing `gh pr list` output")?;
-    Ok(rows
-        .iter()
-        .filter_map(|r| {
-            Some(OpenPr {
-                number: r.get("number")?.as_u64()?,
-                head: r.get("headRefName")?.as_str()?.to_string(),
-                body: r.get("body")?.as_str().unwrap_or_default().to_string(),
-            })
-        })
-        .collect())
+    let prs = dedup::parse_open_prs(&out).map_err(anyhow::Error::msg)?;
+    if prs.len() >= PR_LIST_LIMIT {
+        anyhow::bail!(
+            "`gh pr list` hit its {PR_LIST_LIMIT}-PR limit; refusing to dedup on a truncated list"
+        );
+    }
+    Ok(prs)
 }
 
 /// Regenerate onto an existing PR's branch: reset it to the current HEAD
 /// (main + regenerated files), commit, force-push, and refresh the title
 /// and body. Returns the PR URL.
+///
+/// The lease is pinned to the head commit seen when the PRs were listed,
+/// so a push that raced in since then rejects this one instead of being
+/// overwritten. Commits already on the branch at listing time are
+/// replaced: the branch is regenerated from `main`.
 fn update_pr(
     repo_root: &Path,
     tool_id: &str,
@@ -210,18 +215,14 @@ fn update_pr(
     body: &str,
 ) -> Result<String> {
     let number = pr.number.to_string();
-    // Refresh the tracking ref so --force-with-lease has a lease to check.
-    git(repo_root, &["fetch", "origin", &pr.head])?;
+    let lease = format!("--force-with-lease={}:{}", pr.head, pr.head_oid);
     git(repo_root, &["checkout", "-B", &pr.head])?;
     git(repo_root, &["add", &format!("tools/{tool_id}")])?;
     git(
         repo_root,
         &["commit", "-m", &commit_message_from_title(title)],
     )?;
-    git(
-        repo_root,
-        &["push", "--force-with-lease", "-u", "origin", &pr.head],
-    )?;
+    git(repo_root, &["push", &lease, "-u", "origin", &pr.head])?;
     gh(
         repo_root,
         &["pr", "edit", &number, "--title", title, "--body", body],

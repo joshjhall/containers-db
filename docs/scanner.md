@@ -142,15 +142,21 @@ will then carry that change forward to subsequent versions.
 New versions are computed against `main`, so versions in an open,
 unmerged scan PR look new again on every run. Before opening a PR the
 scanner lists open PRs whose head starts with `scan/<tool>/` (or
-`backfill/<tool>/` for `scanner backfill`) and picks the oldest:
+`backfill/<tool>/` for `scanner backfill`) and picks the oldest. PRs
+from forks are ignored — their branch name and body are not trusted:
 
 - **Skip** — that PR already covers every new version. The scanner logs
   `open scan PR #N already covers <versions>, skipping`, discards the
   regenerated files, and succeeds (no failure issue).
 - **Update in place** — that PR misses some versions. The files are
-  regenerated onto its branch, force-pushed (`--force-with-lease`), and
-  its title and body refreshed with `gh pr edit`. No second PR is opened.
+  regenerated from `main` onto its branch, force-pushed with a lease
+  pinned to the head commit seen when listing, and its title and body
+  refreshed with `gh pr edit`. No second PR is opened. Manual commits on
+  that branch are replaced — carry them in a separate PR.
 - **Open new** — no matching open PR; a new `scan/<tool>/<date>` PR opens.
+
+If the open-PR listing is truncated or malformed, the scan fails rather
+than guessing.
 
 The versions an open PR covers are read from the `## New versions`
 bullet list in its body (written by `pr_body`), not from the title — a

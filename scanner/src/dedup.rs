@@ -14,7 +14,48 @@
 pub struct OpenPr {
     pub number: u64,
     pub head: String,
+    /// Head commit when listed — the explicit `--force-with-lease` value.
+    pub head_oid: String,
     pub body: String,
+    /// Head branch lives in a fork. Never trusted: anyone can open one.
+    pub cross_repo: bool,
+}
+
+/// `--json` fields [`parse_open_prs`] expects from `gh pr list`.
+pub const GH_PR_FIELDS: &str = "number,headRefName,headRefOid,body,isCrossRepository";
+
+/// Parse `gh pr list --json` output into [`OpenPr`]s.
+///
+/// Errors on malformed output rather than dropping rows: a dropped row
+/// would fail open into a duplicate PR. A missing `isCrossRepository`
+/// reads as cross-repo, so [`decide`] ignores the row.
+pub fn parse_open_prs(json: &str) -> Result<Vec<OpenPr>, String> {
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(json).map_err(|e| format!("parsing `gh pr list` output: {e}"))?;
+    rows.iter()
+        .map(|r| {
+            let missing = |k: &str| format!("`gh pr list` row missing `{k}`: {r}");
+            let text = |k: &str| {
+                r.get(k)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| missing(k))
+            };
+            Ok(OpenPr {
+                number: r
+                    .get("number")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| missing("number"))?,
+                head: text("headRefName")?,
+                head_oid: text("headRefOid")?,
+                body: text("body").unwrap_or_default(),
+                cross_repo: r
+                    .get("isCrossRepository")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true),
+            })
+        })
+        .collect()
 }
 
 /// What to do with a set of newly detected versions.
@@ -59,12 +100,13 @@ pub fn parse_pr_versions(body: &str) -> Vec<String> {
 ///
 /// `prefix` scopes the match to one tool and PR kind (`scan/<tool>/` or
 /// `backfill/<tool>/`); the trailing slash keeps `scan/rust/` from matching
-/// `scan/rust-dev/…`. When several open PRs match, the oldest (lowest
-/// number) is the one kept.
+/// `scan/rust-dev/…`. Fork PRs are ignored — their branch name and body are
+/// attacker-controlled, and trusting them would let anyone suppress a scan.
+/// When several open PRs match, the oldest (lowest number) is the one kept.
 pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Decision {
     let Some(pr) = open_prs
         .iter()
-        .filter(|pr| pr.head.starts_with(prefix))
+        .filter(|pr| !pr.cross_repo && pr.head.starts_with(prefix))
         .min_by_key(|pr| pr.number)
     else {
         return Decision::OpenNew;
@@ -101,7 +143,9 @@ mod tests {
         OpenPr {
             number,
             head: head.to_string(),
+            head_oid: "abc123".to_string(),
             body: body(versions),
+            cross_repo: false,
         }
     }
 
@@ -195,5 +239,36 @@ mod tests {
             decide("scan/rust/", &prs, &vs(&["1.99.1"])),
             Decision::UpdateExisting(prs[1].clone())
         );
+    }
+
+    #[test]
+    fn fork_pr_is_never_trusted() {
+        let mut fork = pr(30, "scan/rust/2026-10-16", &["1.99.1"]);
+        fork.cross_repo = true;
+        assert_eq!(
+            decide("scan/rust/", &[fork], &vs(&["1.99.1"])),
+            Decision::OpenNew
+        );
+    }
+
+    #[test]
+    fn parse_open_prs_reads_gh_json() {
+        let json = r#"[{"number":398,"headRefName":"scan/rust/2026-10-16","headRefOid":"9f27","body":null,"isCrossRepository":false},
+                      {"number":5,"headRefName":"x","headRefOid":"1","body":"b"}]"#;
+        let prs = parse_open_prs(json).unwrap();
+        assert_eq!(prs[0].number, 398);
+        assert_eq!(prs[0].head_oid, "9f27");
+        assert_eq!(prs[0].body, "");
+        assert!(!prs[0].cross_repo);
+        assert!(
+            prs[1].cross_repo,
+            "missing isCrossRepository must fail closed"
+        );
+    }
+
+    #[test]
+    fn parse_open_prs_rejects_malformed_rows() {
+        assert!(parse_open_prs(r#"[{"number":1,"headRefOid":"a"}]"#).is_err());
+        assert!(parse_open_prs("not json").is_err());
     }
 }
