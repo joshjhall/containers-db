@@ -161,13 +161,29 @@ pub fn deliver(
             git(repo_root, &["clean", "-fd", "--", &dir])?;
             Ok(Delivery::Skipped(pr))
         }
-        Decision::UpdateExisting(pr) => {
+        Decision::UpdateExisting(pr) => on_branch_then_return(repo_root, || {
             update_pr(repo_root, tool_id, &pr, title, body).map(Delivery::Updated)
-        }
-        Decision::OpenNew => {
+        }),
+        Decision::OpenNew => on_branch_then_return(repo_root, || {
             open_pr(repo_root, tool_id, branch, title, body, "main").map(Delivery::Opened)
-        }
+        }),
     }
+}
+
+/// Run `f` (which commits onto a PR branch), then switch back to the
+/// branch the run started on. Without this, the next tool in a `due` run
+/// would cut its branch from this tool's commit and carry it into its PR.
+fn on_branch_then_return<T>(repo_root: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let start = git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let start = start.trim();
+    let result = f();
+    let back = git(repo_root, &["checkout", start])
+        .with_context(|| format!("returning to `{start}` after delivering"));
+    // A delivery failure is the more useful error; report it over a
+    // failed return.
+    let value = result?;
+    back?;
+    Ok(value)
 }
 
 /// Upper bound on listed open PRs. Hitting it errors rather than risk
@@ -196,7 +212,8 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 }
 
 /// Regenerate onto an existing PR's branch: reset it to the current HEAD
-/// (main + regenerated files), commit, force-push, and refresh the title
+/// (the run's base + regenerated files — [`deliver`] returns to the base
+/// after each tool), commit, force-push, and refresh the title
 /// and body. Returns the PR URL.
 ///
 /// The lease is pinned to the head commit seen when the PRs were listed,
@@ -272,6 +289,63 @@ fn gh(repo_root: &Path, args: &[&str]) -> Result<String> {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    /// Temp repo on `main` with one commit. Hermetic: explicit identity,
+    /// no global config needed. Panics if an inherited `GIT_DIR` (e.g. from
+    /// a pre-push hook) would point `git` at a different repo.
+    fn temp_repo() -> tempfile::TempDir {
+        assert!(
+            std::env::var_os("GIT_DIR").is_none() && std::env::var_os("GIT_WORK_TREE").is_none(),
+            "unset GIT_DIR/GIT_WORK_TREE: the temp-repo tests would act on another repo"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]).unwrap();
+        git(p, &["config", "user.name", "t"]).unwrap();
+        git(p, &["config", "user.email", "t@example.com"]).unwrap();
+        std::fs::write(p.join("a"), "a").unwrap();
+        git(p, &["add", "a"]).unwrap();
+        git(p, &["commit", "-q", "-m", "init"]).unwrap();
+        dir
+    }
+
+    fn current_branch(p: &Path) -> String {
+        git(p, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn delivery_returns_to_the_starting_branch() {
+        let dir = temp_repo();
+        let p = dir.path();
+        on_branch_then_return(p, || {
+            git(p, &["checkout", "-q", "-b", "scan/a/2026-10-16"])?;
+            std::fs::write(p.join("b"), "b").unwrap();
+            git(p, &["add", "b"])?;
+            git(p, &["commit", "-q", "-m", "tool a"])
+        })
+        .unwrap();
+        assert_eq!(current_branch(p), "main");
+        assert!(
+            !p.join("b").exists(),
+            "tool a's commit must not leak onto main"
+        );
+    }
+
+    #[test]
+    fn delivery_error_wins_and_branch_is_restored() {
+        let dir = temp_repo();
+        let p = dir.path();
+        let err = on_branch_then_return(p, || -> Result<()> {
+            git(p, &["checkout", "-q", "-b", "scan/a/x"])?;
+            anyhow::bail!("push rejected")
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("push rejected"));
+        assert_eq!(current_branch(p), "main");
+    }
 
     fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).unwrap()
