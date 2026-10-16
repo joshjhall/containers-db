@@ -10,6 +10,7 @@
 pub mod activity;
 pub mod adapter;
 pub mod adapters;
+pub mod dedup;
 pub mod due;
 pub mod failure;
 pub mod generate;
@@ -81,8 +82,25 @@ pub enum Outcome {
         url: String,
         new_versions: Vec<String>,
     },
+    /// An open PR was updated in place to cover the new versions.
+    PrUpdated {
+        url: String,
+        new_versions: Vec<String>,
+    },
+    /// An open PR already covered every new version; nothing was opened.
+    AlreadyCovered { pr: u64, new_versions: Vec<String> },
     /// Tool has no registered adapter — the orchestrator skipped it.
     NoAdapter,
+}
+
+impl Outcome {
+    fn delivered(delivery: pr::Delivery, new_versions: Vec<String>) -> Self {
+        match delivery {
+            pr::Delivery::Opened(url) => Outcome::PrOpened { url, new_versions },
+            pr::Delivery::Updated(url) => Outcome::PrUpdated { url, new_versions },
+            pr::Delivery::Skipped(pr) => Outcome::AlreadyCovered { pr, new_versions },
+        }
+    }
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -97,8 +115,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 println!("scanner: no tools due for scanning");
                 return Ok(());
             }
+            let base = pr::RunBase::capture(&repo_root, dry_run)?;
             let mut failed = Vec::new();
             for tool in due_tools {
+                base.guard(&repo_root, &tool.id, &failed)?;
                 let Some(adapter) = registry.get(&tool.id).cloned() else {
                     println!("scanner: {}: no adapter registered, skipping", tool.id);
                     continue;
@@ -282,12 +302,17 @@ async fn scan_one(
         &result.signals,
         cadence_days,
     );
-    let url = pr::open_pr(repo_root, tool_id, &branch, &title, &body, "main")?;
-
-    Ok(Outcome::PrOpened {
-        url,
-        new_versions: new_version_strings,
-    })
+    let prefix = format!("scan/{tool_id}/");
+    let delivery = pr::deliver(
+        repo_root,
+        tool_id,
+        &prefix,
+        &branch,
+        &new_version_strings,
+        &title,
+        &body,
+    )?;
+    Ok(Outcome::delivered(delivery, new_version_strings))
 }
 
 /// `scanner backfill`: add releases older than the catalog's oldest entry.
@@ -382,11 +407,11 @@ async fn backfill_one(
         &result.signals,
         cadence_days,
     );
-    let url = pr::open_pr(repo_root, tool_id, &branch, &title, &body, "main")?;
-    Ok(Outcome::PrOpened {
-        url,
-        new_versions: versions,
-    })
+    let prefix = format!("backfill/{tool_id}/");
+    let delivery = pr::deliver(
+        repo_root, tool_id, &prefix, &branch, &versions, &title, &body,
+    )?;
+    Ok(Outcome::delivered(delivery, versions))
 }
 
 /// Upstream stable releases `v` with `from <= v < oldest`, ascending.
@@ -499,6 +524,23 @@ mod tests {
     fn fail_if_any_names_every_failed_tool() {
         let err = fail_if_any(&["rust".to_string(), "gcc".to_string()]).unwrap_err();
         assert_eq!(err.to_string(), "scan failed for: rust, gcc");
+    }
+
+    #[test]
+    fn delivered_maps_each_delivery_to_its_outcome() {
+        let v = || vec!["1.0.0".to_string()];
+        assert!(matches!(
+            Outcome::delivered(pr::Delivery::Opened("u1".into()), v()),
+            Outcome::PrOpened { url, new_versions } if url == "u1" && new_versions == v()
+        ));
+        assert!(matches!(
+            Outcome::delivered(pr::Delivery::Updated("u2".into()), v()),
+            Outcome::PrUpdated { url, new_versions } if url == "u2" && new_versions == v()
+        ));
+        assert!(matches!(
+            Outcome::delivered(pr::Delivery::Skipped(398), v()),
+            Outcome::AlreadyCovered { pr: 398, new_versions } if new_versions == v()
+        ));
     }
 
     fn up(version: &str, y: i32, m: u32, d: u32, channel: &str) -> UpstreamVersion {

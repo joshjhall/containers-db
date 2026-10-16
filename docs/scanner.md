@@ -137,6 +137,39 @@ literals. If your tool needs anything else (Tier 2 pinned checksums, a
 new `support_matrix` row, etc.), submit it as a manual PR; the scanner
 will then carry that change forward to subsequent versions.
 
+## Duplicate-PR guard
+
+New versions are computed against `main`, so versions in an open,
+unmerged scan PR look new again on every run. Before opening a PR the
+scanner lists open PRs whose head starts with `scan/<tool>/` (or
+`backfill/<tool>/` for `scanner backfill`) and picks the oldest. PRs
+from forks are ignored — their branch name and body are not trusted:
+
+- **Skip** — that PR already covers every new version. The scanner logs
+  `open scan PR #N already covers <versions>, skipping`, discards the
+  regenerated files, and succeeds (no failure issue).
+- **Update in place** — that PR misses some versions. The files are
+  regenerated from `main` onto its branch, force-pushed with a lease
+  pinned to the head commit seen when listing, and its title and body
+  refreshed with `gh pr edit`. No second PR is opened. Manual commits on
+  that branch are replaced — carry them in a separate PR.
+- **Open new** — no matching open PR; a new `scan/<tool>/<date>` PR opens.
+
+If the open-PR listing is truncated or malformed, the scan fails rather
+than guessing.
+
+`scanner due` delivers several tools from one checkout. It records the
+starting branch and commit once, returns there after each PR, and checks
+it before every tool: if a previous tool left the checkout anywhere else,
+the run aborts instead of branching the next tool's PR from the wrong
+commit.
+
+The versions an open PR covers are read from the `## New versions`
+bullet list in its body (written by `pr_body`), not from the title — a
+backfill title names only a range. Hand-edit that list and the guard
+sees the edit. The logic lives in
+[`scanner/src/dedup.rs`](../scanner/src/dedup.rs).
+
 ## Failure handling
 
 Any unhandled error during a scan opens a GitHub issue titled
