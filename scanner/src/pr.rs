@@ -148,22 +148,49 @@ pub fn deliver(
     body: &str,
 ) -> Result<Delivery> {
     let open = list_open_prs(repo_root)?;
-    match dedup::decide(prefix, &open, new_versions) {
+    deliver_with(
+        repo_root,
+        tool_id,
+        &dedup::decide(prefix, &open, new_versions),
+        |pr| update_pr(repo_root, tool_id, pr, title, body),
+        || open_pr(repo_root, tool_id, branch, title, body, "main"),
+    )
+}
+
+/// Act on a dedup [`Decision`]: the git-state half of [`deliver`], with
+/// the PR-side actions injected so every arm is testable without `gh`.
+///
+/// - Skip: discard the regenerated files; HEAD stays on the base.
+/// - Update / OpenNew: run the action on its PR branch, then return to the
+///   start. On failure the regenerated files are discarded too, so a later
+///   tool in the same run never starts from a dirty tree.
+fn deliver_with(
+    repo_root: &Path,
+    tool_id: &str,
+    decision: &Decision,
+    update: impl FnOnce(&OpenPr) -> Result<String>,
+    open: impl FnOnce() -> Result<String>,
+) -> Result<Delivery> {
+    let delivered = match decision {
         Decision::Skip { pr, covered } => {
             println!(
                 "scanner: {tool_id}: open scan PR #{pr} already covers {}, skipping",
                 covered.join(", ")
             );
             discard_generated(repo_root, tool_id)?;
-            Ok(Delivery::Skipped(pr))
+            return Ok(Delivery::Skipped(*pr));
         }
-        Decision::UpdateExisting(pr) => on_branch_then_return(repo_root, || {
-            update_pr(repo_root, tool_id, &pr, title, body).map(Delivery::Updated)
-        }),
-        Decision::OpenNew => on_branch_then_return(repo_root, || {
-            open_pr(repo_root, tool_id, branch, title, body, "main").map(Delivery::Opened)
-        }),
+        Decision::UpdateExisting(pr) => {
+            on_branch_then_return(repo_root, || update(pr).map(Delivery::Updated))
+        }
+        Decision::OpenNew => on_branch_then_return(repo_root, || open().map(Delivery::Opened)),
+    };
+    if delivered.is_err()
+        && let Err(e) = discard_generated(repo_root, tool_id)
+    {
+        eprintln!("scanner: {tool_id}: discarding generated files after a failed delivery: {e:#}");
     }
+    delivered
 }
 
 /// Where a scan run started: the checked-out branch (or `None` when
@@ -444,6 +471,125 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("push rejected"));
         assert_eq!(current_branch(p), "main");
+    }
+
+    /// Temp repo where `tools/rust` is tracked on `main` and a scan has just
+    /// regenerated it: one modified tracked file, one new untracked file.
+    fn repo_with_generated_rust() -> tempfile::TempDir {
+        let dir = temp_repo();
+        let p = dir.path();
+        std::fs::create_dir_all(p.join("tools/rust/versions")).unwrap();
+        std::fs::write(p.join("tools/rust/index.json"), "old").unwrap();
+        git(p, &["add", "tools"]).unwrap();
+        git(p, &["commit", "-q", "-m", "rust"]).unwrap();
+        std::fs::write(p.join("tools/rust/index.json"), "new").unwrap();
+        std::fs::write(p.join("tools/rust/versions/2.0.0.json"), "{}").unwrap();
+        dir
+    }
+
+    /// Stand-in for `open_pr`/`update_pr`'s git half: branch, stage the
+    /// tool's directory, commit.
+    fn commit_on(p: &Path, branch: &str) -> Result<String> {
+        git(p, &["checkout", "-q", "-B", branch])?;
+        git(p, &["add", "tools/rust"])?;
+        git(p, &["commit", "-q", "-m", "scan"])?;
+        Ok(format!("https://example/{branch}"))
+    }
+
+    /// Main is untouched and clean: regenerated files neither leaked into a
+    /// commit on `main` nor left in the tree for the next tool.
+    fn assert_clean_at_main(p: &Path) {
+        assert_eq!(current_branch(p), "main");
+        assert_eq!(
+            std::fs::read_to_string(p.join("tools/rust/index.json")).unwrap(),
+            "old"
+        );
+        assert!(!p.join("tools/rust/versions/2.0.0.json").exists());
+        assert_eq!(git(p, &["status", "--porcelain"]).unwrap(), "");
+    }
+
+    fn never_update(_: &OpenPr) -> Result<String> {
+        panic!("update must not run for this decision")
+    }
+
+    fn never_open() -> Result<String> {
+        panic!("open must not run for this decision")
+    }
+
+    fn open_pr_fixture(number: u64, head: &str) -> OpenPr {
+        OpenPr {
+            number,
+            head: head.to_string(),
+            head_oid: "abc".to_string(),
+            body: String::new(),
+            cross_repo: false,
+        }
+    }
+
+    #[test]
+    fn deliver_skip_discards_and_stays_on_base() {
+        let dir = repo_with_generated_rust();
+        let p = dir.path();
+        let decision = Decision::Skip {
+            pr: 398,
+            covered: vec!["2.0.0".to_string()],
+        };
+        let d = deliver_with(p, "rust", &decision, never_update, never_open).unwrap();
+        assert!(matches!(d, Delivery::Skipped(398)));
+        assert_clean_at_main(p);
+    }
+
+    #[test]
+    fn deliver_open_commits_on_its_branch_and_returns() {
+        let dir = repo_with_generated_rust();
+        let p = dir.path();
+        let d = deliver_with(p, "rust", &Decision::OpenNew, never_update, || {
+            commit_on(p, "scan/rust/2026-10-16")
+        })
+        .unwrap();
+        assert!(matches!(d, Delivery::Opened(ref u) if u.ends_with("scan/rust/2026-10-16")));
+        assert_clean_at_main(p);
+        let on_branch = git(p, &["show", "scan/rust/2026-10-16:tools/rust/index.json"]).unwrap();
+        assert_eq!(
+            on_branch, "new",
+            "the PR branch carries the regenerated files"
+        );
+    }
+
+    #[test]
+    fn deliver_update_passes_the_pr_and_returns() {
+        let dir = repo_with_generated_rust();
+        let p = dir.path();
+        let pr = open_pr_fixture(398, "scan/rust/2026-10-15");
+        let decision = Decision::UpdateExisting(pr.clone());
+        let d = deliver_with(
+            p,
+            "rust",
+            &decision,
+            |got| {
+                assert_eq!(got, &pr);
+                commit_on(p, &got.head)
+            },
+            never_open,
+        )
+        .unwrap();
+        assert!(matches!(d, Delivery::Updated(_)));
+        assert_clean_at_main(p);
+    }
+
+    #[test]
+    fn deliver_failure_discards_generated_and_returns() {
+        // A push rejected before commit: the action fails on its branch
+        // with the regenerated files still uncommitted.
+        let dir = repo_with_generated_rust();
+        let p = dir.path();
+        let err = deliver_with(p, "rust", &Decision::OpenNew, never_update, || {
+            git(p, &["checkout", "-q", "-b", "scan/rust/x"])?;
+            anyhow::bail!("push rejected")
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("push rejected"));
+        assert_clean_at_main(p);
     }
 
     #[test]
