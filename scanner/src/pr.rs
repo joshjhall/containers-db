@@ -354,14 +354,7 @@ fn update_pr(
     body: &str,
 ) -> Result<String> {
     let number = pr.number.to_string();
-    let lease = dedup::lease_arg(pr);
-    git(repo_root, &["checkout", "-B", &pr.head])?;
-    git(repo_root, &["add", &format!("tools/{tool_id}")])?;
-    git(
-        repo_root,
-        &["commit", "-m", &commit_message_from_title(title)],
-    )?;
-    git(repo_root, &["push", &lease, "-u", "origin", &pr.head])?;
+    push_regenerated(repo_root, tool_id, pr, title)?;
     gh(
         repo_root,
         &["pr", "edit", &number, "--title", title, "--body", body],
@@ -371,6 +364,21 @@ fn update_pr(
         &["pr", "view", &number, "--json", "url", "--jq", ".url"],
     )?;
     Ok(url.trim().to_string())
+}
+
+/// The git half of [`update_pr`]: reset `pr.head` to the current HEAD,
+/// commit the regenerated `tools/<tool_id>/`, and force-push under the
+/// lease from [`dedup::lease_arg`].
+fn push_regenerated(repo_root: &Path, tool_id: &str, pr: &OpenPr, title: &str) -> Result<()> {
+    let lease = dedup::lease_arg(pr);
+    git(repo_root, &["checkout", "-B", &pr.head])?;
+    git(repo_root, &["add", &format!("tools/{tool_id}")])?;
+    git(
+        repo_root,
+        &["commit", "-m", &commit_message_from_title(title)],
+    )?;
+    git(repo_root, &["push", &lease, "-u", "origin", &pr.head])?;
+    Ok(())
 }
 
 fn commit_message_from_title(title: &str) -> String {
@@ -471,6 +479,128 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("push rejected"));
         assert_eq!(current_branch(p), "main");
+    }
+
+    #[test]
+    fn delivery_error_wins_over_failed_return() {
+        // Both fail: the delivery error is returned, not the return's.
+        let dir = temp_repo();
+        let p = dir.path();
+        let err = on_branch_then_return(p, || -> Result<()> {
+            git(p, &["checkout", "-q", "-b", "scan/a/x"])?;
+            git(p, &["branch", "-q", "-D", "main"])?;
+            anyhow::bail!("push rejected")
+        })
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("push rejected"), "{msg}");
+        assert!(!msg.contains("returning to the start"), "{msg}");
+        assert_eq!(
+            current_branch(p),
+            "scan/a/x",
+            "the return must have failed, or this covers the (Err, Ok) arm"
+        );
+    }
+
+    /// A clone of a bare `origin` whose open scan PR branch `scan/rust/old`
+    /// holds an earlier scan commit, checked out on `main` with freshly
+    /// regenerated `tools/rust/` files. Returns (clone, origin, the PR as
+    /// listed — `head_oid` is the branch's real head).
+    fn clone_with_open_scan_pr() -> (tempfile::TempDir, tempfile::TempDir, OpenPr) {
+        // temp_repo() first: its GIT_DIR guard must run before any git call,
+        // or a leaked GIT_DIR would `init --bare` the real repo.
+        let dir = temp_repo();
+        let p = dir.path();
+        let origin = tempfile::tempdir().unwrap();
+        git(origin.path(), &["init", "-q", "--bare", "-b", "main"]).unwrap();
+        std::fs::create_dir_all(p.join("tools/rust")).unwrap();
+        std::fs::write(p.join("tools/rust/index.json"), "old").unwrap();
+        git(p, &["add", "tools"]).unwrap();
+        git(p, &["commit", "-q", "-m", "rust"]).unwrap();
+        let url = origin.path().to_str().unwrap();
+        git(p, &["remote", "add", "origin", url]).unwrap();
+        git(p, &["push", "-q", "origin", "main"]).unwrap();
+        git(p, &["checkout", "-q", "-b", "scan/rust/old"]).unwrap();
+        std::fs::write(p.join("tools/rust/index.json"), "earlier scan").unwrap();
+        git(p, &["commit", "-q", "-am", "earlier scan"]).unwrap();
+        git(p, &["push", "-q", "origin", "scan/rust/old"]).unwrap();
+        let head_oid = git(p, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        git(p, &["checkout", "-q", "main"]).unwrap();
+        std::fs::create_dir_all(p.join("tools/rust/versions")).unwrap();
+        std::fs::write(p.join("tools/rust/index.json"), "new").unwrap();
+        std::fs::write(p.join("tools/rust/versions/2.0.0.json"), "{}").unwrap();
+        let pr = OpenPr {
+            head_oid,
+            ..open_pr_fixture(398, "scan/rust/old")
+        };
+        (dir, origin, pr)
+    }
+
+    fn rev(p: &Path, rev: &str) -> String {
+        git(p, &["rev-parse", rev]).unwrap().trim().to_string()
+    }
+
+    #[test]
+    fn push_regenerated_replaces_the_branch_when_the_lease_holds() {
+        let (dir, origin, pr) = clone_with_open_scan_pr();
+        let p = dir.path();
+        let base = rev(p, "main");
+        // Outside the tool's directory: must not ride along in its scan PR.
+        std::fs::write(p.join("stray"), "stray").unwrap();
+        push_regenerated(p, "rust", &pr, "feat(rust): add upstream versions 2.0.0").unwrap();
+        let o = origin.path();
+        assert_eq!(
+            rev(o, "scan/rust/old^"),
+            base,
+            "regenerated from the base: the earlier scan commit is replaced, not built on"
+        );
+        assert_eq!(
+            git(o, &["show", "scan/rust/old:tools/rust/index.json"]).unwrap(),
+            "new"
+        );
+        assert_eq!(
+            git(o, &["show", "scan/rust/old:tools/rust/versions/2.0.0.json"]).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            git(o, &["log", "-1", "--format=%s", "scan/rust/old"])
+                .unwrap()
+                .trim(),
+            "feat(rust): add upstream versions 2.0.0",
+            "the commit subject is the PR title"
+        );
+        assert!(
+            git(o, &["cat-file", "-e", "scan/rust/old:stray"]).is_err(),
+            "only tools/rust/ is staged"
+        );
+    }
+
+    #[test]
+    fn push_regenerated_is_rejected_when_the_remote_moved() {
+        let (dir, origin, pr) = clone_with_open_scan_pr();
+        // Someone pushes to the PR branch after it was listed.
+        let racer = tempfile::tempdir().unwrap();
+        let r = racer.path();
+        git(r, &["clone", "-q", origin.path().to_str().unwrap(), "."]).unwrap();
+        git(r, &["config", "user.name", "t"]).unwrap();
+        git(r, &["config", "user.email", "t@example.com"]).unwrap();
+        git(r, &["checkout", "-q", "scan/rust/old"]).unwrap();
+        std::fs::write(r.join("tools/rust/index.json"), "racing edit").unwrap();
+        git(r, &["commit", "-q", "-am", "racing edit"]).unwrap();
+        git(r, &["push", "-q", "origin", "scan/rust/old"]).unwrap();
+        let raced = rev(r, "HEAD");
+        // The clone's tracking ref now sees the race, so a name-only
+        // lease would pass: only the oid pinned at listing time rejects.
+        git(dir.path(), &["fetch", "-q", "origin"]).unwrap();
+
+        let err = push_regenerated(dir.path(), "rust", &pr, "feat(rust): x").unwrap_err();
+        // `stale info` is git's lease rejection, not any push failure.
+        assert!(format!("{err:#}").contains("stale info"), "{err:#}");
+        assert_eq!(
+            rev(origin.path(), "scan/rust/old"),
+            raced,
+            "the racing push must survive"
+        );
     }
 
     /// Temp repo where `tools/rust` is tracked on `main` and a scan has just

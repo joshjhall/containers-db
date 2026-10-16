@@ -184,6 +184,47 @@ mod tests {
         assert_eq!(parse_pr_versions(b), vs(&["1.0.0"]));
     }
 
+    /// Two independent guards cover `\r`: `str::lines` strips `\r\n` and
+    /// the per-line `trim` strips a stray `\r`, so this fails only if both go.
+    #[test]
+    fn parse_accepts_crlf_line_endings() {
+        let b = "## New versions\r\n\r\n- `1.0.0`\r\n- `1.0.1`\r\n\r\n## Activity\r\n- `2.0.0`\r\n";
+        assert_eq!(parse_pr_versions(b), vs(&["1.0.0", "1.0.1"]));
+    }
+
+    #[test]
+    fn parse_accepts_indented_bullets_and_ignores_malformed_ones() {
+        let b = "## New versions\n\
+                 \x20  - `1.0.0`\n\
+                 * `2.0.0`\n\
+                 - 3.0.0\n\
+                 - `4.0.0` extra\n\
+                 -`5.0.0`\n\
+                 - `6.0.0\n";
+        assert_eq!(parse_pr_versions(b), vs(&["1.0.0"]));
+    }
+
+    #[test]
+    fn parse_unions_duplicate_sections_and_skips_between() {
+        let b = "## New versions\n- `1.0.0`\n## Activity\n- `9.9.9`\n## New versions\n- `1.0.1`\n";
+        assert_eq!(parse_pr_versions(b), vs(&["1.0.0", "1.0.1"]));
+    }
+
+    #[test]
+    fn empty_new_versions_skip_vacuously() {
+        // Characterizes current behaviour; #407 decides the intended rule.
+        // Callers return `NoChange` before `deliver` on an empty list
+        // (`lib.rs` scan + backfill), so the vacuous Skip is a no-op today.
+        let prs = [pr(398, "scan/rust/2026-10-16", &["1.99.1"])];
+        assert_eq!(
+            decide("scan/rust/", &prs, &[]),
+            Decision::Skip {
+                pr: 398,
+                covered: vec![]
+            }
+        );
+    }
+
     #[test]
     fn parse_without_section_is_empty() {
         assert!(parse_pr_versions("## Summary\n\n- `1.0.0`\n").is_empty());
