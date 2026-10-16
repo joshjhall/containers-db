@@ -208,6 +208,37 @@ impl Base {
     }
 }
 
+/// The base a `due` run checks before every tool. `None` for a dry run:
+/// it never commits, so there is no base to drift from and no git
+/// checkout is required.
+#[derive(Debug)]
+pub struct RunBase(Option<Base>);
+
+impl RunBase {
+    pub fn capture(repo_root: &Path, dry_run: bool) -> Result<Self> {
+        Ok(RunBase(if dry_run {
+            None
+        } else {
+            Some(Base::capture(repo_root)?)
+        }))
+    }
+
+    /// Abort the run before `tool_id` if a previous tool left the checkout
+    /// off the base (e.g. its return checkout failed), naming the failures
+    /// collected so far.
+    pub fn guard(&self, repo_root: &Path, tool_id: &str, failed: &[String]) -> Result<()> {
+        let Some(base) = &self.0 else {
+            return Ok(());
+        };
+        base.verify(repo_root).with_context(|| {
+            format!(
+                "aborted before `{tool_id}`; earlier failures: [{}]",
+                failed.join(", ")
+            )
+        })
+    }
+}
+
 /// Run `f` (which commits onto a PR branch), then switch back to the
 /// branch the run started on. Without this, the next tool in a `due` run
 /// would cut its branch from this tool's commit and carry it into its PR.
@@ -447,6 +478,35 @@ mod tests {
         git(p, &["add", "b"]).unwrap();
         git(p, &["commit", "-q", "-m", "stray"]).unwrap();
         assert!(base.verify(p).is_err());
+    }
+
+    #[test]
+    fn run_guard_aborts_with_tool_and_earlier_failures() {
+        let dir = temp_repo();
+        let p = dir.path();
+        let base = RunBase::capture(p, false).unwrap();
+        base.guard(p, "node", &[]).unwrap();
+        git(p, &["checkout", "-q", "-b", "scan/rust/x"]).unwrap();
+        let err = base.guard(p, "python", &["go".to_string()]).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("aborted before `python`"), "{msg}");
+        assert!(msg.contains("earlier failures: [go]"), "{msg}");
+        assert!(msg.contains("scan/rust/x"), "{msg}");
+        assert!(msg.contains("not the run's base main"), "{msg}");
+    }
+
+    #[test]
+    fn dry_run_needs_no_checkout_and_never_aborts() {
+        // A dry run outside any git repo: capture must not touch git.
+        let dir = tempfile::tempdir().unwrap();
+        let base = RunBase::capture(dir.path(), true).unwrap();
+        base.guard(dir.path(), "rust", &[]).unwrap();
+    }
+
+    #[test]
+    fn real_run_outside_a_checkout_fails_to_capture() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(RunBase::capture(dir.path(), false).is_err());
     }
 
     #[test]

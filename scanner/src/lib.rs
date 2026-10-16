@@ -115,18 +115,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 println!("scanner: no tools due for scanning");
                 return Ok(());
             }
-            let base = pr::Base::capture(&repo_root)?;
+            let base = pr::RunBase::capture(&repo_root, dry_run)?;
             let mut failed = Vec::new();
             for tool in due_tools {
-                // A previous tool left the checkout off the base (e.g. its
-                // return checkout failed): stop before branching from it.
-                if !dry_run && let Err(e) = base.verify(&repo_root) {
-                    return Err(e.context(format!(
-                        "aborted before `{}`; earlier failures: [{}]",
-                        tool.id,
-                        failed.join(", ")
-                    )));
-                }
+                base.guard(&repo_root, &tool.id, &failed)?;
                 let Some(adapter) = registry.get(&tool.id).cloned() else {
                     println!("scanner: {}: no adapter registered, skipping", tool.id);
                     continue;
