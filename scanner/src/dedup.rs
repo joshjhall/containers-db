@@ -58,6 +58,23 @@ pub fn parse_open_prs(json: &str) -> Result<Vec<OpenPr>, String> {
         .collect()
 }
 
+/// Refuse a listing that filled `limit`: it may be truncated, and a
+/// missing row would fail open into a duplicate PR.
+pub fn check_not_truncated(len: usize, limit: usize) -> Result<(), String> {
+    if len >= limit {
+        return Err(format!(
+            "`gh pr list` hit its {limit}-PR limit; refusing to dedup on a truncated list"
+        ));
+    }
+    Ok(())
+}
+
+/// `git push` lease pinned to the head seen at listing time, so a push
+/// that raced in since then rejects ours instead of being overwritten.
+pub fn lease_arg(pr: &OpenPr) -> String {
+    format!("--force-with-lease={}:{}", pr.head, pr.head_oid)
+}
+
 /// What to do with a set of newly detected versions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
@@ -248,6 +265,32 @@ mod tests {
         assert_eq!(
             decide("scan/rust/", &[fork], &vs(&["1.99.1"])),
             Decision::OpenNew
+        );
+    }
+
+    #[test]
+    fn older_fork_pr_does_not_shadow_the_real_one() {
+        let mut fork = pr(5, "scan/rust/evil", &["1.99.1"]);
+        fork.cross_repo = true;
+        let real = pr(9, "scan/rust/2026-10-16", &[]);
+        assert_eq!(
+            decide("scan/rust/", &[fork, real.clone()], &vs(&["1.99.1"])),
+            Decision::UpdateExisting(real)
+        );
+    }
+
+    #[test]
+    fn truncation_check_rejects_a_full_listing() {
+        assert!(check_not_truncated(999, 1000).is_ok());
+        assert!(check_not_truncated(1000, 1000).is_err());
+    }
+
+    #[test]
+    fn lease_pins_branch_to_listed_head() {
+        let p = pr(398, "scan/rust/2026-10-16", &[]);
+        assert_eq!(
+            lease_arg(&p),
+            "--force-with-lease=scan/rust/2026-10-16:abc123"
         );
     }
 

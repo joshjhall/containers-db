@@ -191,11 +191,7 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
         ],
     )?;
     let prs = dedup::parse_open_prs(&out).map_err(anyhow::Error::msg)?;
-    if prs.len() >= PR_LIST_LIMIT {
-        anyhow::bail!(
-            "`gh pr list` hit its {PR_LIST_LIMIT}-PR limit; refusing to dedup on a truncated list"
-        );
-    }
+    dedup::check_not_truncated(prs.len(), PR_LIST_LIMIT).map_err(anyhow::Error::msg)?;
     Ok(prs)
 }
 
@@ -215,7 +211,7 @@ fn update_pr(
     body: &str,
 ) -> Result<String> {
     let number = pr.number.to_string();
-    let lease = format!("--force-with-lease={}:{}", pr.head, pr.head_oid);
+    let lease = dedup::lease_arg(pr);
     git(repo_root, &["checkout", "-B", &pr.head])?;
     git(repo_root, &["add", &format!("tools/{tool_id}")])?;
     git(
