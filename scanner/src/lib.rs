@@ -526,6 +526,23 @@ mod tests {
         assert_eq!(err.to_string(), "scan failed for: rust, gcc");
     }
 
+    #[test]
+    fn delivered_maps_each_delivery_to_its_outcome() {
+        let v = || vec!["1.0.0".to_string()];
+        assert!(matches!(
+            Outcome::delivered(pr::Delivery::Opened("u1".into()), v()),
+            Outcome::PrOpened { url, new_versions } if url == "u1" && new_versions == v()
+        ));
+        assert!(matches!(
+            Outcome::delivered(pr::Delivery::Updated("u2".into()), v()),
+            Outcome::PrUpdated { url, new_versions } if url == "u2" && new_versions == v()
+        ));
+        assert!(matches!(
+            Outcome::delivered(pr::Delivery::Skipped(398), v()),
+            Outcome::AlreadyCovered { pr: 398, new_versions } if new_versions == v()
+        ));
+    }
+
     fn up(version: &str, y: i32, m: u32, d: u32, channel: &str) -> UpstreamVersion {
         UpstreamVersion {
             version: version.into(),
