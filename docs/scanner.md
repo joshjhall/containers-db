@@ -230,7 +230,8 @@ is unset. Without it, the run would only fail at the first push or `gh`
 call, after the build.
 
 **Dry runs don't need the secret.** A `workflow_dispatch` with
-`dry_run: true` skips the guard and `gh auth setup-git`, because a dry run
+`dry_run: true` skips the guard and `gh auth setup-git`, and gets an
+empty `GH_TOKEN` even when the secret exists, because a dry run
 writes no files, pushes nothing, and opens no PRs or issues. Scheduled
 runs have no inputs, so they always go through the guard.
 

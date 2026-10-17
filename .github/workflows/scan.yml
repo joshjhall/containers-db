@@ -117,9 +117,10 @@ jobs:
           # Read-only GitHub API calls from adapters (rate limit).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # `gh` prefers GH_TOKEN, so PRs/issues are opened as this
-          # identity and their pushes trigger validate.yml (#401). It is
-          # empty on a dry run without the secret, and dry runs never call `gh`.
-          GH_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+          # identity and their pushes trigger validate.yml (#401). Withheld
+          # on dry runs, which never call `gh` or push (#416). A scheduled
+          # run's null `inputs.dry_run` still gets the secret.
+          GH_TOKEN: ${{ inputs.dry_run != true && secrets.SCANNER_TOKEN || '' }}
           INPUT_TOOL: ${{ inputs.tool }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_BACKFILL_FROM: ${{ inputs.backfill_from }}
