@@ -29,6 +29,8 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -100,6 +102,15 @@ jobs:
             -c ajv-formats \
             -s schema/version.schema.json \
             -d "fixtures/tier*-example.json"
+
+      - name: Rust format check
+        run: cargo fmt --all --check
+
+      # Floats with `stable`, so a new lint can fail a PR that touched no Rust.
+      # That is intended: it surfaces here rather than only on a contributor's
+      # newer local toolchain.
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Build workspace (validator + scanner)
         run: cargo build --release --workspace
