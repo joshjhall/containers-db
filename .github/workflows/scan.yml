@@ -1,5 +1,12 @@
 name: Catalog scanner
 
+# Requires the SCANNER_TOKEN repo secret (#401). Pushes and PRs made with
+# the default GITHUB_TOKEN don't trigger other workflows, so scan PRs sat
+# in `action_required` with no validate run. SCANNER_TOKEN is a
+# fine-grained PAT or GitHub App token, this repo only, with
+# contents:write, pull-requests:write, and issues:write (the scanner
+# files tracking issues via `gh`). See docs/scanner.md#scanner_token-secret.
+
 on:
   schedule:
     # Hourly — per-tool gating is done in scanner code via
@@ -41,12 +48,27 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Require SCANNER_TOKEN
+        # Must run BEFORE checkout: an unset secret expands to "", and
+        # actions/checkout silently falls back to github.token for an
+        # empty `token:` — exactly the identity this secret replaces.
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+        run: |
+          if [ -z "$SCANNER_TOKEN" ]; then
+            echo "::error::SCANNER_TOKEN secret is not set. Add a fine-grained PAT or GitHub App token scoped to this repo with contents:write, pull-requests:write, and issues:write (see docs/scanner.md#scanner_token-secret)."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Full history needed because the scanner creates branches
           # and pushes commits back via `git`.
           fetch-depth: 0
+          # Persisted into git config, so the scanner's `git push`
+          # authenticates as SCANNER_TOKEN, not GITHUB_TOKEN (#401).
+          token: ${{ secrets.SCANNER_TOKEN }}
 
       - name: Configure git identity
         # Required for the scanner's `git commit` step. The bot identity
@@ -83,7 +105,11 @@ jobs:
         # injection — see
         # https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
         env:
+          # Read-only GitHub API calls from adapters (rate limit).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh` prefers GH_TOKEN, so PRs/issues are opened as this
+          # identity and their pushes trigger validate.yml (#401).
+          GH_TOKEN: ${{ secrets.SCANNER_TOKEN }}
           INPUT_TOOL: ${{ inputs.tool }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_BACKFILL_FROM: ${{ inputs.backfill_from }}

@@ -117,6 +117,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             let outcome =
                 backfill::backfill_one(&repo_root, &id, &from, adapter, now, dry_run).await?;
             println!("scanner: {id}: {outcome:?}");
+            outcome::report_step_summary(&id, &outcome);
         }
     }
     Ok(())
@@ -151,6 +152,7 @@ async fn scan_one_with_failure_reporting(
     match scan_one(repo_root, tool_id, adapter, now, dry_run).await {
         Ok(outcome) => {
             println!("scanner: {tool_id}: {outcome:?}");
+            outcome::report_step_summary(tool_id, &outcome);
             true
         }
         Err(e) => {
