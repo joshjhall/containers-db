@@ -72,7 +72,7 @@ jobs:
           workspaces: .
 
       - name: Build scanner
-        run: cargo build --release -p scanner
+        run: cargo build --release --locked -p scanner
 
       - name: Upload scanner binary
         # Before npm and ajv run, so they can't replace the binary that

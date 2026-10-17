@@ -312,7 +312,15 @@ pub(crate) fn staged_files(
 }
 
 /// Write the plan's files and run the pre-PR gates against the result.
-pub(crate) fn write_and_gate(repo_root: &Path, plan: &Plan, schemas: Schemas) -> Result<()> {
+///
+/// Returns the tool's `source_repo` as the checkout had it *before* the
+/// write, for the PR body: the plan's own index.json is staging-job input.
+pub(crate) fn write_and_gate(
+    repo_root: &Path,
+    plan: &Plan,
+    schemas: Schemas,
+) -> Result<Option<String>> {
+    let source_repo = base_source_repo(repo_root, &plan.tool_id)?;
     for file in &plan.files {
         let path = repo_root.join(&file.path);
         std::fs::write(&path, &file.contents)
@@ -332,7 +340,7 @@ pub(crate) fn write_and_gate(repo_root: &Path, plan: &Plan, schemas: Schemas) ->
         }
         Schemas::Require => validate::validate_schemas(repo_root)?,
     }
-    Ok(())
+    Ok(source_repo)
 }
 
 /// Start a `--stage` run's manifest, or `None` for any other run.
@@ -387,7 +395,9 @@ pub(crate) fn deliver_manifest(
         // An unchecked failure would let the staging job file an issue
         // about any tool, with any text.
         f.check(repo_root)?;
-        eprintln!("scanner: {} FAILED while staging: {}", f.tool_id, f.error);
+        // Debug-escaped: raw staged text in this job's log could start a
+        // line with `::` and be read as a workflow command.
+        eprintln!("scanner: {} FAILED while staging: {:?}", f.tool_id, f.error);
         crate::report_failure(repo_root, &f.tool_id, &f.error, now);
         failed.push(f.tool_id.clone());
     }
@@ -413,27 +423,38 @@ pub(crate) fn deliver_manifest(
 /// re-run here — the staging job already required it.
 pub(crate) fn deliver_plan(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
     plan.check()?;
-    if let Err(e) = write_and_gate(repo_root, plan, Schemas::Skip) {
-        if let Err(d) = pr::discard_generated(repo_root, &plan.tool_id) {
-            eprintln!(
-                "scanner: {}: discarding files after a failed gate: {d:#}",
-                plan.tool_id
-            );
+    let source_repo = match write_and_gate(repo_root, plan, Schemas::Skip) {
+        Ok(source_repo) => source_repo,
+        Err(e) => {
+            if let Err(d) = pr::discard_generated(repo_root, &plan.tool_id) {
+                eprintln!(
+                    "scanner: {}: discarding files after a failed gate: {d:#}",
+                    plan.tool_id
+                );
+            }
+            return Err(e);
         }
-        return Err(e);
+    };
+    deliver_checked(repo_root, plan, source_repo.as_deref())
+}
+
+/// The tool's `source_repo` as the checkout has it. `None` for a tool new
+/// on the base or without one.
+fn base_source_repo(repo_root: &Path, tool_id: &str) -> Result<Option<String>> {
+    let index_path = repo_root.join("tools").join(tool_id).join("index.json");
+    if !index_path.is_file() {
+        return Ok(None);
     }
-    deliver_checked(repo_root, plan)
+    Ok(ToolIndex::from_path(&index_path)?.source_repo)
 }
 
 /// Open, update, or skip the PR for a plan whose files are written and
-/// gated. `source_repo` is read from the index now on disk, which the
-/// rules just validated.
-pub(crate) fn deliver_checked(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
-    let index_path = repo_root
-        .join("tools")
-        .join(&plan.tool_id)
-        .join("index.json");
-    let source_repo = ToolIndex::from_path(&index_path)?.source_repo;
+/// gated. `source_repo` is what [`write_and_gate`] returned.
+pub(crate) fn deliver_checked(
+    repo_root: &Path,
+    plan: &Plan,
+    source_repo: Option<&str>,
+) -> Result<Outcome> {
     let delivery = pr::deliver(
         repo_root,
         &plan.tool_id,
@@ -441,7 +462,7 @@ pub(crate) fn deliver_checked(repo_root: &Path, plan: &Plan) -> Result<Outcome> 
         &plan.branch(),
         &plan.new_versions,
         &plan.title(),
-        &plan.body(source_repo.as_deref()),
+        &plan.body(source_repo),
     )?;
     Ok(Outcome::delivered(delivery, plan.new_versions.clone()))
 }

@@ -282,6 +282,11 @@ fn apply(
             for v in &plan.new_versions {
                 println!("  + {v}");
             }
+            println!(
+                "  score={}, cadence={}d",
+                score_str(plan.activity.score),
+                plan.activity.cadence_days
+            );
             Ok(Outcome::DryRun {
                 new_versions: plan.new_versions,
             })
@@ -305,8 +310,8 @@ fn apply(
             Ok(Outcome::Staged { new_versions })
         }
         Mode::Deliver => {
-            stage::write_and_gate(repo_root, &plan, Schemas::IfAvailable)?;
-            stage::deliver_checked(repo_root, &plan)
+            let source_repo = stage::write_and_gate(repo_root, &plan, Schemas::IfAvailable)?;
+            stage::deliver_checked(repo_root, &plan, source_repo.as_deref())
         }
     }
 }
@@ -604,6 +609,35 @@ mod tests {
             "staged failure names `ghost`, which has no tools/ghost/index.json"
         );
         assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn the_pr_upstream_link_comes_from_the_checkout_not_the_plan() {
+        let repo = catalog_repo();
+        let p = repo.path();
+        std::fs::write(
+            p.join("tools/foo/index.json"),
+            r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli", "source_repo": "https://github.com/o/foo" }"#,
+        )
+        .unwrap();
+        let mut plan = rule_breaking_plan();
+        // A version file the rules accept, so the gate passes and the
+        // returned link is what delivery would put in the PR body.
+        plan.files[1].contents = r#"{
+            "schemaVersion": 1, "tool": "foo", "version": "1.0.0",
+            "install_methods": [
+                { "name": "x",
+                  "verification": { "tier": 4, "algorithm": "sha256", "tofu": true },
+                  "source_url_template": "https://x" }
+            ]
+        }"#
+        .into();
+        plan.files[0].contents = r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli", "source_repo": "[click](https://evil.test) @everyone" }"#.into();
+        let link = stage::write_and_gate(p, &plan, Schemas::Skip).unwrap();
+        assert_eq!(link.as_deref(), Some("https://github.com/o/foo"));
+        // The plan's index was written; only the link stayed the base's.
+        let on_disk = std::fs::read_to_string(p.join("tools/foo/index.json")).unwrap();
+        assert!(on_disk.contains("evil.test"), "got {on_disk}");
     }
 
     #[test]

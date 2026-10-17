@@ -238,7 +238,10 @@ the secret is (#416):
    environment variables so nothing is written to `.git/config`.
 
 The binary is uploaded before npm installs anything, so JavaScript in the
-`stage` job can't replace the program `deliver` runs. It can still
+`stage` job can't replace the program `deliver` runs. It is built with
+`--locked`, so its dependency set is exactly `Cargo.lock`; those crates'
+build scripts and proc-macros still shape the binary, the same trust any
+Rust release build carries. It can still
 tamper with the plan, so `deliver` treats the plan as untrusted:
 
 - It refuses to run unless the checkout is at the plan's `base_sha`.
@@ -253,7 +256,10 @@ tamper with the plan, so `deliver` treats the plan as untrusted:
   `index.json`. Unknown fields are rejected.
 - A staged failure must name a tool that exists in the checkout, and its
   error text is capped and fenced so it can't inject markdown into the
-  tracking issue.
+  tracking issue (and debug-escaped in the job log, so it can't start a
+  `::` workflow command).
+- The PR body's upstream link is read from the checkout's `index.json`
+  before the plan's files are written over it.
 - The in-process rules run again on the written files before any push.
   ajv does not — it is third-party code, and it already ran in `stage`.
 - The PR still goes through `validate.yml`, which runs ajv again.
