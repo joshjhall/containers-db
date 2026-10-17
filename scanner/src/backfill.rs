@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::activity::compute_tier;
 use crate::adapter::{Adapter, ToolIndex, UpstreamVersion};
-use crate::stage::{self, Plan};
-use crate::{Scanned, generate, pr};
+use crate::stage::{self, Activity, Kind, Plan};
+use crate::{Scanned, generate};
 
 /// `scanner backfill`: add releases older than the catalog's oldest entry.
 ///
@@ -78,20 +78,16 @@ pub(crate) async fn backfill_one(
     );
     generated.push((index.path.clone(), index.raw.clone()));
 
-    let last = versions.last().cloned().unwrap_or_default();
     Ok(Scanned::Plan(Plan {
         tool_id: tool_id.to_string(),
-        prefix: format!("backfill/{tool_id}/"),
-        branch: format!("backfill/{tool_id}/{from}"),
-        title: format!("feat({tool_id}): backfill versions {from} to {last}"),
-        body: pr::pr_body(
-            tool_id,
-            &versions,
-            index.source_repo.as_deref(),
+        kind: Kind::Backfill {
+            from: from.to_string(),
+        },
+        activity: Activity {
             score,
-            &result.signals,
             cadence_days,
-        ),
+            signals: result.signals,
+        },
         files: stage::staged_files(repo_root, &generated)?,
         new_versions: versions,
     }))
@@ -271,9 +267,12 @@ mod tests {
             panic!("expected a plan, got {scanned:?}");
         };
         assert_eq!(plan.new_versions, vec!["1.82.0", "1.85.0"]);
-        assert_eq!(plan.prefix, "backfill/demo/");
-        assert_eq!(plan.branch, "backfill/demo/1.82.0");
-        assert_eq!(plan.title, "feat(demo): backfill versions 1.82.0 to 1.85.0");
+        assert_eq!(plan.prefix(), "backfill/demo/");
+        assert_eq!(plan.branch(), "backfill/demo/1.82.0");
+        assert_eq!(
+            plan.title(),
+            "feat(demo): backfill versions 1.82.0 to 1.85.0"
+        );
         let paths: Vec<&str> = plan.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(
             paths,

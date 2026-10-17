@@ -242,9 +242,18 @@ The binary is uploaded before npm installs anything, so JavaScript in the
 tamper with the plan, so `deliver` treats the plan as untrusted:
 
 - It refuses to run unless the checkout is at the plan's `base_sha`.
-- Each plan may write only `tools/<id>/index.json` and
-  `tools/<id>/versions/<v>.json`, every file must parse as JSON, and its
-  branch must be a plain name under `scan/<id>/` or `backfill/<id>/`.
+- Each plan may write only one `tools/<id>/index.json` plus one
+  `tools/<id>/versions/<v>.json` per announced version, and every file
+  must parse as JSON. Versions and the backfill floor must be plain
+  tokens (letters, digits, `.`, `_`, `-`, `+`).
+- A plan carries no free text. The branch (`scan/<id>/<date>` or
+  `backfill/<id>/<from>`), PR title, and PR body are rendered by
+  `deliver` from the plan's typed fields (versions, score, cadence,
+  numeric signals), with the upstream link read from the checkout's own
+  `index.json`. Unknown fields are rejected.
+- A staged failure must name a tool that exists in the checkout, and its
+  error text is capped and fenced so it can't inject markdown into the
+  tracking issue.
 - The in-process rules run again on the written files before any push.
   ajv does not — it is third-party code, and it already ran in `stage`.
 - The PR still goes through `validate.yml`, which runs ajv again.

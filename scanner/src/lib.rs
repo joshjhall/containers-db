@@ -33,7 +33,7 @@ use serde_json::Value;
 
 use crate::activity::compute_tier;
 use crate::adapter::{Adapter, ToolIndex, UpstreamVersion};
-use crate::stage::{Failure, Manifest, Plan, Schemas};
+use crate::stage::{Activity, Failure, Kind, Manifest, Plan, Schemas};
 
 pub use outcome::Outcome;
 
@@ -291,7 +291,14 @@ fn apply(
             // next tool (and the token job's checkout) starts clean.
             let gated = stage::write_and_gate(repo_root, &plan, Schemas::Require);
             let restored = pr::discard_generated(repo_root, tool_id);
-            gated?;
+            if let Err(e) = gated {
+                // The gate failure is the error; a dirty tree left behind
+                // would fail the next tool's base check, so say why.
+                if let Err(r) = restored {
+                    eprintln!("scanner: {tool_id}: restoring the tree after a failed gate: {r:#}");
+                }
+                return Err(e);
+            }
             restored?;
             let new_versions = plan.new_versions.clone();
             manifest.plans.push(plan);
@@ -299,16 +306,7 @@ fn apply(
         }
         Mode::Deliver => {
             stage::write_and_gate(repo_root, &plan, Schemas::IfAvailable)?;
-            let delivery = pr::deliver(
-                repo_root,
-                tool_id,
-                &plan.prefix,
-                &plan.branch,
-                &plan.new_versions,
-                &plan.title,
-                &plan.body,
-            )?;
-            Ok(Outcome::delivered(delivery, plan.new_versions))
+            stage::deliver_checked(repo_root, &plan)
         }
     }
 }
@@ -387,17 +385,14 @@ async fn scan_one(
 
     Ok(Scanned::Plan(Plan {
         tool_id: tool_id.to_string(),
-        prefix: format!("scan/{tool_id}/"),
-        branch: pr::branch_name(tool_id, now),
-        title: pr::pr_title(tool_id, &new_version_strings),
-        body: pr::pr_body(
-            tool_id,
-            &new_version_strings,
-            index.source_repo.as_deref(),
+        kind: Kind::Scan {
+            date: now.date_naive(),
+        },
+        activity: Activity {
             score,
-            &result.signals,
             cadence_days,
-        ),
+            signals: result.signals,
+        },
         files: stage::staged_files(repo_root, &generated)?,
         new_versions: new_version_strings,
     }))
@@ -491,14 +486,23 @@ mod tests {
     fn rule_breaking_plan() -> Plan {
         Plan {
             tool_id: "foo".into(),
-            prefix: "scan/foo/".into(),
-            branch: "scan/foo/2026-10-17".into(),
+            kind: Kind::Scan {
+                date: NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
+            },
             new_versions: vec!["1.0.0".into()],
-            title: "feat(foo): add upstream versions 1.0.0".into(),
-            body: String::new(),
-            files: vec![StagedFile {
-                path: "tools/foo/versions/1.0.0.json".into(),
-                contents: r#"{
+            activity: Activity {
+                score: activity::Score::Active,
+                cadence_days: 7,
+                signals: activity::ActivitySignals::default(),
+            },
+            files: vec![
+                StagedFile {
+                    path: "tools/foo/index.json".into(),
+                    contents: r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli" }"#.into(),
+                },
+                StagedFile {
+                    path: "tools/foo/versions/1.0.0.json".into(),
+                    contents: r#"{
                     "schemaVersion": 1, "tool": "foo", "version": "1.0.0",
                     "install_methods": [
                         { "name": "x",
@@ -507,8 +511,9 @@ mod tests {
                           "dependencies": [ { "tool": "ghost" } ] }
                     ]
                 }"#
-                .into(),
-            }],
+                    .into(),
+                },
+            ],
         }
     }
 
@@ -582,11 +587,31 @@ mod tests {
     }
 
     #[test]
+    fn deliver_refuses_a_staged_failure_for_an_unknown_tool() {
+        // Checked before `gh` is ever called: no issue is filed for a tool
+        // the checkout doesn't have, and no plan after it is delivered.
+        let repo = catalog_repo();
+        let p = repo.path();
+        let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
+        manifest.failures.push(Failure {
+            tool_id: "ghost".into(),
+            error: "@everyone".into(),
+        });
+        manifest.plans.push(rule_breaking_plan());
+        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "staged failure names `ghost`, which has no tools/ghost/index.json"
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
     fn delivery_writes_nothing_for_a_plan_outside_its_tool() {
         let repo = catalog_repo();
         let p = repo.path();
         let mut plan = rule_breaking_plan();
-        plan.files[0].path = ".github/workflows/scan.yml".into();
+        plan.files[1].path = ".github/workflows/scan.yml".into();
         let err = stage::deliver_plan(p, &plan).unwrap_err();
         assert!(
             err.to_string()

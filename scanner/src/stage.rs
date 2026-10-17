@@ -5,8 +5,9 @@
 //! pushes / opens PRs. ajv and npm never run where the token is.
 //!
 //! The manifest crosses a trust boundary: the staging job runs third-party
-//! code, so [`Plan::check`] confines every plan to its own `tools/<id>/`
-//! directory and its own branch prefix before anything is written.
+//! code, so a plan carries no free text. [`Plan::check`] confines it to its
+//! own `tools/<id>/` files, and the branch, PR title and body are rendered
+//! by the token job from the plan's typed fields and its own checkout.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -15,10 +16,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::activity::{ActivitySignals, Score};
+use crate::adapter::ToolIndex;
 use crate::{Outcome, RunArgs, outcome, pr, validate, which_ajv};
 
 /// Manifest format version; [`Manifest::read`] rejects any other.
 const MANIFEST_VERSION: u32 = 1;
+
+/// Longest staged error text a tracking issue will carry.
+const MAX_ERROR_CHARS: usize = 8_000;
 
 /// Everything the token job needs to deliver one staging run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -33,30 +39,101 @@ pub struct Manifest {
     pub failures: Vec<Failure>,
 }
 
-/// One tool's validated changes and the PR that should carry them.
+/// One tool's validated changes. The PR that carries them is derived:
+/// see [`Plan::prefix`], [`Plan::branch`], [`Plan::title`], [`Plan::body`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Plan {
     pub tool_id: String,
-    /// Dedup prefix: `scan/<id>/` or `backfill/<id>/`.
-    pub prefix: String,
-    pub branch: String,
+    pub kind: Kind,
     pub new_versions: Vec<String>,
-    pub title: String,
-    pub body: String,
+    pub activity: Activity,
     pub files: Vec<StagedFile>,
+}
+
+/// Which command produced a plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Kind {
+    /// A forward scan, branched as `scan/<id>/<date>`.
+    Scan { date: chrono::NaiveDate },
+    /// `scanner backfill --from <from>`.
+    Backfill { from: String },
+}
+
+/// The recomputed activity block the PR body reports.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Activity {
+    pub score: Score,
+    pub cadence_days: u32,
+    pub signals: ActivitySignals,
 }
 
 /// A file to write, by `/`-separated repo-relative path, with its exact bytes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StagedFile {
     pub path: String,
     pub contents: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Failure {
     pub tool_id: String,
     pub error: String,
+}
+
+/// A plain tool id: lowercase ASCII letters, digits, `_`, `-`.
+fn check_tool_id(id: &str) -> Result<()> {
+    anyhow::ensure!(
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
+        "plan: invalid tool id {id:?}"
+    );
+    Ok(())
+}
+
+/// A plain token for a version or backfill floor: no path, ref, or
+/// markdown syntax can ride along into a branch name or PR text.
+fn check_token(id: &str, what: &str, v: &str) -> Result<()> {
+    anyhow::ensure!(
+        !v.is_empty()
+            && v.len() <= 64
+            && !v.contains("..")
+            && !v.ends_with(".lock")
+            && v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+')),
+        "plan for `{id}`: {what} {v:?} is not a plain version"
+    );
+    Ok(())
+}
+
+impl Failure {
+    /// Refuse a staged failure for a tool the checkout doesn't have, and
+    /// cap its error text, before it becomes a tracking issue.
+    pub fn check(&self, repo_root: &Path) -> Result<()> {
+        check_tool_id(&self.tool_id)?;
+        let index = repo_root
+            .join("tools")
+            .join(&self.tool_id)
+            .join("index.json");
+        anyhow::ensure!(
+            index.is_file(),
+            "staged failure names `{}`, which has no tools/{}/index.json",
+            self.tool_id,
+            self.tool_id
+        );
+        anyhow::ensure!(
+            self.error.chars().count() <= MAX_ERROR_CHARS,
+            "staged failure for `{}`: error text over {MAX_ERROR_CHARS} chars",
+            self.tool_id
+        );
+        Ok(())
+    }
 }
 
 /// Which schema gate [`write_and_gate`] runs after the in-process rules.
@@ -102,67 +179,105 @@ impl Manifest {
 }
 
 impl Plan {
+    /// Dedup prefix: `scan/<id>/` or `backfill/<id>/`.
+    pub fn prefix(&self) -> String {
+        match &self.kind {
+            Kind::Scan { .. } => format!("scan/{}/", self.tool_id),
+            Kind::Backfill { .. } => format!("backfill/{}/", self.tool_id),
+        }
+    }
+
+    /// Branch for a new PR; an open one under [`Plan::prefix`] is reused.
+    pub fn branch(&self) -> String {
+        match &self.kind {
+            Kind::Scan { date } => format!("{}{}", self.prefix(), date.format("%Y-%m-%d")),
+            Kind::Backfill { from } => format!("{}{from}", self.prefix()),
+        }
+    }
+
+    pub fn title(&self) -> String {
+        match &self.kind {
+            Kind::Scan { .. } => pr::pr_title(&self.tool_id, &self.new_versions),
+            Kind::Backfill { from } => {
+                let last = self.new_versions.last().map(String::as_str).unwrap_or("");
+                format!("feat({}): backfill versions {from} to {last}", self.tool_id)
+            }
+        }
+    }
+
+    /// PR body. `source_repo` comes from the delivering checkout's own
+    /// `index.json`, never from the plan.
+    pub fn body(&self, source_repo: Option<&str>) -> String {
+        pr::pr_body(
+            &self.tool_id,
+            &self.new_versions,
+            source_repo,
+            self.activity.score,
+            &self.activity.signals,
+            self.activity.cadence_days,
+        )
+    }
+
     /// Refuse a plan that reaches outside its own tool. The staging job is
     /// not trusted, so a tampered plan must not be able to write anywhere
-    /// but `tools/<tool_id>/` or push to a branch it doesn't own.
+    /// but `tools/<tool_id>/`, push to a branch it doesn't own, or put
+    /// text of its choosing in a PR.
     pub fn check(&self) -> Result<()> {
+        check_tool_id(&self.tool_id)?;
         let id = &self.tool_id;
-        anyhow::ensure!(
-            !id.is_empty()
-                && id
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
-            "plan: invalid tool id {id:?}"
-        );
-        anyhow::ensure!(
-            self.prefix == format!("scan/{id}/") || self.prefix == format!("backfill/{id}/"),
-            "plan for `{id}`: prefix {:?} is not scan/{id}/ or backfill/{id}/",
-            self.prefix
-        );
-        let suffix = self.branch.strip_prefix(&self.prefix).unwrap_or("");
-        anyhow::ensure!(
-            !suffix.is_empty()
-                && !suffix.contains("..")
-                && !suffix.ends_with(".lock")
-                && suffix
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')),
-            "plan for `{id}`: branch {:?} is not a plain name under {}",
-            self.branch,
-            self.prefix
-        );
+        if let Kind::Backfill { from } = &self.kind {
+            check_token(id, "backfill floor", from)?;
+        }
         anyhow::ensure!(
             !self.new_versions.is_empty(),
             "plan for `{id}`: no new versions"
         );
-        anyhow::ensure!(!self.files.is_empty(), "plan for `{id}`: no files");
+        for v in &self.new_versions {
+            check_token(id, "version", v)?;
+        }
+        let mut indexes = 0;
+        let mut versions = Vec::new();
         for file in &self.files {
-            check_path(id, &file.path)?;
+            match check_path(id, &file.path)? {
+                None => indexes += 1,
+                Some(v) => versions.push(v),
+            }
             serde_json::from_str::<Value>(&file.contents)
                 .with_context(|| format!("plan for `{id}`: {} is not JSON", file.path))?;
         }
+        let mut expected: Vec<&str> = self.new_versions.iter().map(String::as_str).collect();
+        expected.sort_unstable();
+        versions.sort_unstable();
+        anyhow::ensure!(
+            indexes == 1 && versions == expected,
+            "plan for `{id}`: files must be one index.json plus versions/<v>.json for exactly {:?}",
+            self.new_versions
+        );
         Ok(())
     }
 }
 
-/// `path` must be `tools/<id>/index.json` or `tools/<id>/versions/<v>.json`.
-fn check_path(id: &str, path: &str) -> Result<()> {
+/// `path` must be `tools/<id>/index.json` (→ `None`) or
+/// `tools/<id>/versions/<v>.json` (→ `Some(v)`).
+fn check_path<'a>(id: &str, path: &'a str) -> Result<Option<&'a str>> {
     let parts: Vec<&str> = path.split('/').collect();
     let normal = Path::new(path)
         .components()
         .all(|c| matches!(c, Component::Normal(_)));
     let shaped = match parts.as_slice() {
-        ["tools", t, "index.json"] => t == &id,
-        ["tools", t, "versions", name] => {
-            t == &id && name.len() > ".json".len() && name.ends_with(".json")
-        }
-        _ => false,
+        ["tools", t, "index.json"] if t == &id => Some(None),
+        ["tools", t, "versions", name] if t == &id => name
+            .strip_suffix(".json")
+            .filter(|v| !v.is_empty())
+            .map(Some),
+        _ => None,
     };
-    anyhow::ensure!(
-        normal && shaped && !path.contains('\\'),
-        "plan for `{id}`: refusing to write {path:?} (outside tools/{id}/index.json and tools/{id}/versions/)"
-    );
-    Ok(())
+    match shaped {
+        Some(version) if normal && !path.contains('\\') => Ok(version),
+        _ => anyhow::bail!(
+            "plan for `{id}`: refusing to write {path:?} (outside tools/{id}/index.json and tools/{id}/versions/)"
+        ),
+    }
 }
 
 /// The exact bytes [`crate::write_file`] writes for `value`.
@@ -269,6 +384,9 @@ pub(crate) fn deliver_manifest(
     let base = pr::RunBase::capture(repo_root, false)?;
     let mut failed = Vec::new();
     for f in &manifest.failures {
+        // An unchecked failure would let the staging job file an issue
+        // about any tool, with any text.
+        f.check(repo_root)?;
         eprintln!("scanner: {} FAILED while staging: {}", f.tool_id, f.error);
         crate::report_failure(repo_root, &f.tool_id, &f.error, now);
         failed.push(f.tool_id.clone());
@@ -304,14 +422,26 @@ pub(crate) fn deliver_plan(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
         }
         return Err(e);
     }
+    deliver_checked(repo_root, plan)
+}
+
+/// Open, update, or skip the PR for a plan whose files are written and
+/// gated. `source_repo` is read from the index now on disk, which the
+/// rules just validated.
+pub(crate) fn deliver_checked(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
+    let index_path = repo_root
+        .join("tools")
+        .join(&plan.tool_id)
+        .join("index.json");
+    let source_repo = ToolIndex::from_path(&index_path)?.source_repo;
     let delivery = pr::deliver(
         repo_root,
         &plan.tool_id,
-        &plan.prefix,
-        &plan.branch,
+        &plan.prefix(),
+        &plan.branch(),
         &plan.new_versions,
-        &plan.title,
-        &plan.body,
+        &plan.title(),
+        &plan.body(source_repo.as_deref()),
     )?;
     Ok(Outcome::delivered(delivery, plan.new_versions.clone()))
 }
@@ -320,14 +450,22 @@ pub(crate) fn deliver_plan(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
 mod tests {
     use super::*;
 
+    pub(crate) fn activity() -> Activity {
+        Activity {
+            score: Score::Active,
+            cadence_days: 7,
+            signals: ActivitySignals::default(),
+        }
+    }
+
     fn plan() -> Plan {
         Plan {
             tool_id: "rust".into(),
-            prefix: "scan/rust/".into(),
-            branch: "scan/rust/2026-10-17".into(),
+            kind: Kind::Scan {
+                date: chrono::NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
+            },
             new_versions: vec!["1.96.0".into()],
-            title: "feat(rust): add upstream versions 1.96.0".into(),
-            body: "## New versions\n\n- `1.96.0`\n".into(),
+            activity: activity(),
             files: vec![
                 StagedFile {
                     path: "tools/rust/index.json".into(),
@@ -351,11 +489,120 @@ mod tests {
     }
 
     #[test]
+    fn scan_plan_derives_its_branch_and_title() {
+        let p = plan();
+        assert_eq!(p.prefix(), "scan/rust/");
+        assert_eq!(p.branch(), "scan/rust/2026-10-17");
+        assert_eq!(p.title(), "feat(rust): add upstream versions 1.96.0");
+        let body = p.body(Some("https://github.com/rust-lang/rust"));
+        assert_eq!(
+            body,
+            pr::pr_body(
+                "rust",
+                &["1.96.0".to_string()],
+                Some("https://github.com/rust-lang/rust"),
+                Score::Active,
+                &ActivitySignals::default(),
+                7,
+            )
+        );
+    }
+
+    #[test]
     fn check_accepts_a_backfill_plan() {
         let mut p = plan();
-        p.prefix = "backfill/rust/".into();
-        p.branch = "backfill/rust/1.82.0".into();
+        p.kind = Kind::Backfill {
+            from: "1.82.0".into(),
+        };
         p.check().unwrap();
+        assert_eq!(p.branch(), "backfill/rust/1.82.0");
+        assert_eq!(p.title(), "feat(rust): backfill versions 1.82.0 to 1.96.0");
+    }
+
+    #[test]
+    fn plans_carry_no_free_text_fields() {
+        // A staged plan with a `title` (or any field the token job doesn't
+        // derive) is refused at parse time, not silently ignored.
+        let mut v = serde_json::to_value(plan()).unwrap();
+        v["title"] = "@everyone click here".into();
+        let err = serde_json::from_value::<Plan>(v).unwrap_err().to_string();
+        assert!(err.starts_with("unknown field `title`"), "got {err}");
+    }
+
+    #[test]
+    fn check_rejects_versions_and_floors_that_are_not_plain_tokens() {
+        for v in ["", "1.0/../x", "1..0", "v.lock", "1.0 ", "`x`", "[a](b)"] {
+            let mut p = plan();
+            p.new_versions = vec![v.into()];
+            assert_eq!(
+                check_err(&p),
+                format!("plan for `rust`: version {v:?} is not a plain version")
+            );
+            let mut p = plan();
+            p.kind = Kind::Backfill { from: v.into() };
+            assert_eq!(
+                check_err(&p),
+                format!("plan for `rust`: backfill floor {v:?} is not a plain version")
+            );
+        }
+    }
+
+    #[test]
+    fn check_ties_the_files_to_the_new_versions() {
+        let want = "plan for `rust`: files must be one index.json plus versions/<v>.json for exactly [\"1.96.0\"]";
+        // Missing index.
+        let mut p = plan();
+        p.files.remove(0);
+        assert_eq!(check_err(&p), want);
+        // A version file the plan doesn't announce.
+        let mut p = plan();
+        p.files[1].path = "tools/rust/versions/1.97.0.json".into();
+        assert_eq!(check_err(&p), want);
+        // Two indexes.
+        let mut p = plan();
+        p.files.push(p.files[0].clone());
+        assert_eq!(check_err(&p), want);
+        // No files at all.
+        let mut p = plan();
+        p.files.clear();
+        assert_eq!(check_err(&p), want);
+    }
+
+    #[test]
+    fn failure_check_needs_a_real_tool_and_bounded_text() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("tools/rust")).unwrap();
+        std::fs::write(root.join("tools/rust/index.json"), "{}").unwrap();
+        let ok = Failure {
+            tool_id: "rust".into(),
+            error: "boom".into(),
+        };
+        ok.check(root).unwrap();
+        let ghost = Failure {
+            tool_id: "ghost".into(),
+            ..ok.clone()
+        };
+        assert_eq!(
+            ghost.check(root).unwrap_err().to_string(),
+            "staged failure names `ghost`, which has no tools/ghost/index.json"
+        );
+        let bad = Failure {
+            tool_id: "../rust".into(),
+            ..ok.clone()
+        };
+        assert_eq!(
+            bad.check(root).unwrap_err().to_string(),
+            "plan: invalid tool id \"../rust\""
+        );
+        let long = Failure {
+            error: "x".repeat(MAX_ERROR_CHARS + 1),
+            ..ok
+        };
+        assert_eq!(
+            long.check(root).unwrap_err().to_string(),
+            format!("staged failure for `rust`: error text over {MAX_ERROR_CHARS} chars")
+        );
     }
 
     #[test]
@@ -384,32 +631,6 @@ mod tests {
     }
 
     #[test]
-    fn check_rejects_a_foreign_prefix_or_branch() {
-        let mut p = plan();
-        p.prefix = "scan/gcc/".into();
-        p.branch = "scan/gcc/2026-10-17".into();
-        assert_eq!(
-            check_err(&p),
-            "plan for `rust`: prefix \"scan/gcc/\" is not scan/rust/ or backfill/rust/"
-        );
-        for branch in [
-            "main",
-            "scan/rust/",
-            "scan/rust/a/b",
-            "scan/rust/a..b",
-            "scan/rust/x.lock",
-            "scan/rust/x y",
-        ] {
-            let mut p = plan();
-            p.branch = branch.into();
-            assert_eq!(
-                check_err(&p),
-                format!("plan for `rust`: branch {branch:?} is not a plain name under scan/rust/"),
-            );
-        }
-    }
-
-    #[test]
     fn check_rejects_a_bad_tool_id() {
         let mut p = plan();
         p.tool_id = "../rust".into();
@@ -421,9 +642,6 @@ mod tests {
         let mut p = plan();
         p.new_versions.clear();
         assert_eq!(check_err(&p), "plan for `rust`: no new versions");
-        let mut p = plan();
-        p.files.clear();
-        assert_eq!(check_err(&p), "plan for `rust`: no files");
         let mut p = plan();
         p.files[0].contents = "not json".into();
         assert!(
