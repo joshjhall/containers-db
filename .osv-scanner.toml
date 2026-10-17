@@ -21,20 +21,7 @@ id = "GHSA-79m9-55jc-p6mw"
 ignoreUntil = 2027-04-30
 reason = "Alias of RUSTSEC-2025-0033; same name-collision false positive."
 
-# ---------------------------------------------------------------------------
-# unsafe-libyaml 0.2.11 — unmaintained, via containers-common's serde_yaml
-# ---------------------------------------------------------------------------
-# RUSTSEC-2024-0449 is an *unmaintained* notice (repo archived), not a CVE.
-# Neither scanner nor validator parses YAML; it arrives only through the
-# `containers-common` git dependency pinned in Cargo.toml.
-#
-# Upstream already fixed it: joshjhall/containers#1109 (f23faaa1ac) replaced
-# serde_yaml with serde-saphyr. But every containers rev carrying that fix
-# declares rust-version >= 1.98, above this workspace's 1.94 floor, so bumping
-# the pin is an MSRV decision, not a lockfile refresh. Short expiry on purpose:
-# resolve it by raising rust-version and bumping the containers-common rev.
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2024-0449"
-ignoreUntil = 2026-12-31
-reason = "unsafe-libyaml unmaintained (no CVE), only via containers-common's serde_yaml; fixed upstream in containers#1109 but that rev requires Rust >= 1.98 vs our 1.94 floor."
+# The unsafe-libyaml suppression (RUSTSEC-2024-0449) was removed when the
+# containers-common pin moved past joshjhall/containers#1109, which replaced
+# serde_yaml with serde-saphyr. unsafe-libyaml is no longer in Cargo.lock, so
+# there is nothing to suppress.
