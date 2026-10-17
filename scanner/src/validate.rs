@@ -110,10 +110,11 @@ mod tests {
     fn npx_strips_exactly_the_github_tokens() {
         let cmd = npx();
         assert_eq!(cmd.get_program(), "npx");
-        let removed: Vec<_> = cmd
+        let mut removed: Vec<_> = cmd
             .get_envs()
             .map(|(k, v)| (k.to_str().unwrap().to_owned(), v.is_none()))
             .collect();
+        removed.sort();
         assert_eq!(
             removed,
             vec![

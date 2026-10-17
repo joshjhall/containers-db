@@ -125,6 +125,10 @@ jobs:
           INPUT_BACKFILL_FROM: ${{ inputs.backfill_from }}
         run: |
           set -euo pipefail
+          # Run the binary `Build scanner` produced, not `cargo run`. A
+          # rebuild here would run dependency build scripts and
+          # proc-macros with the tokens in their env (#416).
+          scanner=./target/release/scanner
           dry_run_flag=""
           if [ "$INPUT_DRY_RUN" = "true" ]; then
             dry_run_flag="--dry-run"
@@ -140,11 +144,11 @@ jobs:
               exit 1
             fi
             # shellcheck disable=SC2086
-            cargo run --release -p scanner -- backfill "$INPUT_TOOL" --from "$INPUT_BACKFILL_FROM" $dry_run_flag
+            "$scanner" backfill "$INPUT_TOOL" --from "$INPUT_BACKFILL_FROM" $dry_run_flag
           elif [ -n "$INPUT_TOOL" ]; then
             # shellcheck disable=SC2086
-            cargo run --release -p scanner -- tool "$INPUT_TOOL" $dry_run_flag
+            "$scanner" tool "$INPUT_TOOL" $dry_run_flag
           else
             # shellcheck disable=SC2086
-            cargo run --release -p scanner -- due $dry_run_flag
+            "$scanner" due $dry_run_flag
           fi

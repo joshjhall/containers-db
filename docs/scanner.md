@@ -219,7 +219,9 @@ no credential is in `.git/config` while the npm install and `cargo build`
 steps run third-party code (#416). Inside the scanner step, the scanner
 strips `GH_TOKEN` and `GITHUB_TOKEN` from the env of its `npx ajv`
 children, so ajv-cli and its npm dependencies never see either token.
-The remaining holders are the scanner binary itself, `gh`, and `git`.
+The step runs the prebuilt `target/release/scanner` rather than
+`cargo run`, so no build script runs while the token is set. The
+remaining holders are the scanner binary itself, `gh`, and `git`.
 `GITHUB_TOKEN` is limited to `contents: read`. It only fetches the repo
 and makes the adapters' read-only API calls.
 
