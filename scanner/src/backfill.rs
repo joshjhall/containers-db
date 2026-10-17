@@ -1,15 +1,14 @@
 //! `scanner backfill`: add releases older than the catalog's oldest entry.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 
+use crate::Scanned;
 use crate::activity::compute_tier;
 use crate::adapter::{Adapter, ToolIndex, UpstreamVersion};
 use crate::stage::{self, Activity, Kind, Plan};
-use crate::{Scanned, generate};
 
 /// `scanner backfill`: add releases older than the catalog's oldest entry.
 ///
@@ -28,7 +27,7 @@ pub(crate) async fn backfill_one(
     // Before any fetch: a malformed floor must fail, not select everything.
     let floor = parse_floor(from)?;
     let index_path = repo_root.join("tools").join(tool_id).join("index.json");
-    let mut index = ToolIndex::from_path(&index_path)?;
+    let index = ToolIndex::from_path(&index_path)?;
     let result = adapter.fetch(&index).await?;
     let (score, cadence_days) = compute_tier(&result.signals, result.source_archived, now);
 
@@ -37,59 +36,30 @@ pub(crate) async fn backfill_one(
     let template_version = existing.first().cloned().ok_or_else(|| {
         anyhow::anyhow!("tool `{tool_id}` has no existing versions to template from")
     })?;
-    let template_path = repo_root
-        .join("tools")
-        .join(tool_id)
-        .join("versions")
-        .join(format!("{template_version}.json"));
-    let template_bytes = std::fs::read(&template_path)
-        .map_err(|e| anyhow::anyhow!("reading template {}: {e}", template_path.display()))?;
-    let template: Value = serde_json::from_slice(&template_bytes)
-        .map_err(|e| anyhow::anyhow!("parsing template {}: {e}", template_path.display()))?;
-
+    // The template itself is read by render_files, which errors if it is
+    // missing or not JSON.
     let picked = select_backfill(&result.upstream_versions, &floor, &template_version);
     if picked.is_empty() {
         println!("scanner: {tool_id}: nothing to backfill from {from} below {template_version}");
         return Ok(Scanned::NoChange);
     }
-    let versions: Vec<String> = picked.iter().map(|v| v.version.clone()).collect();
-
-    let mut generated: Vec<(PathBuf, Value)> = picked
-        .iter()
-        .map(|nv| {
-            let path = repo_root
-                .join("tools")
-                .join(tool_id)
-                .join("versions")
-                .join(format!("{}.json", nv.version));
-            (
-                path,
-                generate::render_version(&template, &template_version, nv, now),
-            )
-        })
-        .collect();
-    generate::update_index(
-        &mut index,
-        &versions,
-        &result.signals,
+    let kind = Kind::Backfill {
+        from: from.to_string(),
+    };
+    let activity = Activity {
         score,
         cadence_days,
-        now,
-    );
-    generated.push((index.path.clone(), index.raw.clone()));
-
+        signals: result.signals,
+    };
+    let files = stage::render_files(repo_root, tool_id, &kind, &picked, &activity, now)?;
     Ok(Scanned::Plan(Plan {
         tool_id: tool_id.to_string(),
-        kind: Kind::Backfill {
-            from: from.to_string(),
-        },
-        activity: Activity {
-            score,
-            cadence_days,
-            signals: result.signals,
-        },
-        files: stage::staged_files(repo_root, &generated)?,
-        new_versions: versions,
+        kind,
+        new_versions: picked.iter().map(|v| v.version.clone()).collect(),
+        releases: picked,
+        now,
+        activity,
+        files,
     }))
 }
 
@@ -175,7 +145,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = tmp.path().join("tools").join("demo");
         std::fs::create_dir_all(tool.join("versions")).unwrap();
-        let available: Vec<Value> = available
+        let available: Vec<serde_json::Value> = available
             .iter()
             .map(|v| serde_json::json!({ "version": v }))
             .collect();

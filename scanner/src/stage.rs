@@ -5,9 +5,11 @@
 //! pushes / opens PRs. ajv and npm never run where the token is.
 //!
 //! The manifest crosses a trust boundary: the staging job runs third-party
-//! code, so a plan carries no free text. [`Plan::check`] confines it to its
-//! own `tools/<id>/` files, and the branch, PR title and body are rendered
-//! by the token job from the plan's typed fields and its own checkout.
+//! code, so a plan carries no free text and the token job writes none of
+//! its bytes. A plan names which releases to add; the token job re-renders
+//! every file from its own checkout ([`render_files`]) and refuses the plan
+//! unless the staged files match. Branch, PR title, and body are likewise
+//! rendered from the plan's typed fields.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -17,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::activity::{ActivitySignals, Score};
-use crate::adapter::ToolIndex;
-use crate::{Outcome, RunArgs, outcome, pr, validate, which_ajv};
+use crate::adapter::{ToolIndex, UpstreamVersion};
+use crate::{Outcome, RunArgs, generate, outcome, pr, validate, which_ajv};
 
 /// Manifest format version; [`Manifest::read`] rejects any other.
 const MANIFEST_VERSION: u32 = 1;
@@ -47,7 +49,15 @@ pub struct Plan {
     pub tool_id: String,
     pub kind: Kind,
     pub new_versions: Vec<String>,
+    /// The upstream releases behind `new_versions`, in the same order:
+    /// what [`render_files`] needs besides the checkout.
+    pub releases: Vec<UpstreamVersion>,
+    /// The scan's clock, stamped into `added_at` / `scanned_at`.
+    pub now: DateTime<Utc>,
     pub activity: Activity,
+    /// What the staging job wrote and validated. The token job never
+    /// writes these bytes: it re-renders them from its own checkout and
+    /// refuses the plan unless they match ([`deliver_plan`]).
     pub files: Vec<StagedFile>,
 }
 
@@ -148,6 +158,28 @@ fn check_additive(repo_root: &Path, plan: &Plan) -> Result<()> {
     anyhow::ensure!(
         existing.is_empty(),
         "plan for `{id}`: refusing to overwrite already-cataloged version(s) {existing:?}"
+    );
+    Ok(())
+}
+
+/// Re-render the plan from this checkout and require the staged bytes to
+/// match exactly. A plan can then pick only *which* releases to add (and
+/// their dates), never what its files say: install URLs, checksums, and
+/// every index field come from the checkout's template. Same commit, same
+/// inputs, same code, so an untampered plan always matches.
+fn check_rerender(repo_root: &Path, plan: &Plan) -> Result<()> {
+    let id = &plan.tool_id;
+    let rendered = render_files(
+        repo_root,
+        id,
+        &plan.kind,
+        &plan.releases,
+        &plan.activity,
+        plan.now,
+    )?;
+    anyhow::ensure!(
+        rendered == plan.files,
+        "plan for `{id}`: staged files differ from what this checkout renders for its releases"
     );
     Ok(())
 }
@@ -265,6 +297,12 @@ impl Plan {
         for v in &self.new_versions {
             check_token(id, "version", v)?;
         }
+        let released: Vec<&str> = self.releases.iter().map(|r| r.version.as_str()).collect();
+        let announced: Vec<&str> = self.new_versions.iter().map(String::as_str).collect();
+        anyhow::ensure!(
+            released == announced,
+            "plan for `{id}`: releases {released:?} don't match new_versions {announced:?}"
+        );
         let mut indexes = 0;
         let mut versions = Vec::new();
         for file in &self.files {
@@ -339,6 +377,70 @@ pub(crate) fn staged_files(
             })
         })
         .collect()
+}
+
+/// The template a plan's version files are cloned from, as the checkout
+/// has it: the newest cataloged version for a scan, the oldest for a
+/// backfill (whose support matrix best describes older releases).
+fn template_version(index: &ToolIndex, kind: &Kind) -> Option<String> {
+    let mut existing = index.available_versions();
+    match kind {
+        Kind::Scan { .. } => existing.pop(),
+        Kind::Backfill { .. } => {
+            existing.sort_by_cached_key(|v| generate::version_key(Some(v)));
+            existing.into_iter().next()
+        }
+    }
+}
+
+/// Render a plan's files from the checkout at `repo_root`: each version
+/// file from the tool's template, then the index with the new versions and
+/// activity. Version files first, index last. The staging job builds its
+/// plan's `files` with this, and the token job calls it again rather than
+/// trusting those bytes, so both sides run one code path.
+pub(crate) fn render_files(
+    repo_root: &Path,
+    tool_id: &str,
+    kind: &Kind,
+    releases: &[UpstreamVersion],
+    activity: &Activity,
+    now: DateTime<Utc>,
+) -> Result<Vec<StagedFile>> {
+    let tool_dir = repo_root.join("tools").join(tool_id);
+    let mut index = ToolIndex::from_path(&tool_dir.join("index.json"))?;
+    let template_version = template_version(&index, kind).ok_or_else(|| {
+        anyhow::anyhow!("tool `{tool_id}` has no existing versions to template from")
+    })?;
+    let template_path = tool_dir
+        .join("versions")
+        .join(format!("{template_version}.json"));
+    let template_bytes = std::fs::read(&template_path)
+        .map_err(|e| anyhow::anyhow!("reading template {}: {e}", template_path.display()))?;
+    let template: Value = serde_json::from_slice(&template_bytes)
+        .map_err(|e| anyhow::anyhow!("parsing template {}: {e}", template_path.display()))?;
+
+    let mut generated: Vec<(PathBuf, Value)> = releases
+        .iter()
+        .map(|nv| {
+            (
+                tool_dir
+                    .join("versions")
+                    .join(format!("{}.json", nv.version)),
+                generate::render_version(&template, &template_version, nv, now),
+            )
+        })
+        .collect();
+    let versions: Vec<String> = releases.iter().map(|r| r.version.clone()).collect();
+    generate::update_index(
+        &mut index,
+        &versions,
+        &activity.signals,
+        activity.score,
+        activity.cadence_days,
+        now,
+    );
+    generated.push((index.path.clone(), index.raw));
+    staged_files(repo_root, &generated)
 }
 
 /// Write the plan's files and run the pre-PR gates against the result.
@@ -469,6 +571,7 @@ pub(crate) fn deliver_manifest(
 pub(crate) fn deliver_plan(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
     plan.check()?;
     check_additive(repo_root, plan)?;
+    check_rerender(repo_root, plan)?;
     let source_repo = match write_and_gate(repo_root, plan, Schemas::Skip) {
         Ok(source_repo) => source_repo,
         Err(e) => {
@@ -532,6 +635,13 @@ mod tests {
                 date: chrono::NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
             },
             new_versions: vec!["1.96.0".into()],
+            releases: vec![UpstreamVersion {
+                version: "1.96.0".into(),
+                released_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 10, 1, 0, 0, 0)
+                    .unwrap(),
+                channel: "stable".into(),
+            }],
+            now: chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 10, 17, 0, 0, 0).unwrap(),
             activity: activity(),
             files: vec![
                 StagedFile {
@@ -614,6 +724,16 @@ mod tests {
                 format!("plan for `rust`: backfill floor {v:?} is not a plain version")
             );
         }
+    }
+
+    #[test]
+    fn check_ties_the_releases_to_the_new_versions() {
+        let mut p = plan();
+        p.releases[0].version = "1.97.0".into();
+        assert_eq!(
+            check_err(&p),
+            "plan for `rust`: releases [\"1.97.0\"] don't match new_versions [\"1.96.0\"]"
+        );
     }
 
     #[test]

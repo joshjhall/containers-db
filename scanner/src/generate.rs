@@ -109,7 +109,7 @@ pub fn update_index(
 
 /// Sort key for a dotted numeric version: `1.9.0` < `1.10.0`. Non-numeric
 /// segments sort as 0, and a missing version sorts first.
-fn version_key(v: Option<&str>) -> Vec<u64> {
+pub(crate) fn version_key(v: Option<&str>) -> Vec<u64> {
     v.unwrap_or("")
         .split('.')
         .map(|p| p.parse().unwrap_or(0))

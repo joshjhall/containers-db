@@ -254,6 +254,13 @@ treats the plan as untrusted:
   must parse as JSON. Every announced version must be new: a plan that
   would overwrite an already-cataloged `versions/<v>.json` is refused. Versions and the backfill floor must be plain
   tokens (letters, digits, `.`, `_`, `-`, `+`).
+- **`deliver` writes none of the plan's bytes.** It re-renders every file
+  from its own checkout — the tool's template, the plan's releases
+  (version, date, channel), activity, and timestamp, through the same
+  generator code `stage` used — and refuses the plan unless the staged
+  files match exactly. A plan can choose *which* releases to add; install
+  URLs, checksums, and every other field come from the checkout. Since the
+  bytes are identical, `stage`'s ajv verdict covers what `deliver` writes.
 - A plan carries no free text. The branch (`scan/<id>/<date>` or
   `backfill/<id>/<from>`), PR title, and PR body are rendered by
   `deliver` from the plan's typed fields (versions, score, cadence,

@@ -326,7 +326,7 @@ async fn scan_one(
     now: DateTime<Utc>,
 ) -> anyhow::Result<Scanned> {
     let index_path = repo_root.join("tools").join(tool_id).join("index.json");
-    let mut index = ToolIndex::from_path(&index_path)?;
+    let index = ToolIndex::from_path(&index_path)?;
 
     let result = adapter.fetch(&index).await?;
     let (score, cadence_days) = compute_tier(&result.signals, result.source_archived, now);
@@ -363,43 +363,23 @@ async fn scan_one(
         return Ok(Scanned::NoChange);
     }
 
-    let mut generated: Vec<(PathBuf, Value)> = Vec::new();
-    for nv in &new_versions {
-        let path = repo_root
-            .join("tools")
-            .join(tool_id)
-            .join("versions")
-            .join(format!("{}.json", nv.version));
-        generated.push((
-            path,
-            generate::render_version(&template, &template_version, nv, now),
-        ));
-    }
-
-    let new_version_strings: Vec<String> = new_versions.iter().map(|v| v.version.clone()).collect();
-    generate::update_index(
-        &mut index,
-        &new_version_strings,
-        &result.signals,
+    let kind = Kind::Scan {
+        date: now.date_naive(),
+    };
+    let activity = Activity {
         score,
         cadence_days,
-        now,
-    );
-    // Index first, as the single-process path always wrote it.
-    generated.insert(0, (index.path.clone(), index.raw.clone()));
-
+        signals: result.signals,
+    };
+    let files = stage::render_files(repo_root, tool_id, &kind, &new_versions, &activity, now)?;
     Ok(Scanned::Plan(Plan {
         tool_id: tool_id.to_string(),
-        kind: Kind::Scan {
-            date: now.date_naive(),
-        },
-        activity: Activity {
-            score,
-            cadence_days,
-            signals: result.signals,
-        },
-        files: stage::staged_files(repo_root, &generated)?,
-        new_versions: new_version_strings,
+        kind,
+        new_versions: new_versions.iter().map(|v| v.version.clone()).collect(),
+        releases: new_versions,
+        now,
+        activity,
+        files,
     }))
 }
 
@@ -448,7 +428,6 @@ fn score_str(score: activity::Score) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stage::StagedFile;
     use chrono::TimeZone;
     use serde_json::json;
 
@@ -474,51 +453,75 @@ mod tests {
         git(p, &["init", "-q", "-b", "main"]);
         git(p, &["config", "user.name", "t"]);
         git(p, &["config", "user.email", "t@example.com"]);
-        let tool = p.join("tools").join("foo");
-        std::fs::create_dir_all(tool.join("versions")).unwrap();
-        std::fs::write(
-            tool.join("index.json"),
-            r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli" }"#,
-        )
-        .unwrap();
+        write_tool(p, None, TEMPLATE);
         git(p, &["add", "."]);
         git(p, &["commit", "-q", "-m", "init"]);
         dir
     }
 
-    /// A plan for `foo` whose version file references an unknown tool, so
-    /// the in-process rules reject it before ajv would ever run.
-    fn rule_breaking_plan() -> Plan {
+    /// A version file the rules accept.
+    const TEMPLATE: &str = r#"{
+        "schemaVersion": 1, "tool": "foo", "version": "0.9.0",
+        "install_methods": [
+            { "name": "x",
+              "verification": { "tier": 4, "algorithm": "sha256", "tofu": true },
+              "source_url_template": "https://x/0.9.0" }
+        ]
+    }"#;
+
+    /// A version file the rules reject: its dependency names no tool.
+    const RULE_BREAKING_TEMPLATE: &str = r#"{
+        "schemaVersion": 1, "tool": "foo", "version": "0.9.0",
+        "install_methods": [
+            { "name": "x",
+              "verification": { "tier": 4, "algorithm": "sha256", "tofu": true },
+              "source_url_template": "https://x/0.9.0",
+              "dependencies": [ { "tool": "ghost" } ] }
+        ]
+    }"#;
+
+    /// `tools/foo` with one cataloged version, 0.9.0, whose file is
+    /// `template`, and an optional `source_repo`.
+    fn write_tool(p: &Path, source_repo: Option<&str>, template: &str) {
+        let tool = p.join("tools").join("foo");
+        std::fs::create_dir_all(tool.join("versions")).unwrap();
+        let mut index = json!({
+            "schemaVersion": 1, "id": "foo", "kind": "cli",
+            "available": [ { "version": "0.9.0" } ],
+        });
+        if let Some(repo) = source_repo {
+            index["source_repo"] = repo.into();
+        }
+        std::fs::write(tool.join("index.json"), index.to_string()).unwrap();
+        std::fs::write(tool.join("versions").join("0.9.0.json"), template).unwrap();
+    }
+
+    /// The plan the staging job would produce for adding 1.0.0 to `p`'s
+    /// catalog: files rendered from the checkout, so it passes re-render.
+    fn rendered_plan(p: &Path) -> Plan {
+        let kind = Kind::Scan {
+            date: NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
+        };
+        let releases = vec![UpstreamVersion {
+            version: "1.0.0".into(),
+            released_at: at(2026, 10, 1),
+            channel: "stable".into(),
+        }];
+        let activity = Activity {
+            score: activity::Score::Active,
+            cadence_days: 7,
+            signals: activity::ActivitySignals::default(),
+        };
+        let now = at(2026, 10, 17);
+        let files = stage::render_files(p, "foo", &kind, &releases, &activity, now).unwrap();
         Plan {
             tool_id: "foo".into(),
-            kind: Kind::Scan {
-                date: NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
-            },
+            kind,
             new_versions: vec!["1.0.0".into()],
-            activity: Activity {
-                score: activity::Score::Active,
-                cadence_days: 7,
-                signals: activity::ActivitySignals::default(),
-            },
-            files: vec![
-                StagedFile {
-                    path: "tools/foo/index.json".into(),
-                    contents: r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli" }"#.into(),
-                },
-                StagedFile {
-                    path: "tools/foo/versions/1.0.0.json".into(),
-                    contents: r#"{
-                    "schemaVersion": 1, "tool": "foo", "version": "1.0.0",
-                    "install_methods": [
-                        { "name": "x",
-                          "verification": { "tier": 4, "algorithm": "sha256", "tofu": true },
-                          "source_url_template": "https://x",
-                          "dependencies": [ { "tool": "ghost" } ] }
-                    ]
-                }"#
-                    .into(),
-                },
-            ],
+            releases,
+            now,
+            activity,
+            files,
         }
     }
 
@@ -526,11 +529,13 @@ mod tests {
     fn a_staged_tool_that_fails_its_gate_is_recorded_and_the_tree_restored() {
         let repo = catalog_repo();
         let p = repo.path();
+        write_tool(p, None, RULE_BREAKING_TEMPLATE);
+        git(p, &["commit", "-qam", "break the template"]);
         let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
         let ok = apply_with_failure_reporting(
             p,
             "foo",
-            Ok(Scanned::Plan(rule_breaking_plan())),
+            Ok(Scanned::Plan(rendered_plan(p))),
             Mode::Stage(&mut manifest),
             at(2026, 10, 17),
         );
@@ -574,7 +579,7 @@ mod tests {
         let p = repo.path();
         let head = pr::head_sha(p).unwrap();
         let mut manifest = Manifest::new("0".repeat(40));
-        manifest.plans.push(rule_breaking_plan());
+        manifest.plans.push(rendered_plan(p));
         manifest.failures.push(Failure {
             tool_id: "foo".into(),
             error: "boom".into(),
@@ -612,31 +617,45 @@ mod tests {
 
     #[test]
     fn the_pr_upstream_link_comes_from_the_checkout_not_the_plan() {
+        // write_and_gate reads the link before writing the plan's index, so
+        // even an index the plan controls can't change it.
         let repo = catalog_repo();
         let p = repo.path();
-        std::fs::write(
-            p.join("tools/foo/index.json"),
-            r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli", "source_repo": "https://github.com/o/foo" }"#,
-        )
-        .unwrap();
-        let mut plan = rule_breaking_plan();
-        // A version file the rules accept, so the gate passes and the
-        // returned link is what delivery would put in the PR body.
-        plan.files[1].contents = r#"{
-            "schemaVersion": 1, "tool": "foo", "version": "1.0.0",
-            "install_methods": [
-                { "name": "x",
-                  "verification": { "tier": 4, "algorithm": "sha256", "tofu": true },
-                  "source_url_template": "https://x" }
-            ]
-        }"#
-        .into();
-        plan.files[0].contents = r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli", "source_repo": "[click](https://evil.test) @everyone" }"#.into();
+        write_tool(p, Some("https://github.com/o/foo"), TEMPLATE);
+        let mut plan = rendered_plan(p);
+        let index = plan.files.last_mut().unwrap();
+        assert_eq!(index.path, "tools/foo/index.json");
+        index.contents = index.contents.replace(
+            "https://github.com/o/foo",
+            "[click](https://evil.test) @everyone",
+        );
         let link = stage::write_and_gate(p, &plan, Schemas::Skip).unwrap();
         assert_eq!(link.as_deref(), Some("https://github.com/o/foo"));
-        // The plan's index was written; only the link stayed the base's.
         let on_disk = std::fs::read_to_string(p.join("tools/foo/index.json")).unwrap();
         assert!(on_disk.contains("evil.test"), "got {on_disk}");
+    }
+
+    #[test]
+    fn delivery_refuses_files_that_differ_from_the_checkouts_render() {
+        // The attack the re-render closes: the staging job swaps an install
+        // URL (or anything else) in a file whose path and shape are fine.
+        let repo = catalog_repo();
+        let p = repo.path();
+        let mut plan = rendered_plan(p);
+        plan.check().unwrap();
+        let version = &mut plan.files[0];
+        assert_eq!(version.path, "tools/foo/versions/1.0.0.json");
+        let swapped = version
+            .contents
+            .replace("https://x/0.9.0", "https://evil.test/x");
+        assert_ne!(swapped, version.contents, "the swap must change the file");
+        version.contents = swapped;
+        let err = stage::deliver_plan(p, &plan).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "plan for `foo`: staged files differ from what this checkout renders for its releases"
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
 
     #[test]
@@ -647,7 +666,7 @@ mod tests {
         let p = repo.path();
         let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
         for id in ["ghost", "@everyone"] {
-            let mut plan = rule_breaking_plan();
+            let mut plan = rendered_plan(p);
             plan.tool_id = id.into();
             manifest.plans.push(plan);
         }
@@ -660,11 +679,12 @@ mod tests {
     fn delivery_refuses_to_overwrite_a_cataloged_version() {
         let repo = catalog_repo();
         let p = repo.path();
+        let plan = rendered_plan(p);
         let original = "{\"version\": \"1.0.0\"}\n";
         std::fs::write(p.join("tools/foo/versions/1.0.0.json"), original).unwrap();
         git(p, &["add", "."]);
         git(p, &["commit", "-q", "-m", "catalog 1.0.0"]);
-        let err = stage::deliver_plan(p, &rule_breaking_plan()).unwrap_err();
+        let err = stage::deliver_plan(p, &plan).unwrap_err();
         assert_eq!(
             err.to_string(),
             "plan for `foo`: refusing to overwrite already-cataloged version(s) [\"1.0.0\"]"
@@ -680,8 +700,8 @@ mod tests {
     fn delivery_writes_nothing_for_a_plan_outside_its_tool() {
         let repo = catalog_repo();
         let p = repo.path();
-        let mut plan = rule_breaking_plan();
-        plan.files[1].path = ".github/workflows/scan.yml".into();
+        let mut plan = rendered_plan(p);
+        plan.files[0].path = ".github/workflows/scan.yml".into();
         let err = stage::deliver_plan(p, &plan).unwrap_err();
         assert!(
             err.to_string()
@@ -693,9 +713,13 @@ mod tests {
 
     #[test]
     fn delivery_restores_the_tree_when_a_plan_fails_the_rules() {
+        // A genuine render of a checkout whose template breaks the rules:
+        // it passes re-render, writes, and fails the gate.
         let repo = catalog_repo();
         let p = repo.path();
-        let err = stage::deliver_plan(p, &rule_breaking_plan()).unwrap_err();
+        write_tool(p, None, RULE_BREAKING_TEMPLATE);
+        git(p, &["commit", "-qam", "break the template"]);
+        let err = stage::deliver_plan(p, &rendered_plan(p)).unwrap_err();
         assert!(format!("{err:#}").contains("ghost"), "got {err:#}");
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
