@@ -216,9 +216,12 @@ over `GITHUB_TOKEN`). Before the scanner runs, that step calls
 `git push` reads the same token from the environment at push time.
 Checkout uses the default token with `persist-credentials: false`, so
 no credential is in `.git/config` while the npm install and `cargo build`
-steps run third-party code (#416). `GITHUB_TOKEN` is limited to
-`contents: read`. It only fetches the repo and makes the adapters'
-read-only API calls.
+steps run third-party code (#416). Inside the scanner step, the scanner
+strips `GH_TOKEN` and `GITHUB_TOKEN` from the env of its `npx ajv`
+children, so ajv-cli and its npm dependencies never see either token.
+The remaining holders are the scanner binary itself, `gh`, and `git`.
+`GITHUB_TOKEN` is limited to `contents: read`. It only fetches the repo
+and makes the adapters' read-only API calls.
 
 A first step fails the run with an `::error::` naming the secret if it
 is unset. Without it, the run would only fail at the first push or `gh`

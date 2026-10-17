@@ -9,8 +9,9 @@ name: Catalog scanner
 #
 # Only the `Run scanner` step sees the secret (#416). Checkout persists no
 # credential, so nothing is on disk while npm and cargo run third-party
-# code. `gh auth setup-git` then routes `git push` through GH_TOKEN. Dry
-# runs make no writes and don't need the secret.
+# code. `gh auth setup-git` then routes `git push` through GH_TOKEN. The
+# scanner strips the tokens from its `npx ajv` children. Dry runs make no
+# writes and don't need the secret.
 
 on:
   schedule:

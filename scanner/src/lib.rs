@@ -317,7 +317,7 @@ pub(crate) fn write_file(path: &Path, value: &Value) -> anyhow::Result<()> {
 }
 
 pub(crate) fn which_ajv() -> bool {
-    std::process::Command::new("npx")
+    validate::npx()
         .args(["--no-install", "ajv", "--version"])
         .output()
         .map(|o| o.status.success())
