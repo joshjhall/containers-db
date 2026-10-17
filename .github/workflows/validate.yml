@@ -17,10 +17,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 
@@ -28,10 +28,13 @@ jobs:
         run: npm install --no-save ajv-cli@5.0.0 ajv-formats@3.0.1
 
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
 
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: .
 
@@ -101,6 +104,15 @@ jobs:
             -s schema/version.schema.json \
             -d "fixtures/tier*-example.json"
 
+      - name: Rust format check
+        run: cargo fmt --all --check
+
+      # Floats with `stable`, so a new lint can fail a PR that touched no Rust.
+      # That is intended: it surfaces here rather than only on a contributor's
+      # newer local toolchain.
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - name: Build workspace (validator + scanner)
         run: cargo build --release --workspace
 
@@ -133,3 +145,47 @@ jobs:
             fi
             echo "Negative fixture $fixture correctly rejected (ajv=$ajv_rc, validate-catalog=$sem_rc)"
           done
+
+  # The job above floats on `stable`, which only ever moves past the declared
+  # minimum. This job builds on exactly `rust-version`, so a newer-than-MSRV
+  # API or a dependency raising its own MSRV fails here instead of quietly
+  # invalidating the floor.
+  msrv:
+    name: MSRV check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Bootstrap toolchain, only to let cargo read the manifest below.
+      - name: Set up Rust (stable, for cargo metadata)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      # Ask cargo for rust-version rather than parsing TOML by hand. Every
+      # workspace member inherits it, so exactly one distinct value is required.
+      - name: Read rust-version
+        id: msrv
+        run: |
+          versions=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '[.packages[].rust_version] | unique | .[]')
+          if [ "$(printf '%s\n' "$versions" | grep -c .)" -ne 1 ] || [ "$versions" = null ]; then
+            echo "::error::expected one workspace rust-version, got: ${versions:-none}"
+            exit 1
+          fi
+          echo "version=$versions" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: .
+
+      - name: Check workspace on MSRV
+        run: cargo check --workspace --all-targets --locked

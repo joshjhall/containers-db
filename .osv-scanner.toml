@@ -1,0 +1,27 @@
+# osv-scanner suppressions.
+#
+# Every entry needs a reason and an expiry. An expired entry is meant to come
+# back as a failure, not be renewed on autopilot.
+
+# ---------------------------------------------------------------------------
+# scanner 0.1.0 — name collision with an unrelated crates.io crate
+# ---------------------------------------------------------------------------
+# RUSTSEC-2025-0033 / GHSA-79m9-55jc-p6mw are filed against the crates.io crate
+# named `scanner`. Ours is the local workspace member `scanner/` (no `source`
+# line in Cargo.lock, `publish = false`), which osv-scanner matches by name
+# alone. Nothing to upgrade. Renaming the crate would also clear it.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0033"
+ignoreUntil = 2027-04-30
+reason = "False positive: name collision with the unrelated crates.io `scanner` crate; ours is the unpublished local workspace member."
+
+[[IgnoredVulns]]
+id = "GHSA-79m9-55jc-p6mw"
+ignoreUntil = 2027-04-30
+reason = "Alias of RUSTSEC-2025-0033; same name-collision false positive."
+
+# The unsafe-libyaml suppression (RUSTSEC-2024-0449) was removed when the
+# containers-common pin moved past joshjhall/containers#1109, which replaced
+# serde_yaml with serde-saphyr. unsafe-libyaml is no longer in Cargo.lock, so
+# there is nothing to suppress.

@@ -1,0 +1,13 @@
+# Keeps the SHA-pinned GitHub Actions in .github/workflows/ current. A SHA pin
+# is immutable, which is the point, but it goes stale silently with no updater.
+# Dependabot rewrites the pin and its trailing `# vN` comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
