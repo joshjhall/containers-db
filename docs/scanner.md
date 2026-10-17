@@ -195,3 +195,28 @@ API outage), no human action is needed.
 
 The scanner uses `gh` and `git` from the runner — same code works
 locally as long as those CLIs are available.
+
+### `SCANNER_TOKEN` secret
+
+GitHub does not trigger workflows from pushes or PRs made with the
+default `GITHUB_TOKEN`, so scan PRs opened that way sat in
+`action_required` with no `validate.yml` run (#401). The workflow
+therefore requires a `SCANNER_TOKEN` repo secret: a fine-grained PAT or
+GitHub App token scoped to this repository only, with:
+
+| Permission      | Access | Why                                         |
+| --------------- | ------ | ------------------------------------------- |
+| `contents`      | write  | push the `scan/*` branch                    |
+| `pull-requests` | write  | open and update scan PRs                    |
+| `issues`        | write  | file/comment on `scanner-failure` issues    |
+
+It is wired in two places: the checkout step's `token:` (persisted into
+git config, so `git push` uses it) and `GH_TOKEN` on the scanner step
+(`gh` prefers it over `GITHUB_TOKEN`). `GITHUB_TOKEN` stays set for
+adapters' read-only API calls. A first step fails the run with an
+`::error::` naming the secret if it is unset — checkout would otherwise
+silently fall back to `GITHUB_TOKEN`.
+
+Each run also writes one line per tool that opened, updated, or was
+already covered by a PR to the job's step summary, so a stalled scan PR
+is visible from the run page.
