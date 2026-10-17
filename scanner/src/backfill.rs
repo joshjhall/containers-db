@@ -25,6 +25,8 @@ pub(crate) async fn backfill_one(
     now: DateTime<Utc>,
     dry_run: bool,
 ) -> anyhow::Result<Outcome> {
+    // Before any fetch or write: a malformed floor must fail, not select everything.
+    let floor = parse_floor(from)?;
     let index_path = repo_root.join("tools").join(tool_id).join("index.json");
     let mut index = ToolIndex::from_path(&index_path)?;
     let result = adapter.fetch(&index).await?;
@@ -45,7 +47,7 @@ pub(crate) async fn backfill_one(
     let template: Value = serde_json::from_slice(&template_bytes)
         .map_err(|e| anyhow::anyhow!("parsing template {}: {e}", template_path.display()))?;
 
-    let picked = select_backfill(&result.upstream_versions, from, &template_version);
+    let picked = select_backfill(&result.upstream_versions, &floor, &template_version);
     if picked.is_empty() {
         println!("scanner: {tool_id}: nothing to backfill from {from} below {template_version}");
         return Ok(Outcome::NoChange);
@@ -109,20 +111,20 @@ pub(crate) async fn backfill_one(
     Ok(Outcome::delivered(delivery, versions))
 }
 
-/// Upstream stable releases `v` with `from <= v < oldest`, ascending.
+/// Upstream stable releases `v` with `lo <= v < oldest`, ascending; `lo` is the
+/// [`parse_floor`]-validated `--from` key.
 ///
 /// Bounded above by the oldest cataloged version, so a backfill never
 /// touches the range the forward scan owns; versions already present are
 /// excluded by that bound.
-fn select_backfill(upstream: &[UpstreamVersion], from: &str, oldest: &str) -> Vec<UpstreamVersion> {
-    let lo = version_key(from);
+fn select_backfill(upstream: &[UpstreamVersion], lo: &[u64], oldest: &str) -> Vec<UpstreamVersion> {
     let hi = version_key(oldest);
     let mut out: Vec<UpstreamVersion> = upstream
         .iter()
         .filter(|v| v.channel == "stable")
         .filter(|v| {
             let k = version_key(&v.version);
-            k >= lo && k < hi
+            k.as_slice() >= lo && k < hi
         })
         .cloned()
         .collect();
@@ -134,6 +136,21 @@ fn select_backfill(upstream: &[UpstreamVersion], from: &str, oldest: &str) -> Ve
 /// Sort key for a dotted numeric version: `1.9.0` < `1.10.0`.
 fn version_key(v: &str) -> Vec<u64> {
     v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
+}
+
+/// Parse a user-supplied `--from` floor; every dot segment must be a `u64`.
+///
+/// Unlike [`version_key`], nothing defaults to `0`: `v1.82.0` would otherwise
+/// key as `[0, 82, 0]` and select every release below the oldest entry.
+fn parse_floor(from: &str) -> anyhow::Result<Vec<u64>> {
+    from.split('.')
+        .map(str::parse::<u64>)
+        .collect::<Result<_, _>>()
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "invalid --from `{from}`: expected a dotted numeric version like 1.82.0"
+            )
+        })
 }
 
 #[cfg(test)]
@@ -160,10 +177,11 @@ mod tests {
             up("1.85.0", 2025, 2, 20, "stable"),
             up("1.90.0-beta.1", 2025, 8, 1, "beta"),
         ];
-        let ids: Vec<String> = select_backfill(&upstream, "1.82.0", "1.93.0")
-            .into_iter()
-            .map(|v| v.version)
-            .collect();
+        let ids: Vec<String> =
+            select_backfill(&upstream, &parse_floor("1.82.0").unwrap(), "1.93.0")
+                .into_iter()
+                .map(|v| v.version)
+                .collect();
         assert_eq!(ids, vec!["1.82.0", "1.85.0", "1.85.1", "1.92.0"]);
     }
 
@@ -173,10 +191,26 @@ mod tests {
             up("1.10.0", 2016, 7, 7, "stable"),
             up("1.9.0", 2016, 5, 26, "stable"),
         ];
-        let ids: Vec<String> = select_backfill(&upstream, "1.9.0", "1.11.0")
+        let ids: Vec<String> = select_backfill(&upstream, &parse_floor("1.9.0").unwrap(), "1.11.0")
             .into_iter()
             .map(|v| v.version)
             .collect();
         assert_eq!(ids, vec!["1.9.0", "1.10.0"]);
+    }
+
+    #[test]
+    fn parse_floor_rejects_a_non_numeric_segment_naming_the_value() {
+        for bad in ["v1.82.0", "1.82.0-rc1", "", "1..2", "1.82."] {
+            let err = parse_floor(bad).expect_err(bad).to_string();
+            assert_eq!(
+                err,
+                format!("invalid --from `{bad}`: expected a dotted numeric version like 1.82.0")
+            );
+        }
+    }
+
+    #[test]
+    fn parse_floor_accepts_a_dotted_numeric_version() {
+        assert_eq!(parse_floor("1.82.0").unwrap(), vec![1, 82, 0]);
     }
 }
