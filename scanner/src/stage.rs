@@ -115,21 +115,23 @@ fn check_token(id: &str, what: &str, v: &str) -> Result<()> {
     Ok(())
 }
 
+/// A plain tool id that the delivering checkout actually has. Required
+/// before any tracking issue or PR names it.
+fn check_known_tool(repo_root: &Path, id: &str) -> Result<()> {
+    check_tool_id(id)?;
+    let index = repo_root.join("tools").join(id).join("index.json");
+    anyhow::ensure!(
+        index.is_file(),
+        "staged entry names `{id}`, which has no tools/{id}/index.json"
+    );
+    Ok(())
+}
+
 impl Failure {
     /// Refuse a staged failure for a tool the checkout doesn't have, and
     /// cap its error text, before it becomes a tracking issue.
     pub fn check(&self, repo_root: &Path) -> Result<()> {
-        check_tool_id(&self.tool_id)?;
-        let index = repo_root
-            .join("tools")
-            .join(&self.tool_id)
-            .join("index.json");
-        anyhow::ensure!(
-            index.is_file(),
-            "staged failure names `{}`, which has no tools/{}/index.json",
-            self.tool_id,
-            self.tool_id
-        );
+        check_known_tool(repo_root, &self.tool_id)?;
         anyhow::ensure!(
             self.error.chars().count() <= MAX_ERROR_CHARS,
             "staged failure for `{}`: error text over {MAX_ERROR_CHARS} chars",
@@ -411,6 +413,14 @@ pub(crate) fn deliver_manifest(
         failed.push(tool);
     }
     for plan in &manifest.plans {
+        // Plan text is staging-job input: everything logged from it here is
+        // debug-escaped, and an issue is filed only for a vetted tool id.
+        let tool = format!("{:?}", plan.tool_id);
+        if let Err(e) = check_known_tool(repo_root, &plan.tool_id) {
+            eprintln!("scanner: refusing plan for {tool}: {:?}", format!("{e:#}"));
+            failed.push(tool);
+            continue;
+        }
         base.guard(repo_root, &plan.tool_id, &failed)?;
         match deliver_plan(repo_root, plan) {
             Ok(outcome) => {
@@ -418,8 +428,9 @@ pub(crate) fn deliver_manifest(
                 outcome::report_step_summary(&plan.tool_id, &outcome);
             }
             Err(e) => {
-                eprintln!("scanner: {} FAILED: {e:#}", plan.tool_id);
-                crate::report_failure(repo_root, &plan.tool_id, &format!("{e:#}"), now);
+                let error = format!("{e:#}");
+                eprintln!("scanner: {} FAILED: {error:?}", plan.tool_id);
+                crate::report_failure(repo_root, &plan.tool_id, &error, now);
                 failed.push(plan.tool_id.clone());
             }
         }
@@ -617,7 +628,7 @@ mod tests {
         };
         assert_eq!(
             ghost.check(root).unwrap_err().to_string(),
-            "staged failure names `ghost`, which has no tools/ghost/index.json"
+            "staged entry names `ghost`, which has no tools/ghost/index.json"
         );
         let bad = Failure {
             tool_id: "../rust".into(),

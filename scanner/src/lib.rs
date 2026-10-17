@@ -640,6 +640,23 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_for_an_unknown_tool_files_nothing_but_fails_the_run() {
+        // Vetted before base.guard and before `gh`: no issue or PR for a
+        // tool id the checkout doesn't have. Also stops before `gh` here.
+        let repo = catalog_repo();
+        let p = repo.path();
+        let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
+        for id in ["ghost", "@everyone"] {
+            let mut plan = rule_breaking_plan();
+            plan.tool_id = id.into();
+            manifest.plans.push(plan);
+        }
+        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        assert_eq!(err.to_string(), "scan failed for: \"ghost\", \"@everyone\"");
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
     fn delivery_writes_nothing_for_a_plan_outside_its_tool() {
         let repo = catalog_repo();
         let p = repo.path();
