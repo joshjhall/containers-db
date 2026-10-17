@@ -6,6 +6,9 @@
 //! recomputes activity, generates `versions/<v>.json` files, and opens
 //! one PR per tool. Failures surface as issues so a broken adapter
 //! never produces malformed catalog data.
+//!
+//! In CI the work is split across two jobs ([`stage`], #416): one with no
+//! secret generates and validates, the other only delivers.
 
 pub mod activity;
 pub mod adapter;
@@ -15,8 +18,9 @@ pub mod dedup;
 pub mod due;
 pub mod failure;
 pub mod generate;
-mod outcome;
+pub(crate) mod outcome;
 pub mod pr;
+pub mod stage;
 pub mod validate;
 
 use std::collections::HashSet;
@@ -29,6 +33,7 @@ use serde_json::Value;
 
 use crate::activity::compute_tier;
 use crate::adapter::{Adapter, ToolIndex, UpstreamVersion};
+use crate::stage::{Failure, Manifest, Plan, Schemas};
 
 pub use outcome::Outcome;
 
@@ -39,22 +44,35 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// How a scan applies what it generated. Shared by `due`, `tool`, and
+/// `backfill`.
+#[derive(Debug, clap::Args)]
+pub struct RunArgs {
+    /// Print the plan but don't write files or open PRs/issues.
+    #[arg(long, conflicts_with = "stage")]
+    pub dry_run: bool,
+    /// Generate and validate (ajv required), then write the PRs to open
+    /// to this path instead of opening them. Pushes nothing, opens no
+    /// PRs or issues, and needs no token; `scanner deliver --plan` does
+    /// the rest (#416).
+    #[arg(long, value_name = "PATH")]
+    pub stage: Option<PathBuf>,
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
     /// Scan every tool whose `activity.scanned_at + scan_cadence_days`
     /// is in the past.
     Due {
-        /// Print the plan but don't write files or open PRs/issues.
-        #[arg(long)]
-        dry_run: bool,
+        #[command(flatten)]
+        run: RunArgs,
     },
     /// Force-scan a single tool by id (skips the cadence check).
     Tool {
         /// Tool id, e.g. `rust`.
         id: String,
-        /// Print the plan but don't write files or open PRs/issues.
-        #[arg(long)]
-        dry_run: bool,
+        #[command(flatten)]
+        run: RunArgs,
     },
     /// Add every upstream stable release from `--from` up to (not
     /// including) the oldest cataloged version, templated from that oldest
@@ -66,10 +84,41 @@ pub enum Command {
         /// Lowest version to include, e.g. `1.82.0`.
         #[arg(long)]
         from: String,
-        /// Print the plan but don't write files or open PRs/issues.
-        #[arg(long)]
-        dry_run: bool,
+        #[command(flatten)]
+        run: RunArgs,
     },
+    /// Open, update, or skip the PRs a `--stage` run wrote to `--plan`, and
+    /// file the tracking issues for its failed tools. Runs no adapter, npm,
+    /// or ajv: this is the only step that needs the write token.
+    Deliver {
+        #[arg(long, value_name = "PATH")]
+        plan: PathBuf,
+    },
+}
+
+/// What a scan does with each tool's [`Plan`].
+#[derive(Debug)]
+pub(crate) enum Mode<'a> {
+    DryRun,
+    /// Write, validate, and deliver in one process (a local run).
+    Deliver,
+    /// Write and validate, record the plan here, then restore the tree.
+    Stage(&'a mut Manifest),
+}
+
+/// A tool's scan result before it is applied: nothing to do, or a plan.
+#[derive(Debug)]
+pub(crate) enum Scanned {
+    NoChange,
+    Plan(Plan),
+}
+
+fn mode<'a>(args: &RunArgs, staging: &'a mut Option<Manifest>) -> Mode<'a> {
+    match staging {
+        Some(manifest) => Mode::Stage(manifest),
+        None if args.dry_run => Mode::DryRun,
+        None => Mode::Deliver,
+    }
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -78,46 +127,69 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let now = Utc::now();
 
     match cli.command {
-        Command::Due { dry_run } => {
+        Command::Due { run } => {
+            let mut staging = stage::start(&repo_root, &run)?;
             let due_tools = due::find_due_tools(&repo_root, now)?;
             if due_tools.is_empty() {
                 println!("scanner: no tools due for scanning");
-                return Ok(());
-            }
-            let base = pr::RunBase::capture(&repo_root, dry_run)?;
-            let mut failed = Vec::new();
-            for tool in due_tools {
-                base.guard(&repo_root, &tool.id, &failed)?;
-                let Some(adapter) = registry.get(&tool.id).cloned() else {
-                    println!("scanner: {}: no adapter registered, skipping", tool.id);
-                    continue;
-                };
-                if !scan_one_with_failure_reporting(&repo_root, &tool.id, adapter, now, dry_run)
-                    .await
-                {
-                    failed.push(tool.id);
+            } else {
+                // A dry run never commits. A staging run restores the tree
+                // after each tool, so the base check still applies.
+                let base = pr::RunBase::capture(&repo_root, run.dry_run)?;
+                let mut failed = Vec::new();
+                for tool in due_tools {
+                    base.guard(&repo_root, &tool.id, &failed)?;
+                    let Some(adapter) = registry.get(&tool.id).cloned() else {
+                        println!("scanner: {}: no adapter registered, skipping", tool.id);
+                        continue;
+                    };
+                    let scanned = scan_one(&repo_root, &tool.id, adapter, now).await;
+                    let mode = mode(&run, &mut staging);
+                    if !apply_with_failure_reporting(&repo_root, &tool.id, scanned, mode, now) {
+                        failed.push(tool.id);
+                    }
+                }
+                // A staged failure is filed and fails the run at delivery.
+                if staging.is_none() {
+                    fail_if_any(&failed)?;
                 }
             }
-            fail_if_any(&failed)?;
+            stage::finish(&run, staging)?;
         }
-        Command::Tool { id, dry_run } => {
+        Command::Tool { id, run } => {
+            let mut staging = stage::start(&repo_root, &run)?;
             let adapter = registry
                 .get(&id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("no adapter registered for `{id}`"))?;
-            if !scan_one_with_failure_reporting(&repo_root, &id, adapter, now, dry_run).await {
+            let scanned = scan_one(&repo_root, &id, adapter, now).await;
+            let ok = apply_with_failure_reporting(
+                &repo_root,
+                &id,
+                scanned,
+                mode(&run, &mut staging),
+                now,
+            );
+            if staging.is_none() && !ok {
                 fail_if_any(&[id])?;
             }
+            stage::finish(&run, staging)?;
         }
-        Command::Backfill { id, from, dry_run } => {
+        Command::Backfill { id, from, run } => {
+            let mut staging = stage::start(&repo_root, &run)?;
             let adapter = registry
                 .get(&id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("no adapter registered for `{id}`"))?;
-            let outcome =
-                backfill::backfill_one(&repo_root, &id, &from, adapter, now, dry_run).await?;
+            // A backfill is run by hand: errors propagate, no tracking issue.
+            let scanned = backfill::backfill_one(&repo_root, &id, &from, adapter, now).await?;
+            let outcome = apply(&repo_root, &id, scanned, mode(&run, &mut staging))?;
             println!("scanner: {id}: {outcome:?}");
             outcome::report_step_summary(&id, &outcome);
+            stage::finish(&run, staging)?;
+        }
+        Command::Deliver { plan } => {
+            stage::deliver_manifest(&repo_root, &Manifest::read(&plan)?, now)?
         }
     }
     Ok(())
@@ -129,27 +201,37 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 /// The tracking issue alone is not enough: if filing it fails too (a
 /// missing label, a permissions change), a run that reports success
 /// leaves nothing anywhere to show that the catalog stopped updating.
-fn fail_if_any(failed: &[String]) -> anyhow::Result<()> {
+pub(crate) fn fail_if_any(failed: &[String]) -> anyhow::Result<()> {
     if failed.is_empty() {
         return Ok(());
     }
     anyhow::bail!("scan failed for: {}", failed.join(", "))
 }
 
-/// Wrap [`scan_one`] so any error surfaces as a tracking issue (unless
-/// we're in dry-run mode). The orchestrator continues to the next tool
-/// — one broken adapter shouldn't take down the whole scan — and the
-/// caller turns a `false` return into a failed run via [`fail_if_any`].
+pub(crate) fn report_failure(repo_root: &Path, tool_id: &str, error: &str, now: DateTime<Utc>) {
+    if let Err(report_err) = failure::report_failure(repo_root, tool_id, error, now) {
+        eprintln!("scanner: {tool_id}: failure-reporting itself failed: {report_err:#}");
+    }
+}
+
+/// Apply a [`scan_one`] result, so any error surfaces as a tracking issue.
+/// The orchestrator continues to the next tool — one broken adapter
+/// shouldn't take down the whole scan — and the caller turns a `false`
+/// return into a failed run via [`fail_if_any`].
+///
+/// A dry run files nothing. A staging run can't file issues (it has no
+/// token), so it records the failure for `scanner deliver` to file.
 ///
 /// Returns `true` when the tool scanned cleanly.
-async fn scan_one_with_failure_reporting(
+fn apply_with_failure_reporting(
     repo_root: &Path,
     tool_id: &str,
-    adapter: Arc<dyn Adapter>,
+    scanned: anyhow::Result<Scanned>,
+    mut mode: Mode<'_>,
     now: DateTime<Utc>,
-    dry_run: bool,
 ) -> bool {
-    match scan_one(repo_root, tool_id, adapter, now, dry_run).await {
+    let result = scanned.and_then(|s| apply(repo_root, tool_id, s, mode.reborrow()));
+    match result {
         Ok(outcome) => {
             println!("scanner: {tool_id}: {outcome:?}");
             outcome::report_step_summary(tool_id, &outcome);
@@ -157,24 +239,89 @@ async fn scan_one_with_failure_reporting(
         }
         Err(e) => {
             eprintln!("scanner: {tool_id} FAILED: {e:#}");
-            if !dry_run
-                && let Err(report_err) =
-                    failure::report_failure(repo_root, tool_id, &format!("{e:#}"), now)
-            {
-                eprintln!("scanner: {tool_id}: failure-reporting itself failed: {report_err:#}");
+            let error = format!("{e:#}");
+            match mode {
+                Mode::DryRun => {}
+                Mode::Stage(manifest) => manifest.failures.push(Failure {
+                    tool_id: tool_id.to_string(),
+                    error,
+                }),
+                Mode::Deliver => report_failure(repo_root, tool_id, &error, now),
             }
             false
         }
     }
 }
 
+impl Mode<'_> {
+    fn reborrow(&mut self) -> Mode<'_> {
+        match self {
+            Mode::DryRun => Mode::DryRun,
+            Mode::Deliver => Mode::Deliver,
+            Mode::Stage(m) => Mode::Stage(m),
+        }
+    }
+}
+
+/// Act on one tool's [`Scanned`] result according to `mode`.
+fn apply(
+    repo_root: &Path,
+    tool_id: &str,
+    scanned: Scanned,
+    mode: Mode<'_>,
+) -> anyhow::Result<Outcome> {
+    let Scanned::Plan(plan) = scanned else {
+        return Ok(Outcome::NoChange);
+    };
+    match mode {
+        Mode::DryRun => {
+            println!(
+                "scanner: {tool_id} (dry-run): {} new version(s)",
+                plan.new_versions.len()
+            );
+            for v in &plan.new_versions {
+                println!("  + {v}");
+            }
+            Ok(Outcome::DryRun {
+                new_versions: plan.new_versions,
+            })
+        }
+        Mode::Stage(manifest) => {
+            // Gate in the secret-free job, then put the tree back so the
+            // next tool (and the token job's checkout) starts clean.
+            let gated = stage::write_and_gate(repo_root, &plan, Schemas::Require);
+            let restored = pr::discard_generated(repo_root, tool_id);
+            gated?;
+            restored?;
+            let new_versions = plan.new_versions.clone();
+            manifest.plans.push(plan);
+            Ok(Outcome::Staged { new_versions })
+        }
+        Mode::Deliver => {
+            stage::write_and_gate(repo_root, &plan, Schemas::IfAvailable)?;
+            let delivery = pr::deliver(
+                repo_root,
+                tool_id,
+                &plan.prefix,
+                &plan.branch,
+                &plan.new_versions,
+                &plan.title,
+                &plan.body,
+            )?;
+            Ok(Outcome::delivered(delivery, plan.new_versions))
+        }
+    }
+}
+
+/// Fetch upstream for `tool_id` and build the [`Plan`] that would add its
+/// new versions. Writes nothing: the caller's [`Mode`] decides what
+/// happens to the plan.
 async fn scan_one(
     repo_root: &Path,
     tool_id: &str,
     adapter: Arc<dyn Adapter>,
     now: DateTime<Utc>,
-    dry_run: bool,
-) -> anyhow::Result<Outcome> {
+) -> anyhow::Result<Scanned> {
     let index_path = repo_root.join("tools").join(tool_id).join("index.json");
     let mut index = ToolIndex::from_path(&index_path)?;
 
@@ -210,7 +357,7 @@ async fn scan_one(
             "scanner: {tool_id}: no new versions (score={}, cadence={cadence_days}d)",
             score_str(score)
         );
-        return Ok(Outcome::NoChange);
+        return Ok(Scanned::NoChange);
     }
 
     let mut generated: Vec<(PathBuf, Value)> = Vec::new();
@@ -235,56 +382,25 @@ async fn scan_one(
         cadence_days,
         now,
     );
+    // Index first, as the single-process path always wrote it.
+    generated.insert(0, (index.path.clone(), index.raw.clone()));
 
-    if dry_run {
-        println!(
-            "scanner: {tool_id} (dry-run): {} new version(s)",
-            new_versions.len()
-        );
-        for v in &new_version_strings {
-            println!("  + {v}");
-        }
-        println!("  score={}, cadence={cadence_days}d", score_str(score));
-        return Ok(Outcome::DryRun {
-            new_versions: new_version_strings,
-        });
-    }
-
-    write_file(&index.path, &index.raw)?;
-    for (path, value) in &generated {
-        write_file(path, value)?;
-    }
-
-    // In-process semantic gate (cheap, hermetic).
-    validate::validate_rules(repo_root)?;
-    // Schema gate (shells out to ajv). Best effort — if ajv isn't on
-    // PATH (e.g., dev machine without node), the in-process pass and
-    // the CI workflow's separate ajv step are the safety nets.
-    if which_ajv() {
-        validate::validate_schemas(repo_root)?;
-    }
-
-    let branch = pr::branch_name(tool_id, now);
-    let title = pr::pr_title(tool_id, &new_version_strings);
-    let body = pr::pr_body(
-        tool_id,
-        &new_version_strings,
-        index.source_repo.as_deref(),
-        score,
-        &result.signals,
-        cadence_days,
-    );
-    let prefix = format!("scan/{tool_id}/");
-    let delivery = pr::deliver(
-        repo_root,
-        tool_id,
-        &prefix,
-        &branch,
-        &new_version_strings,
-        &title,
-        &body,
-    )?;
-    Ok(Outcome::delivered(delivery, new_version_strings))
+    Ok(Scanned::Plan(Plan {
+        tool_id: tool_id.to_string(),
+        prefix: format!("scan/{tool_id}/"),
+        branch: pr::branch_name(tool_id, now),
+        title: pr::pr_title(tool_id, &new_version_strings),
+        body: pr::pr_body(
+            tool_id,
+            &new_version_strings,
+            index.source_repo.as_deref(),
+            score,
+            &result.signals,
+            cadence_days,
+        ),
+        files: stage::staged_files(repo_root, &generated)?,
+        new_versions: new_version_strings,
+    }))
 }
 
 fn diff_new_versions(
@@ -307,13 +423,6 @@ fn diff_new_versions(
         .collect();
     new_ones.sort_by_key(|v| v.released_at);
     new_ones
-}
-
-pub(crate) fn write_file(path: &Path, value: &Value) -> anyhow::Result<()> {
-    let pretty = serde_json::to_string_pretty(value)?;
-    let mut bytes = pretty.into_bytes();
-    bytes.push(b'\n');
-    std::fs::write(path, bytes).map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))
 }
 
 pub(crate) fn which_ajv() -> bool {
@@ -339,8 +448,178 @@ fn score_str(score: activity::Score) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stage::StagedFile;
     use chrono::TimeZone;
     use serde_json::json;
+
+    fn git(p: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .current_dir(p)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    /// Temp repo on `main` with a one-tool catalog committed. Panics on an
+    /// inherited `GIT_DIR`, which would point `git` at another repo.
+    fn catalog_repo() -> tempfile::TempDir {
+        assert!(
+            std::env::var_os("GIT_DIR").is_none() && std::env::var_os("GIT_WORK_TREE").is_none(),
+            "unset GIT_DIR/GIT_WORK_TREE: the temp-repo tests would act on another repo"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "user.name", "t"]);
+        git(p, &["config", "user.email", "t@example.com"]);
+        let tool = p.join("tools").join("foo");
+        std::fs::create_dir_all(tool.join("versions")).unwrap();
+        std::fs::write(
+            tool.join("index.json"),
+            r#"{ "schemaVersion": 1, "id": "foo", "kind": "cli" }"#,
+        )
+        .unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "init"]);
+        dir
+    }
+
+    /// A plan for `foo` whose version file references an unknown tool, so
+    /// the in-process rules reject it before ajv would ever run.
+    fn rule_breaking_plan() -> Plan {
+        Plan {
+            tool_id: "foo".into(),
+            prefix: "scan/foo/".into(),
+            branch: "scan/foo/2026-10-17".into(),
+            new_versions: vec!["1.0.0".into()],
+            title: "feat(foo): add upstream versions 1.0.0".into(),
+            body: String::new(),
+            files: vec![StagedFile {
+                path: "tools/foo/versions/1.0.0.json".into(),
+                contents: r#"{
+                    "schemaVersion": 1, "tool": "foo", "version": "1.0.0",
+                    "install_methods": [
+                        { "name": "x",
+                          "verification": { "tier": 4, "algorithm": "sha256", "tofu": true },
+                          "source_url_template": "https://x",
+                          "dependencies": [ { "tool": "ghost" } ] }
+                    ]
+                }"#
+                .into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_staged_tool_that_fails_its_gate_is_recorded_and_the_tree_restored() {
+        let repo = catalog_repo();
+        let p = repo.path();
+        let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
+        let ok = apply_with_failure_reporting(
+            p,
+            "foo",
+            Ok(Scanned::Plan(rule_breaking_plan())),
+            Mode::Stage(&mut manifest),
+            at(2026, 10, 17),
+        );
+        assert!(!ok);
+        // Recorded for the token job to file, not filed here (no `gh` call).
+        assert!(manifest.plans.is_empty());
+        assert_eq!(manifest.failures.len(), 1);
+        assert_eq!(manifest.failures[0].tool_id, "foo");
+        assert!(
+            manifest.failures[0].error.contains("ghost"),
+            "got {:?}",
+            manifest.failures[0].error
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn a_failed_scan_is_staged_as_a_failure() {
+        let repo = catalog_repo();
+        let mut manifest = Manifest::new("abc".into());
+        let ok = apply_with_failure_reporting(
+            repo.path(),
+            "foo",
+            Err(anyhow::anyhow!("upstream 502")),
+            Mode::Stage(&mut manifest),
+            at(2026, 10, 17),
+        );
+        assert!(!ok);
+        assert_eq!(
+            manifest.failures,
+            vec![Failure {
+                tool_id: "foo".into(),
+                error: "upstream 502".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn deliver_refuses_a_plan_staged_at_another_commit() {
+        let repo = catalog_repo();
+        let p = repo.path();
+        let head = pr::head_sha(p).unwrap();
+        let mut manifest = Manifest::new("0".repeat(40));
+        manifest.plans.push(rule_breaking_plan());
+        manifest.failures.push(Failure {
+            tool_id: "foo".into(),
+            error: "boom".into(),
+        });
+        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "plan was staged at {} but the checkout is at {head}; refusing to deliver",
+                "0".repeat(40)
+            )
+        );
+        // Refused before writing a plan's files or filing its failures.
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn delivery_writes_nothing_for_a_plan_outside_its_tool() {
+        let repo = catalog_repo();
+        let p = repo.path();
+        let mut plan = rule_breaking_plan();
+        plan.files[0].path = ".github/workflows/scan.yml".into();
+        let err = stage::deliver_plan(p, &plan).unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("plan for `foo`: refusing to write"),
+            "got {err:#}"
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn delivery_restores_the_tree_when_a_plan_fails_the_rules() {
+        let repo = catalog_repo();
+        let p = repo.path();
+        let err = stage::deliver_plan(p, &rule_breaking_plan()).unwrap_err();
+        assert!(format!("{err:#}").contains("ghost"), "got {err:#}");
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn stage_and_dry_run_flags_are_exclusive() {
+        let err =
+            Cli::try_parse_from(["scanner", "due", "--dry-run", "--stage", "p.json"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        let cli = Cli::try_parse_from([
+            "scanner", "backfill", "rust", "--from", "1.82.0", "--stage", "p.json",
+        ])
+        .unwrap();
+        let Command::Backfill { run, .. } = cli.command else {
+            panic!("expected backfill");
+        };
+        assert_eq!(run.stage.as_deref(), Some(Path::new("p.json")));
+        assert!(!run.dry_run);
+    }
 
     fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).unwrap()

@@ -244,6 +244,11 @@ impl Base {
     }
 }
 
+/// The checked-out commit.
+pub fn head_sha(repo_root: &Path) -> Result<String> {
+    Ok(git(repo_root, &["rev-parse", "HEAD"])?.trim().to_string())
+}
+
 /// The base a `due` run checks before every tool. `None` for a dry run:
 /// it never commits, so there is no base to drift from and no git
 /// checkout is required.
@@ -323,7 +328,7 @@ fn on_branch_then_return_to<T>(
 /// tool in the same run doesn't commit them. Untracked files go first; the
 /// restore runs only when the directory has tracked files — for a tool new
 /// on the base, `git checkout -- <dir>` would fail on an unknown pathspec.
-fn discard_generated(repo_root: &Path, tool_id: &str) -> Result<()> {
+pub(crate) fn discard_generated(repo_root: &Path, tool_id: &str) -> Result<()> {
     let dir = format!("tools/{tool_id}");
     git(repo_root, &["clean", "-fd", "--", &dir])?;
     if !git(repo_root, &["ls-files", "--", &dir])?.trim().is_empty() {

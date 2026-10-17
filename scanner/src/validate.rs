@@ -52,14 +52,14 @@ pub fn validate_schemas(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Token variables the scan workflow exports to the scanner (#416).
-/// `GH_TOKEN` is the write-scoped SCANNER_TOKEN, and `gh auth setup-git`
-/// makes it the push credential.
+/// GitHub token variables a local run may have set (#416).
 const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 
 /// An `npx` command that does not inherit the GitHub tokens. ajv-cli
 /// and its transitive npm dependencies are third-party code with no use
-/// for them (#416).
+/// for them (#416). Defense in depth only: a same-user child can still
+/// read its parent's environment from `/proc`. In CI, ajv runs in the
+/// scan workflow's `stage` job, which has no write token at all.
 pub(crate) fn npx() -> Command {
     let mut cmd = Command::new("npx");
     for var in TOKEN_VARS {

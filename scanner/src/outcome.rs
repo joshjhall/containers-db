@@ -14,6 +14,9 @@ pub enum Outcome {
     NoChange,
     /// `--dry-run` printed the plan and exited without writing anything.
     DryRun { new_versions: Vec<String> },
+    /// `--stage` validated the new files and recorded them for
+    /// `scanner deliver`; the tree was restored.
+    Staged { new_versions: Vec<String> },
     /// One PR was opened with new version files + a refreshed
     /// activity block.
     PrOpened {
@@ -51,7 +54,10 @@ pub(crate) fn summary_line(tool_id: &str, outcome: &Outcome) -> Option<String> {
         Outcome::AlreadyCovered { pr, .. } => {
             Some(format!("- `{tool_id}`: already covered by #{pr}"))
         }
-        Outcome::NoChange | Outcome::DryRun { .. } | Outcome::NoAdapter => None,
+        Outcome::NoChange
+        | Outcome::DryRun { .. }
+        | Outcome::Staged { .. }
+        | Outcome::NoAdapter => None,
     }
 }
 
@@ -137,6 +143,10 @@ mod tests {
         };
         assert_eq!(summary_line("jq", &Outcome::NoChange), None);
         assert_eq!(summary_line("jq", &dry), None);
+        let staged = Outcome::Staged {
+            new_versions: vec!["1.0.0".into()],
+        };
+        assert_eq!(summary_line("jq", &staged), None);
         assert_eq!(summary_line("jq", &Outcome::NoAdapter), None);
     }
 

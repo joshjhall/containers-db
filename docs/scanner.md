@@ -22,6 +22,10 @@ GITHUB_TOKEN=$(gh auth token) \
 
 # Scan everything that's currently due.
 cargo run --release -p scanner -- due
+
+# The CI split: validate and stage (needs ajv-cli), then deliver.
+cargo run --release -p scanner -- due --stage /tmp/plan.json
+cargo run --release -p scanner -- deliver --plan /tmp/plan.json
 ```
 
 `GITHUB_TOKEN` is optional but recommended — unauthenticated GitHub API
@@ -189,7 +193,10 @@ API outage), no human action is needed.
 - Cron: hourly. Per-tool gating in scanner code means cheap tools
   aren't actually re-checked every hour.
 - `workflow_dispatch` inputs: `tool` (force a single tool, skip the
-  cadence check) and `dry_run` (print plan, don't write or open PRs).
+  cadence check), `dry_run` (print plan, don't write or open PRs), and
+  `backfill_from` (with `tool`, run `scanner backfill`).
+- Two jobs, `stage` and `deliver`; see
+  [Where the secret is](#where-the-secret-is-two-phase-scan).
 - `concurrency.group = catalog-scanner` serializes runs so a slow scan
   doesn't race the next hourly trigger.
 
@@ -210,30 +217,63 @@ GitHub App token scoped to this repository only, with:
 | `pull-requests` | write  | open and update scan PRs                    |
 | `issues`        | write  | file/comment on `scanner-failure` issues    |
 
-Only the scanner step sees the secret, as `GH_TOKEN` (`gh` prefers it
-over `GITHUB_TOKEN`). Before the scanner runs, that step calls
-`gh auth setup-git`, which makes `gh` git's credential helper, so
-`git push` reads the same token from the environment at push time.
-Checkout uses the default token with `persist-credentials: false`, so
-no credential is in `.git/config` while the npm install and `cargo build`
-steps run third-party code (#416). Inside the scanner step, the scanner
-strips `GH_TOKEN` and `GITHUB_TOKEN` from the env of its `npx ajv`
-children, so ajv-cli and its npm dependencies never see either token.
-The step runs the prebuilt `target/release/scanner` rather than
-`cargo run`, so no build script runs while the token is set. The
-remaining holders are the scanner binary itself, `gh`, and `git`.
-`GITHUB_TOKEN` is limited to `contents: read`. It only fetches the repo
-and makes the adapters' read-only API calls.
+#### Where the secret is (two-phase scan)
 
-A first step fails the run with an `::error::` naming the secret if it
-is unset. Without it, the run would only fail at the first push or `gh`
-call, after the build.
+The workflow runs in two jobs so that no third-party code runs where
+the secret is (#416):
+
+1. **`stage` (no secret).** Builds the scanner, uploads the binary,
+   installs ajv-cli (`--ignore-scripts`), then runs
+   `scanner due|tool|backfill --stage <plan.json>`. For each tool the
+   scanner writes the new files, runs the in-process rules **and** ajv
+   (required in this mode), records the files plus the PR title, body,
+   and branch in the plan, and restores the tree. A tool that fails is
+   recorded in the plan's `failures` instead of filing an issue — this
+   job has no token to file one with. The plan is uploaded as an artifact.
+2. **`deliver` (`SCANNER_TOKEN`).** Checks out the same commit, downloads
+   the binary and the plan, and runs `scanner deliver --plan <plan.json>`.
+   No cargo, npm, node, or ajv runs here. The token is `GH_TOKEN` (`gh`
+   prefers it over `GITHUB_TOKEN`); `git push` gets it through
+   `credential.helper=!gh auth git-credential`, set by `GIT_CONFIG_*`
+   environment variables so nothing is written to `.git/config`.
+
+The binary is uploaded before npm installs anything, so JavaScript in the
+`stage` job can't replace the program `deliver` runs. It can still
+tamper with the plan, so `deliver` treats the plan as untrusted:
+
+- It refuses to run unless the checkout is at the plan's `base_sha`.
+- Each plan may write only `tools/<id>/index.json` and
+  `tools/<id>/versions/<v>.json`, every file must parse as JSON, and its
+  branch must be a plain name under `scan/<id>/` or `backfill/<id>/`.
+- The in-process rules run again on the written files before any push.
+  ajv does not — it is third-party code, and it already ran in `stage`.
+- The PR still goes through `validate.yml`, which runs ajv again.
+
+The remaining processes that hold the token are the scanner binary,
+`gh`, and `git`. Checkout uses the default token with
+`persist-credentials: false` in both jobs, and `GITHUB_TOKEN` is limited
+to `contents: read`: it only fetches the repo and makes the adapters'
+read-only API calls.
+
+The scanner also strips `GH_TOKEN` and `GITHUB_TOKEN` from its `npx ajv`
+children. That is defense in depth for local runs, not a boundary: a
+child process running as the same user can read its parent's
+environment from `/proc`. The job split is the boundary.
+
+`deliver` starts with a step that fails the run with an `::error::`
+naming the secret if it is unset. Without it, the run would only fail at
+the first push or `gh` call. Failures recorded while staging are filed
+as tracking issues by `deliver`, and they fail that job, so a broken
+adapter still turns the run red.
 
 **Dry runs don't need the secret.** A `workflow_dispatch` with
-`dry_run: true` skips the guard and `gh auth setup-git`, and gets an
-empty `GH_TOKEN` even when the secret exists, because a dry run
-writes no files, pushes nothing, and opens no PRs or issues. Scheduled
-runs have no inputs, so they always go through the guard.
+`dry_run: true` runs `stage` with `--dry-run`, which prints the plan and
+writes nothing, and skips `deliver` entirely. Scheduled runs have no
+inputs, so they always run `deliver` and its guard.
+
+Locally, without `--stage`, `scanner due|tool|backfill` still does
+everything in one process (ajv only if installed), as in
+[Running locally](#running-locally).
 
 Each run also writes one line per tool that opened, updated, or was
 already covered by a PR to the job's step summary, so a stalled scan PR
