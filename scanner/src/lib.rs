@@ -657,6 +657,26 @@ mod tests {
     }
 
     #[test]
+    fn delivery_refuses_to_overwrite_a_cataloged_version() {
+        let repo = catalog_repo();
+        let p = repo.path();
+        let original = "{\"version\": \"1.0.0\"}\n";
+        std::fs::write(p.join("tools/foo/versions/1.0.0.json"), original).unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "catalog 1.0.0"]);
+        let err = stage::deliver_plan(p, &rule_breaking_plan()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "plan for `foo`: refusing to overwrite already-cataloged version(s) [\"1.0.0\"]"
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+        assert_eq!(
+            std::fs::read_to_string(p.join("tools/foo/versions/1.0.0.json")).unwrap(),
+            original
+        );
+    }
+
+    #[test]
     fn delivery_writes_nothing_for_a_plan_outside_its_tool() {
         let repo = catalog_repo();
         let p = repo.path();

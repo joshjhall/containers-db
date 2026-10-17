@@ -127,6 +127,31 @@ fn check_known_tool(repo_root: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// A scan or backfill only ever adds versions, so a plan may not rewrite a
+/// release the checkout already has — which a PR titled "add versions"
+/// would otherwise slip past a reviewer.
+fn check_additive(repo_root: &Path, plan: &Plan) -> Result<()> {
+    let id = &plan.tool_id;
+    let existing: Vec<&str> = plan
+        .new_versions
+        .iter()
+        .map(String::as_str)
+        .filter(|v| {
+            repo_root
+                .join("tools")
+                .join(id)
+                .join("versions")
+                .join(format!("{v}.json"))
+                .exists()
+        })
+        .collect();
+    anyhow::ensure!(
+        existing.is_empty(),
+        "plan for `{id}`: refusing to overwrite already-cataloged version(s) {existing:?}"
+    );
+    Ok(())
+}
+
 impl Failure {
     /// Refuse a staged failure for a tool the checkout doesn't have, and
     /// cap its error text, before it becomes a tracking issue.
@@ -443,6 +468,7 @@ pub(crate) fn deliver_manifest(
 /// re-run here — the staging job already required it.
 pub(crate) fn deliver_plan(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
     plan.check()?;
+    check_additive(repo_root, plan)?;
     let source_repo = match write_and_gate(repo_root, plan, Schemas::Skip) {
         Ok(source_repo) => source_repo,
         Err(e) => {

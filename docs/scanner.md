@@ -251,7 +251,8 @@ treats the plan as untrusted:
 - It refuses to run unless the checkout is at the plan's `base_sha`.
 - Each plan may write only one `tools/<id>/index.json` plus one
   `tools/<id>/versions/<v>.json` per announced version, and every file
-  must parse as JSON. Versions and the backfill floor must be plain
+  must parse as JSON. Every announced version must be new: a plan that
+  would overwrite an already-cataloged `versions/<v>.json` is refused. Versions and the backfill floor must be plain
   tokens (letters, digits, `.`, `_`, `-`, `+`).
 - A plan carries no free text. The branch (`scan/<id>/<date>` or
   `backfill/<id>/<from>`), PR title, and PR body are rendered by
