@@ -5,7 +5,7 @@ name: Catalog scanner
 # in `action_required` with no validate run. SCANNER_TOKEN is a
 # fine-grained PAT or GitHub App token, this repo only, with
 # contents:write, pull-requests:write, and issues:write (the scanner
-# files tracking issues via `gh`). See docs/scanner.md#workflow.
+# files tracking issues via `gh`). See docs/scanner.md#scanner_token-secret.
 
 on:
   schedule:
@@ -56,7 +56,7 @@ jobs:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
         run: |
           if [ -z "$SCANNER_TOKEN" ]; then
-            echo "::error::SCANNER_TOKEN secret is not set. Add a fine-grained PAT or GitHub App token scoped to this repo with contents:write, pull-requests:write, and issues:write (see docs/scanner.md#workflow)." >&2
+            echo "::error::SCANNER_TOKEN secret is not set. Add a fine-grained PAT or GitHub App token scoped to this repo with contents:write, pull-requests:write, and issues:write (see docs/scanner.md#scanner_token-secret)."
             exit 1
           fi
 
