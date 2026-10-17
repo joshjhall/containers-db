@@ -395,14 +395,20 @@ pub(crate) fn deliver_manifest(
     let base = pr::RunBase::capture(repo_root, false)?;
     let mut failed = Vec::new();
     for f in &manifest.failures {
-        // An unchecked failure would let the staging job file an issue
-        // about any tool, with any text.
-        f.check(repo_root)?;
         // Debug-escaped: raw staged text in this job's log could start a
         // line with `::` and be read as a workflow command.
-        eprintln!("scanner: {} FAILED while staging: {:?}", f.tool_id, f.error);
-        crate::report_failure(repo_root, &f.tool_id, &f.error, now);
-        failed.push(f.tool_id.clone());
+        let tool = format!("{:?}", f.tool_id);
+        // An unchecked failure would let the staging job file an issue
+        // about any tool, with any text. A bad entry still fails the run,
+        // but files nothing and doesn't stop the plans below.
+        match f.check(repo_root) {
+            Ok(()) => {
+                eprintln!("scanner: {} FAILED while staging: {:?}", f.tool_id, f.error);
+                crate::report_failure(repo_root, &f.tool_id, &f.error, now);
+            }
+            Err(e) => eprintln!("scanner: refusing staged failure for {tool}: {e:#}"),
+        }
+        failed.push(tool);
     }
     for plan in &manifest.plans {
         base.guard(repo_root, &plan.tool_id, &failed)?;

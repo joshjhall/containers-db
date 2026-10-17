@@ -7,11 +7,12 @@ name: Catalog scanner
 # contents:write, pull-requests:write, and issues:write (the scanner
 # files tracking issues via `gh`). See docs/scanner.md#scanner_token-secret.
 #
-# Two jobs, so third-party code never runs where the secret is (#416):
-# `stage` builds the scanner, runs the adapters, and validates the
-# generated files with ajv, with no secret. `deliver` runs only the
-# prebuilt scanner binary, `gh`, and `git`, and is the one job that sees
-# SCANNER_TOKEN. Dry runs stop after `stage`.
+# Three jobs, so third-party code never runs where the secret is (#416):
+# `build` compiles the scanner (cargo only, no npm). `stage` runs that
+# binary's adapters and validates the generated files with ajv, with no
+# secret and no cargo cache. `deliver` runs only the prebuilt binary,
+# `gh`, and `git`, and is the one job that sees SCANNER_TOKEN. Dry runs
+# stop after `stage`.
 
 on:
   schedule:
@@ -48,12 +49,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  stage:
-    # No secret is referenced here. cargo build scripts, proc-macros, npm
-    # packages, and ajv all run in this job (#416).
-    name: Scan and validate
+  build:
+    # Compiles the scanner that `deliver` later runs with the token. No
+    # secret, and no npm/node: the rust-cache saved from this job's target/
+    # was only ever written by cargo, so ajv's JS in `stage` has no path
+    # into a later run's build (#416). Build scripts and proc-macros of the
+    # locked dependencies still run here.
+    name: Build scanner
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -75,14 +79,34 @@ jobs:
         run: cargo build --release --locked -p scanner
 
       - name: Upload scanner binary
-        # Before npm and ajv run, so they can't replace the binary that
-        # `deliver` runs with the token.
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scanner
           path: target/release/scanner
           if-no-files-found: error
           retention-days: 1
+
+  stage:
+    # No secret is referenced here. npm packages and ajv run in this job,
+    # which has no cargo cache and no token (#416).
+    name: Scan and validate
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download scanner binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scanner
+          # Outside the checkout, so it never shows up as an untracked
+          # file to the scanner's own git calls.
+          path: ${{ runner.temp }}/scanner-bin
 
       - name: Set up Node 20
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -106,8 +130,11 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_BACKFILL_FROM: ${{ inputs.backfill_from }}
           PLAN: ${{ runner.temp }}/plan/plan.json
+          SCANNER_BIN: ${{ runner.temp }}/scanner-bin/scanner
         run: |
           set -euo pipefail
+          # The artifact round-trip drops the executable bit.
+          chmod +x "$SCANNER_BIN"
           mkdir -p "$(dirname "$PLAN")"
           # A dry run prints its plan and stops; anything else writes the
           # validated changes to $PLAN for `deliver`.
@@ -121,11 +148,11 @@ jobs:
               echo "::error::backfill_from requires tool" >&2
               exit 1
             fi
-            target/release/scanner backfill "$INPUT_TOOL" --from "$INPUT_BACKFILL_FROM" "${mode[@]}"
+            "$SCANNER_BIN" backfill "$INPUT_TOOL" --from "$INPUT_BACKFILL_FROM" "${mode[@]}"
           elif [ -n "$INPUT_TOOL" ]; then
-            target/release/scanner tool "$INPUT_TOOL" "${mode[@]}"
+            "$SCANNER_BIN" tool "$INPUT_TOOL" "${mode[@]}"
           else
-            target/release/scanner due "${mode[@]}"
+            "$SCANNER_BIN" due "${mode[@]}"
           fi
 
       - name: Upload plan
@@ -139,11 +166,11 @@ jobs:
 
   deliver:
     # The only job with SCANNER_TOKEN. It runs the scanner binary built in
-    # `stage`, `gh`, and `git` — no npm, node, ajv, or cargo (#416).
+    # `build`, `gh`, and `git` — no npm, node, ajv, or cargo (#416).
     # Dry runs make no writes and skip it. A scheduled run has no inputs,
     # so `inputs.dry_run` is null there and this job still runs.
     name: Open scan PRs
-    needs: stage
+    needs: [build, stage]
     if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 15

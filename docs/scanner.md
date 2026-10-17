@@ -195,7 +195,7 @@ API outage), no human action is needed.
 - `workflow_dispatch` inputs: `tool` (force a single tool, skip the
   cadence check), `dry_run` (print plan, don't write or open PRs), and
   `backfill_from` (with `tool`, run `scanner backfill`).
-- Two jobs, `stage` and `deliver`; see
+- Three jobs, `build`, `stage`, and `deliver`; see
   [Where the secret is](#where-the-secret-is-two-phase-scan).
 - `concurrency.group = catalog-scanner` serializes runs so a slow scan
   doesn't race the next hourly trigger.
@@ -219,30 +219,34 @@ GitHub App token scoped to this repository only, with:
 
 #### Where the secret is (two-phase scan)
 
-The workflow runs in two jobs so that no third-party code runs where
+The workflow runs in three jobs so that no third-party code runs where
 the secret is (#416):
 
-1. **`stage` (no secret).** Builds the scanner, uploads the binary,
-   installs ajv-cli (`--ignore-scripts`), then runs
-   `scanner due|tool|backfill --stage <plan.json>`. For each tool the
+1. **`build` (no secret).** Compiles the scanner with
+   `cargo build --release --locked` and uploads the binary. No npm or
+   node runs here, so the Rust cache this job saves was only ever written
+   by cargo.
+2. **`stage` (no secret).** Downloads the binary, installs ajv-cli
+   (`--ignore-scripts`), and runs `scanner due|tool|backfill --stage
+   <plan.json>`. It has no Rust toolchain or cache. For each tool the
    scanner writes the new files, runs the in-process rules **and** ajv
-   (required in this mode), records the files plus the PR title, body,
-   and branch in the plan, and restores the tree. A tool that fails is
+   (required in this mode), records the files, versions, and activity
+   block in the plan, and restores the tree. A tool that fails is
    recorded in the plan's `failures` instead of filing an issue — this
    job has no token to file one with. The plan is uploaded as an artifact.
-2. **`deliver` (`SCANNER_TOKEN`).** Checks out the same commit, downloads
+3. **`deliver` (`SCANNER_TOKEN`).** Checks out the same commit, downloads
    the binary and the plan, and runs `scanner deliver --plan <plan.json>`.
    No cargo, npm, node, or ajv runs here. The token is `GH_TOKEN` (`gh`
    prefers it over `GITHUB_TOKEN`); `git push` gets it through
    `credential.helper=!gh auth git-credential`, set by `GIT_CONFIG_*`
    environment variables so nothing is written to `.git/config`.
 
-The binary is uploaded before npm installs anything, so JavaScript in the
-`stage` job can't replace the program `deliver` runs. It is built with
-`--locked`, so its dependency set is exactly `Cargo.lock`; those crates'
-build scripts and proc-macros still shape the binary, the same trust any
-Rust release build carries. It can still
-tamper with the plan, so `deliver` treats the plan as untrusted:
+JavaScript in `stage` never shares a job with the build, so it can
+neither replace the binary `deliver` runs nor poison the cargo cache a
+later run builds from. The locked dependencies' build scripts and
+proc-macros still shape the binary — the same trust any Rust release
+build carries. `stage` can still tamper with the plan, so `deliver`
+treats the plan as untrusted:
 
 - It refuses to run unless the checkout is at the plan's `base_sha`.
 - Each plan may write only one `tools/<id>/index.json` plus one
@@ -254,7 +258,9 @@ tamper with the plan, so `deliver` treats the plan as untrusted:
   `deliver` from the plan's typed fields (versions, score, cadence,
   numeric signals), with the upstream link read from the checkout's own
   `index.json`. Unknown fields are rejected.
-- A staged failure must name a tool that exists in the checkout, and its
+- A staged failure must name a tool that exists in the checkout, or it
+  is refused: no issue is filed, but the run still fails and the other
+  plans are still delivered. Its
   error text is capped and fenced so it can't inject markdown into the
   tracking issue (and debug-escaped in the job log, so it can't start a
   `::` workflow command).

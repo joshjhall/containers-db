@@ -592,22 +592,21 @@ mod tests {
     }
 
     #[test]
-    fn deliver_refuses_a_staged_failure_for_an_unknown_tool() {
-        // Checked before `gh` is ever called: no issue is filed for a tool
-        // the checkout doesn't have, and no plan after it is delivered.
+    fn a_bad_staged_failure_files_nothing_but_still_fails_the_run() {
+        // Refused before `gh` is called (no issue for a tool the checkout
+        // doesn't have), yet the run still ends non-zero naming it.
         let repo = catalog_repo();
         let p = repo.path();
-        let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
-        manifest.failures.push(Failure {
-            tool_id: "ghost".into(),
-            error: "@everyone".into(),
-        });
-        manifest.plans.push(rule_breaking_plan());
+        let manifest = {
+            let mut m = Manifest::new(pr::head_sha(p).unwrap());
+            m.failures.push(Failure {
+                tool_id: "ghost".into(),
+                error: "@everyone".into(),
+            });
+            m
+        };
         let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "staged failure names `ghost`, which has no tools/ghost/index.json"
-        );
+        assert_eq!(err.to_string(), "scan failed for: \"ghost\"");
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
 
