@@ -215,6 +215,7 @@ mod tests {
             "1.82.",
             "+1.82.0",
             "1.+82.0",
+            "99999999999999999999.0.0",
         ] {
             let err = parse_floor(bad).expect_err(bad).to_string();
             assert_eq!(
