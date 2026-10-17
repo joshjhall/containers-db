@@ -64,14 +64,18 @@ fn append_step_summary(path: &Path, line: &str) -> std::io::Result<()> {
 /// A no-op outside Actions; a write failure only warns, because the
 /// summary is a convenience and must never fail the scan.
 pub(crate) fn report_step_summary(tool_id: &str, outcome: &Outcome) {
-    let (Some(path), Some(line)) = (
-        std::env::var_os("GITHUB_STEP_SUMMARY"),
-        summary_line(tool_id, outcome),
-    ) else {
-        return;
-    };
-    if let Err(e) = append_step_summary(Path::new(&path), &line) {
+    let path = std::env::var_os("GITHUB_STEP_SUMMARY");
+    if let Err(e) = report_to(path.as_deref().map(Path::new), tool_id, outcome) {
         eprintln!("scanner: {tool_id}: could not write step summary: {e}");
+    }
+}
+
+/// [`report_step_summary`] with the summary path passed in, so tests
+/// need not mutate the environment.
+fn report_to(path: Option<&Path>, tool_id: &str, outcome: &Outcome) -> std::io::Result<()> {
+    match (path, summary_line(tool_id, outcome)) {
+        (Some(path), Some(line)) => append_step_summary(path, &line),
+        _ => Ok(()),
     }
 }
 
@@ -152,5 +156,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // A directory can't be opened for append.
         assert!(append_step_summary(dir.path(), "- x").is_err());
+    }
+
+    #[test]
+    fn report_to_writes_only_with_a_path_and_a_pr() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("summary.md");
+        let covered = Outcome::AlreadyCovered {
+            pr: 398,
+            new_versions: vec!["1.0.0".into()],
+        };
+        report_to(None, "jq", &covered).unwrap();
+        report_to(Some(&path), "jq", &Outcome::NoChange).unwrap();
+        assert!(!path.exists());
+        report_to(Some(&path), "jq", &covered).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "- `jq`: already covered by #398\n"
+        );
+        assert!(report_to(Some(dir.path()), "jq", &covered).is_err());
     }
 }
