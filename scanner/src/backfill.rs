@@ -162,8 +162,169 @@ fn parse_floor(from: &str) -> anyhow::Result<Vec<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use async_trait::async_trait;
     use chrono::TimeZone;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::activity::ActivitySignals;
+    use crate::adapter::AdapterResult;
+
+    /// Returns fixed upstream versions; never touches the network.
+    struct StubAdapter(Vec<UpstreamVersion>);
+
+    #[async_trait]
+    impl Adapter for StubAdapter {
+        async fn fetch(&self, _index: &ToolIndex) -> anyhow::Result<AdapterResult> {
+            Ok(AdapterResult {
+                upstream_versions: self.0.clone(),
+                signals: ActivitySignals::default(),
+                source_archived: false,
+            })
+        }
+    }
+
+    /// A repo root holding `tools/demo/index.json` listing `available`, plus
+    /// one `versions/<v>.json` per `(v, contents)` in `templates`.
+    fn fixture(available: &[&str], templates: &[(&str, &str)]) -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        let tool = tmp.path().join("tools").join("demo");
+        std::fs::create_dir_all(tool.join("versions")).unwrap();
+        let available: Vec<Value> = available
+            .iter()
+            .map(|v| serde_json::json!({ "version": v }))
+            .collect();
+        let index = serde_json::json!({
+            "schemaVersion": 1,
+            "id": "demo",
+            "source_repo": "https://github.com/example/demo",
+            "available": available,
+        });
+        std::fs::write(tool.join("index.json"), index.to_string()).unwrap();
+        for (v, contents) in templates {
+            std::fs::write(tool.join("versions").join(format!("{v}.json")), contents).unwrap();
+        }
+        tmp
+    }
+
+    /// Every file under `root` with its bytes, so a before/after comparison
+    /// catches a write anywhere in the tree, not just a new file count.
+    fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        let mut out = BTreeMap::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    let bytes = std::fs::read(&path).unwrap();
+                    out.insert(path, bytes);
+                }
+            }
+        }
+        out
+    }
+
+    async fn run(
+        root: &Path,
+        from: &str,
+        upstream: Vec<UpstreamVersion>,
+        dry_run: bool,
+    ) -> anyhow::Result<Outcome> {
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        backfill_one(
+            root,
+            "demo",
+            from,
+            Arc::new(StubAdapter(upstream)),
+            now,
+            dry_run,
+        )
+        .await
+    }
+
+    const TEMPLATE: &str = r#"{"schemaVersion": 1, "version": "1.93.0"}"#;
+
+    #[tokio::test]
+    async fn no_change_when_nothing_upstream_falls_below_the_oldest_entry() {
+        let tmp = fixture(&["1.93.0"], &[("1.93.0", TEMPLATE)]);
+        let before = snapshot(tmp.path());
+        let upstream = vec![
+            up("1.93.0", 2026, 1, 22, "stable"),
+            up("1.94.0", 2026, 3, 5, "stable"),
+        ];
+        // Not a dry run: NoChange must return before any write, validate or `gh`.
+        let outcome = run(tmp.path(), "1.82.0", upstream, false).await.unwrap();
+        assert!(matches!(outcome, Outcome::NoChange), "got {outcome:?}");
+        assert_eq!(snapshot(tmp.path()), before);
+    }
+
+    #[tokio::test]
+    async fn dry_run_returns_the_selection_and_writes_nothing() {
+        // Newest listed first: the bound must be the oldest entry by version,
+        // not by file order, or 1.94.0 would be selected.
+        let tmp = fixture(
+            &["1.95.0", "1.93.0"],
+            &[("1.95.0", TEMPLATE), ("1.93.0", TEMPLATE)],
+        );
+        let before = snapshot(tmp.path());
+        let upstream = vec![
+            up("1.85.0", 2025, 2, 20, "stable"),
+            up("1.81.0", 2024, 9, 5, "stable"),
+            up("1.82.0", 2024, 10, 17, "stable"),
+            up("1.90.0-beta.1", 2025, 8, 1, "beta"),
+            up("1.94.0", 2026, 3, 5, "stable"),
+        ];
+        let outcome = run(tmp.path(), "1.82.0", upstream, true).await.unwrap();
+        match outcome {
+            Outcome::DryRun { new_versions } => {
+                assert_eq!(new_versions, vec!["1.82.0", "1.85.0"]);
+            }
+            other => panic!("expected DryRun, got {other:?}"),
+        }
+        assert_eq!(snapshot(tmp.path()), before);
+    }
+
+    #[tokio::test]
+    async fn errors_when_the_index_has_no_versions_to_template_from() {
+        let tmp = fixture(&[], &[]);
+        let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
+        let err = run(tmp.path(), "1.82.0", upstream, true)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "tool `demo` has no existing versions to template from");
+    }
+
+    #[tokio::test]
+    async fn errors_when_the_template_file_is_missing() {
+        let tmp = fixture(&["1.93.0"], &[]);
+        let path = tmp.path().join("tools/demo/versions/1.93.0.json");
+        let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
+        let err = run(tmp.path(), "1.82.0", upstream, true)
+            .await
+            .unwrap_err()
+            .to_string();
+        let prefix = format!("reading template {}: ", path.display());
+        assert!(err.starts_with(&prefix), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn errors_when_the_template_is_not_json() {
+        let tmp = fixture(&["1.93.0"], &[("1.93.0", "not json")]);
+        let path = tmp.path().join("tools/demo/versions/1.93.0.json");
+        let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
+        let err = run(tmp.path(), "1.82.0", upstream, true)
+            .await
+            .unwrap_err()
+            .to_string();
+        let prefix = format!("parsing template {}: ", path.display());
+        assert!(err.starts_with(&prefix), "got {err:?}");
+    }
 
     fn up(version: &str, y: i32, m: u32, d: u32, channel: &str) -> UpstreamVersion {
         UpstreamVersion {
