@@ -6,6 +6,11 @@ name: Catalog scanner
 # fine-grained PAT or GitHub App token, this repo only, with
 # contents:write, pull-requests:write, and issues:write (the scanner
 # files tracking issues via `gh`). See docs/scanner.md#scanner_token-secret.
+#
+# Only the `Run scanner` step sees the secret (#416). Checkout persists no
+# credential, so nothing is on disk while npm and cargo run third-party
+# code. `gh auth setup-git` then routes `git push` through GH_TOKEN. Dry
+# runs make no writes and don't need the secret.
 
 on:
   schedule:
@@ -29,10 +34,10 @@ on:
         required: false
         type: string
 
+# Every write goes through SCANNER_TOKEN. GITHUB_TOKEN only fetches this
+# public repo and makes the adapters' read-only API calls (#416).
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+  contents: read
 
 concurrency:
   # Serialize scans so a long-running scan doesn't race with the next
@@ -49,9 +54,11 @@ jobs:
 
     steps:
       - name: Require SCANNER_TOKEN
-        # Must run BEFORE checkout: an unset secret expands to "", and
-        # actions/checkout silently falls back to github.token for an
-        # empty `token:` — exactly the identity this secret replaces.
+        # Fail fast, before the build, instead of at the first push or
+        # `gh` call. Dry runs never push or open PRs/issues, so they run
+        # without the secret (#416). A scheduled run has no inputs, so
+        # `inputs.dry_run` is null there and the guard still applies.
+        if: ${{ inputs.dry_run != true }}
         env:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
         run: |
@@ -66,9 +73,10 @@ jobs:
           # Full history needed because the scanner creates branches
           # and pushes commits back via `git`.
           fetch-depth: 0
-          # Persisted into git config, so the scanner's `git push`
-          # authenticates as SCANNER_TOKEN, not GITHUB_TOKEN (#401).
-          token: ${{ secrets.SCANNER_TOKEN }}
+          # Fetch with the default read-only token and leave no
+          # credential in .git/config, because the npm and cargo steps
+          # below run third-party code (#416). `Run scanner` sets up push auth.
+          persist-credentials: false
 
       - name: Configure git identity
         # Required for the scanner's `git commit` step. The bot identity
@@ -108,7 +116,8 @@ jobs:
           # Read-only GitHub API calls from adapters (rate limit).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # `gh` prefers GH_TOKEN, so PRs/issues are opened as this
-          # identity and their pushes trigger validate.yml (#401).
+          # identity and their pushes trigger validate.yml (#401). It is
+          # empty on a dry run without the secret, and dry runs never call `gh`.
           GH_TOKEN: ${{ secrets.SCANNER_TOKEN }}
           INPUT_TOOL: ${{ inputs.tool }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
@@ -118,6 +127,11 @@ jobs:
           dry_run_flag=""
           if [ "$INPUT_DRY_RUN" = "true" ]; then
             dry_run_flag="--dry-run"
+          else
+            # Make gh git's credential helper for github.com. It reads
+            # GH_TOKEN from this step's env on each `git push`, so
+            # SCANNER_TOKEN is never written to disk (#416).
+            gh auth setup-git
           fi
           if [ -n "$INPUT_BACKFILL_FROM" ]; then
             if [ -z "$INPUT_TOOL" ]; then

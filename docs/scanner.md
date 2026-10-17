@@ -210,12 +210,24 @@ GitHub App token scoped to this repository only, with:
 | `pull-requests` | write  | open and update scan PRs                    |
 | `issues`        | write  | file/comment on `scanner-failure` issues    |
 
-It is wired in two places: the checkout step's `token:` (persisted into
-git config, so `git push` uses it) and `GH_TOKEN` on the scanner step
-(`gh` prefers it over `GITHUB_TOKEN`). `GITHUB_TOKEN` stays set for
-adapters' read-only API calls. A first step fails the run with an
-`::error::` naming the secret if it is unset — checkout would otherwise
-silently fall back to `GITHUB_TOKEN`.
+Only the scanner step sees the secret, as `GH_TOKEN` (`gh` prefers it
+over `GITHUB_TOKEN`). Before the scanner runs, that step calls
+`gh auth setup-git`, which makes `gh` git's credential helper, so
+`git push` reads the same token from the environment at push time.
+Checkout uses the default token with `persist-credentials: false`, so
+no credential is in `.git/config` while the npm install and `cargo build`
+steps run third-party code (#416). `GITHUB_TOKEN` is limited to
+`contents: read`. It only fetches the repo and makes the adapters'
+read-only API calls.
+
+A first step fails the run with an `::error::` naming the secret if it
+is unset. Without it, the run would only fail at the first push or `gh`
+call, after the build.
+
+**Dry runs don't need the secret.** A `workflow_dispatch` with
+`dry_run: true` skips the guard and `gh auth setup-git`, because a dry run
+writes no files, pushes nothing, and opens no PRs or issues. Scheduled
+runs have no inputs, so they always go through the guard.
 
 Each run also writes one line per tool that opened, updated, or was
 already covered by a PR to the job's step summary, so a stalled scan PR
