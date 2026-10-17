@@ -2,6 +2,7 @@
 //! intentionally thin; the interesting logic (branch name, commit
 //! message, PR title/body shapes) is in pure functions for easy testing.
 
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
@@ -281,6 +282,16 @@ impl RunBase {
 /// A detached start is returned to by commit (`checkout --detach <sha>`):
 /// `--abbrev-ref` alone would yield the literal `HEAD`, a no-op checkout.
 fn on_branch_then_return<T>(repo_root: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    on_branch_then_return_to(repo_root, &mut std::io::stderr(), f)
+}
+
+/// [`on_branch_then_return`] with the failed-return report (written when
+/// the delivery error wins) sent to `report` instead of stderr.
+fn on_branch_then_return_to<T>(
+    repo_root: &Path,
+    report: &mut dyn Write,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     let name = git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     let start: Vec<String> = match name.trim() {
         "HEAD" => {
@@ -298,9 +309,10 @@ fn on_branch_then_return<T>(repo_root: &Path, f: impl FnOnce() -> Result<T>) -> 
         (Ok(_), Err(back_err)) => Err(back_err),
         (Err(e), back) => {
             // A delivery failure is the more useful error; still surface a
-            // failed return, since the next tool would branch from here.
+            // failed return, since the next tool would branch from here. A
+            // failed write must not mask the delivery error, so it is dropped.
             if let Err(back_err) = back {
-                eprintln!("scanner: {back_err:#}");
+                let _ = writeln!(report, "scanner: {back_err:#}");
             }
             Err(e)
         }
@@ -492,21 +504,25 @@ mod tests {
     fn delivery_error_wins_and_branch_is_restored() {
         let dir = temp_repo();
         let p = dir.path();
-        let err = on_branch_then_return(p, || -> Result<()> {
+        let mut report = Vec::new();
+        let err = on_branch_then_return_to(p, &mut report, || -> Result<()> {
             git(p, &["checkout", "-q", "-b", "scan/a/x"])?;
             anyhow::bail!("push rejected")
         })
         .unwrap_err();
         assert!(err.to_string().contains("push rejected"));
         assert_eq!(current_branch(p), "main");
+        assert!(report.is_empty(), "a successful return reports nothing");
     }
 
     #[test]
     fn delivery_error_wins_over_failed_return() {
-        // Both fail: the delivery error is returned, not the return's.
+        // Both fail: the delivery error is returned, and the failed return
+        // is still reported, since the checkout is left on the PR branch.
         let dir = temp_repo();
         let p = dir.path();
-        let err = on_branch_then_return(p, || -> Result<()> {
+        let mut report = Vec::new();
+        let err = on_branch_then_return_to(p, &mut report, || -> Result<()> {
             git(p, &["checkout", "-q", "-b", "scan/a/x"])?;
             git(p, &["branch", "-q", "-D", "main"])?;
             anyhow::bail!("push rejected")
@@ -519,6 +535,11 @@ mod tests {
             current_branch(p),
             "scan/a/x",
             "the return must have failed, or this covers the (Err, Ok) arm"
+        );
+        let report = String::from_utf8(report).unwrap();
+        assert!(
+            report.starts_with("scanner: returning to the start (`git checkout main`)"),
+            "{report}"
         );
     }
 
