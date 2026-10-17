@@ -22,6 +22,10 @@ GITHUB_TOKEN=$(gh auth token) \
 
 # Scan everything that's currently due.
 cargo run --release -p scanner -- due
+
+# The CI split: validate and stage (needs ajv-cli), then deliver.
+cargo run --release -p scanner -- due --stage /tmp/plan.json
+cargo run --release -p scanner -- deliver --plan /tmp/plan.json
 ```
 
 `GITHUB_TOKEN` is optional but recommended — unauthenticated GitHub API
@@ -189,7 +193,10 @@ API outage), no human action is needed.
 - Cron: hourly. Per-tool gating in scanner code means cheap tools
   aren't actually re-checked every hour.
 - `workflow_dispatch` inputs: `tool` (force a single tool, skip the
-  cadence check) and `dry_run` (print plan, don't write or open PRs).
+  cadence check), `dry_run` (print plan, don't write or open PRs), and
+  `backfill_from` (with `tool`, run `scanner backfill`).
+- Three jobs, `build`, `stage`, and `deliver`; see
+  [Where the secret is](#where-the-secret-is-two-phase-scan).
 - `concurrency.group = catalog-scanner` serializes runs so a slow scan
   doesn't race the next hourly trigger.
 
@@ -210,12 +217,95 @@ GitHub App token scoped to this repository only, with:
 | `pull-requests` | write  | open and update scan PRs                    |
 | `issues`        | write  | file/comment on `scanner-failure` issues    |
 
-It is wired in two places: the checkout step's `token:` (persisted into
-git config, so `git push` uses it) and `GH_TOKEN` on the scanner step
-(`gh` prefers it over `GITHUB_TOKEN`). `GITHUB_TOKEN` stays set for
-adapters' read-only API calls. A first step fails the run with an
-`::error::` naming the secret if it is unset — checkout would otherwise
-silently fall back to `GITHUB_TOKEN`.
+#### Where the secret is (two-phase scan)
+
+The workflow runs in three jobs so that no third-party code runs where
+the secret is (#416):
+
+1. **`build` (no secret).** Compiles the scanner with
+   `cargo build --release --locked` and uploads the binary. No npm or
+   node runs here, so the Rust cache this job saves was only ever written
+   by cargo.
+2. **`stage` (no secret).** Downloads the binary, installs ajv-cli
+   (`--ignore-scripts`), and runs `scanner due|tool|backfill --stage
+   <plan.json>`. It has no Rust toolchain or cache. For each tool the
+   scanner writes the new files, runs the in-process rules **and** ajv
+   (required in this mode), records the files, versions, and activity
+   block in the plan, and restores the tree. A tool that fails is
+   recorded in the plan's `failures` instead of filing an issue — this
+   job has no token to file one with. The plan is uploaded as an artifact.
+3. **`deliver` (`SCANNER_TOKEN`).** Checks out the same commit, downloads
+   the binary and the plan, and runs `scanner deliver --plan <plan.json>`.
+   No cargo, npm, node, or ajv runs here. The token is `GH_TOKEN` (`gh`
+   prefers it over `GITHUB_TOKEN`); `git push` gets it through
+   `credential.helper=!gh auth git-credential`, set by `GIT_CONFIG_*`
+   environment variables so nothing is written to `.git/config`.
+
+JavaScript in `stage` never shares a job with the build, so it can
+neither replace the binary `deliver` runs nor poison the cargo cache a
+later run builds from. The locked dependencies' build scripts and
+proc-macros still shape the binary — the same trust any Rust release
+build carries. `stage` can still tamper with the plan, so `deliver`
+treats the plan as untrusted:
+
+- It refuses to run unless the checkout is at the plan's `base_sha`.
+- Each plan may write only one `tools/<id>/index.json` plus one
+  `tools/<id>/versions/<v>.json` per announced version, and every file
+  must parse as JSON. Every announced version must be new: a plan that
+  would overwrite an already-cataloged `versions/<v>.json` is refused. Versions and the backfill floor must be plain
+  tokens (letters, digits, `.`, `_`, `-`, `+`).
+- **`deliver` writes none of the plan's bytes.** It re-renders every file
+  from its own checkout — the tool's template, the plan's releases
+  (version, date, channel), activity, and timestamp, through the same
+  generator code `stage` used — and refuses the plan unless the staged
+  files match exactly. A plan can choose *which* releases to add; install
+  URLs, checksums, and every other field come from the checkout. Since the
+  bytes are identical, `stage`'s ajv verdict covers what `deliver` writes.
+- A plan carries no free text. The branch (`scan/<id>/<date>` or
+  `backfill/<id>/<from>`), PR title, and PR body are rendered by
+  `deliver` from the plan's typed fields (versions, score, cadence,
+  numeric signals), with the upstream link read from the checkout's own
+  `index.json`. Unknown fields are rejected.
+- A staged failure must name a tool that exists in the checkout, or it
+  is refused: no issue is filed, but the run still fails and the other
+  plans are still delivered. Its
+  error text is capped and fenced so it can't inject markdown into the
+  tracking issue (and debug-escaped in the job log, so it can't start a
+  `::` workflow command).
+- The PR body's upstream link is read from the checkout's `index.json`
+  before the plan's files are written over it.
+- The in-process rules run again on the written files before any push.
+  ajv does not — it is third-party code, and it already ran in `stage`.
+  The `stage`-side ajv run is a correctness check, not a security gate:
+  a compromised `stage` job can skip it.
+- The PR still goes through `validate.yml`, which runs ajv again. That is
+  the schema gate that enforces, before anything merges.
+
+The remaining processes that hold the token are the scanner binary,
+`gh`, and `git`. Checkout uses the default token with
+`persist-credentials: false` in both jobs, and `GITHUB_TOKEN` is limited
+to `contents: read`: it only fetches the repo and makes the adapters'
+read-only API calls.
+
+The scanner also strips `GH_TOKEN` and `GITHUB_TOKEN` from its `npx ajv`
+children. That is defense in depth for local runs, not a boundary: a
+child process running as the same user can read its parent's
+environment from `/proc`. The job split is the boundary.
+
+`deliver` starts with a step that fails the run with an `::error::`
+naming the secret if it is unset. Without it, the run would only fail at
+the first push or `gh` call. Failures recorded while staging are filed
+as tracking issues by `deliver`, and they fail that job, so a broken
+adapter still turns the run red.
+
+**Dry runs don't need the secret.** A `workflow_dispatch` with
+`dry_run: true` runs `stage` with `--dry-run`, which prints the plan and
+writes nothing, and skips `deliver` entirely. Scheduled runs have no
+inputs, so they always run `deliver` and its guard.
+
+Locally, without `--stage`, `scanner due|tool|backfill` still does
+everything in one process (ajv only if installed), as in
+[Running locally](#running-locally).
 
 Each run also writes one line per tool that opened, updated, or was
 already covered by a PR to the job's step summary, so a stalled scan PR

@@ -52,8 +52,24 @@ pub fn validate_schemas(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// GitHub token variables a local run may have set (#416).
+const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
+
+/// An `npx` command that does not inherit the GitHub tokens. ajv-cli
+/// and its transitive npm dependencies are third-party code with no use
+/// for them (#416). Defense in depth only: a same-user child can still
+/// read its parent's environment from `/proc`. In CI, ajv runs in the
+/// scan workflow's `stage` job, which has no write token at all.
+pub(crate) fn npx() -> Command {
+    let mut cmd = Command::new("npx");
+    for var in TOKEN_VARS {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 fn run_ajv(repo_root: &Path, schema: &str, data_glob: &str) -> Result<()> {
-    let output = Command::new("npx")
+    let output = npx()
         .current_dir(repo_root)
         .args([
             "--no-install",
@@ -88,6 +104,24 @@ mod tests {
     fn write(path: &Path, contents: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn npx_strips_exactly_the_github_tokens() {
+        let cmd = npx();
+        assert_eq!(cmd.get_program(), "npx");
+        let mut removed: Vec<_> = cmd
+            .get_envs()
+            .map(|(k, v)| (k.to_str().unwrap().to_owned(), v.is_none()))
+            .collect();
+        removed.sort();
+        assert_eq!(
+            removed,
+            vec![
+                ("GH_TOKEN".to_owned(), true),
+                ("GITHUB_TOKEN".to_owned(), true),
+            ],
+        );
     }
 
     #[test]

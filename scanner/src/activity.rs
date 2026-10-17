@@ -35,7 +35,8 @@ pub enum Score {
 
 /// Raw upstream signals an [`crate::adapter::Adapter`] hands back. Field
 /// names match the JSON Schema for `activity.signals`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActivitySignals {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub releases_last_90d: Option<u32>,

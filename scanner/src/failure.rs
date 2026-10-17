@@ -19,10 +19,11 @@ pub fn issue_title(tool_id: &str, now: DateTime<Utc>) -> String {
 /// keep the issue scannable.
 pub fn issue_body(tool_id: &str, error: &str, now: DateTime<Utc>) -> String {
     let truncated = trim_error(error, 4_000);
+    let fence = fence_for(&truncated);
     format!(
         "## Failure\n\n\
          Scanner run for `{tool_id}` failed at {} UTC.\n\n\
-         ## Error\n\n```\n{truncated}\n```\n\n\
+         ## Error\n\n{fence}\n{truncated}\n{fence}\n\n\
          ---\n_Opened by the containers-db catalog scanner. Triggered by the\
          scheduled scan workflow; re-running the workflow with this tool will\
          retry. If the error is upstream (rate limit, API outage), no action\
@@ -116,6 +117,13 @@ fn gh_with_stdout(repo_root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// A code fence longer than any backtick run in `text`, so the error
+/// can't close the block and inject markdown into the issue.
+fn fence_for(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    "`".repeat(longest.max(2) + 1)
+}
+
 /// Truncate `error` to at most `max_chars`, appending an ellipsis if
 /// cut. Avoids posting megabyte-scale stack traces on GitHub.
 fn trim_error(error: &str, max_chars: usize) -> String {
@@ -148,6 +156,17 @@ mod tests {
         assert!(body.contains("rust"));
         assert!(body.contains("boom: upstream 503"));
         assert!(body.contains("2026-05-11T00:00:00Z"));
+    }
+
+    #[test]
+    fn issue_body_fences_the_error_past_its_own_backticks() {
+        let error = "x ```\n## Pwned\n[click](https://evil.test) ```` y";
+        let body = issue_body("rust", error, at(2026, 5, 11));
+        assert!(
+            body.contains(&format!("## Error\n\n`````\n{error}\n`````\n")),
+            "got {body}"
+        );
+        assert_eq!(fence_for("no ticks"), "```");
     }
 
     #[test]

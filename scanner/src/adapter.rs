@@ -64,7 +64,8 @@ impl ToolIndex {
 }
 
 /// One upstream release, normalized across source types.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpstreamVersion {
     /// Bare version string (no `v` prefix), e.g. `"1.95.0"`.
     pub version: String,

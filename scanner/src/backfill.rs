@@ -4,31 +4,30 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 
+use crate::Scanned;
 use crate::activity::compute_tier;
 use crate::adapter::{Adapter, ToolIndex, UpstreamVersion};
-use crate::{Outcome, generate, pr, validate, which_ajv, write_file};
+use crate::stage::{self, Activity, Kind, Plan};
 
 /// `scanner backfill`: add releases older than the catalog's oldest entry.
 ///
-/// Mirrors [`crate::scan_one`]'s write → validate → PR path, but the selection is
-/// [`select_backfill`] (explicit floor, below the oldest entry) and the
-/// template is the *oldest* entry, whose support matrix and install methods
-/// are the closest description of an older release. Errors propagate rather
-/// than filing a tracking issue: a backfill is run by hand.
+/// Mirrors [`crate::scan_one`]: builds the [`Plan`] the caller's mode then
+/// writes, validates, and delivers. The selection is [`select_backfill`]
+/// (explicit floor, below the oldest entry) and the template is the
+/// *oldest* entry, whose support matrix and install methods are the
+/// closest description of an older release. Writes nothing itself.
 pub(crate) async fn backfill_one(
     repo_root: &Path,
     tool_id: &str,
     from: &str,
     adapter: Arc<dyn Adapter>,
     now: DateTime<Utc>,
-    dry_run: bool,
-) -> anyhow::Result<Outcome> {
-    // Before any fetch or write: a malformed floor must fail, not select everything.
+) -> anyhow::Result<Scanned> {
+    // Before any fetch: a malformed floor must fail, not select everything.
     let floor = parse_floor(from)?;
     let index_path = repo_root.join("tools").join(tool_id).join("index.json");
-    let mut index = ToolIndex::from_path(&index_path)?;
+    let index = ToolIndex::from_path(&index_path)?;
     let result = adapter.fetch(&index).await?;
     let (score, cadence_days) = compute_tier(&result.signals, result.source_archived, now);
 
@@ -37,78 +36,31 @@ pub(crate) async fn backfill_one(
     let template_version = existing.first().cloned().ok_or_else(|| {
         anyhow::anyhow!("tool `{tool_id}` has no existing versions to template from")
     })?;
-    let template_path = repo_root
-        .join("tools")
-        .join(tool_id)
-        .join("versions")
-        .join(format!("{template_version}.json"));
-    let template_bytes = std::fs::read(&template_path)
-        .map_err(|e| anyhow::anyhow!("reading template {}: {e}", template_path.display()))?;
-    let template: Value = serde_json::from_slice(&template_bytes)
-        .map_err(|e| anyhow::anyhow!("parsing template {}: {e}", template_path.display()))?;
-
+    // The template itself is read by render_files, which errors if it is
+    // missing or not JSON.
     let picked = select_backfill(&result.upstream_versions, &floor, &template_version);
     if picked.is_empty() {
         println!("scanner: {tool_id}: nothing to backfill from {from} below {template_version}");
-        return Ok(Outcome::NoChange);
+        return Ok(Scanned::NoChange);
     }
-    let versions: Vec<String> = picked.iter().map(|v| v.version.clone()).collect();
-
-    if dry_run {
-        println!(
-            "scanner: {tool_id} (dry-run backfill): {} version(s)",
-            versions.len()
-        );
-        for v in &versions {
-            println!("  + {v}");
-        }
-        return Ok(Outcome::DryRun {
-            new_versions: versions,
-        });
-    }
-
-    for nv in &picked {
-        let path = repo_root
-            .join("tools")
-            .join(tool_id)
-            .join("versions")
-            .join(format!("{}.json", nv.version));
-        write_file(
-            &path,
-            &generate::render_version(&template, &template_version, nv, now),
-        )?;
-    }
-    generate::update_index(
-        &mut index,
-        &versions,
-        &result.signals,
+    let kind = Kind::Backfill {
+        from: from.to_string(),
+    };
+    let activity = Activity {
         score,
         cadence_days,
+        signals: result.signals,
+    };
+    let files = stage::render_files(repo_root, tool_id, &kind, &picked, &activity, now)?;
+    Ok(Scanned::Plan(Plan {
+        tool_id: tool_id.to_string(),
+        kind,
+        new_versions: picked.iter().map(|v| v.version.clone()).collect(),
+        releases: picked,
         now,
-    );
-    write_file(&index.path, &index.raw)?;
-
-    validate::validate_rules(repo_root)?;
-    if which_ajv() {
-        validate::validate_schemas(repo_root)?;
-    }
-
-    let last = versions.last().cloned().unwrap_or_default();
-    let branch = format!("backfill/{tool_id}/{from}");
-    let title = format!("feat({tool_id}): backfill versions {from} to {last}");
-    let body = pr::pr_body(
-        tool_id,
-        &versions,
-        index.source_repo.as_deref(),
-        score,
-        &result.signals,
-        cadence_days,
-    );
-    let prefix = format!("backfill/{tool_id}/");
-    let delivery = pr::deliver(
-        repo_root, tool_id, &prefix, &branch, &versions, &title, &body,
-    )?;
-    Ok(Outcome::delivered(delivery, versions))
+        activity,
+        files,
+    }))
 }
 
 /// Upstream stable releases `v` with `lo <= v < oldest`, ascending; `lo` is the
@@ -193,7 +145,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let tool = tmp.path().join("tools").join("demo");
         std::fs::create_dir_all(tool.join("versions")).unwrap();
-        let available: Vec<Value> = available
+        let available: Vec<serde_json::Value> = available
             .iter()
             .map(|v| serde_json::json!({ "version": v }))
             .collect();
@@ -233,18 +185,9 @@ mod tests {
         root: &Path,
         from: &str,
         upstream: Vec<UpstreamVersion>,
-        dry_run: bool,
-    ) -> anyhow::Result<Outcome> {
+    ) -> anyhow::Result<Scanned> {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
-        backfill_one(
-            root,
-            "demo",
-            from,
-            Arc::new(StubAdapter(upstream)),
-            now,
-            dry_run,
-        )
-        .await
+        backfill_one(root, "demo", from, Arc::new(StubAdapter(upstream)), now).await
     }
 
     const TEMPLATE: &str = r#"{"schemaVersion": 1, "version": "1.93.0"}"#;
@@ -266,14 +209,13 @@ mod tests {
             up("1.93.0", 2026, 1, 22, "stable"),
             up("1.94.0", 2026, 3, 5, "stable"),
         ];
-        // Not a dry run: NoChange must return before any write, validate or `gh`.
-        let outcome = run(tmp.path(), "1.82.0", upstream, false).await.unwrap();
-        assert!(matches!(outcome, Outcome::NoChange), "got {outcome:?}");
+        let scanned = run(tmp.path(), "1.82.0", upstream).await.unwrap();
+        assert!(matches!(scanned, Scanned::NoChange), "got {scanned:?}");
         assert_eq!(snapshot(tmp.path()), before);
     }
 
     #[tokio::test]
-    async fn dry_run_returns_the_selection_and_writes_nothing() {
+    async fn plans_the_selection_and_writes_nothing() {
         // Newest listed first: the bound must be the oldest entry by version,
         // not by file order, or 1.94.0 would be selected.
         let tmp = fixture(
@@ -290,13 +232,28 @@ mod tests {
             up("1.90.0-beta.1", 2025, 8, 1, "beta"),
             up("1.94.0", 2026, 3, 5, "stable"),
         ];
-        let outcome = run(tmp.path(), "1.82.0", upstream, true).await.unwrap();
-        match outcome {
-            Outcome::DryRun { new_versions } => {
-                assert_eq!(new_versions, vec!["1.82.0", "1.85.0"]);
-            }
-            other => panic!("expected DryRun, got {other:?}"),
-        }
+        let scanned = run(tmp.path(), "1.82.0", upstream).await.unwrap();
+        let Scanned::Plan(plan) = scanned else {
+            panic!("expected a plan, got {scanned:?}");
+        };
+        assert_eq!(plan.new_versions, vec!["1.82.0", "1.85.0"]);
+        assert_eq!(plan.prefix(), "backfill/demo/");
+        assert_eq!(plan.branch(), "backfill/demo/1.82.0");
+        assert_eq!(
+            plan.title(),
+            "feat(demo): backfill versions 1.82.0 to 1.85.0"
+        );
+        let paths: Vec<&str> = plan.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "tools/demo/versions/1.82.0.json",
+                "tools/demo/versions/1.85.0.json",
+                "tools/demo/index.json",
+            ]
+        );
+        // A tampered or mis-built plan is refused at delivery; this one isn't.
+        plan.check().unwrap();
         assert_eq!(snapshot(tmp.path()), before);
     }
 
@@ -304,7 +261,7 @@ mod tests {
     async fn errors_when_the_index_has_no_versions_to_template_from() {
         let tmp = fixture(&[], &[]);
         let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
-        let err = run(tmp.path(), "1.82.0", upstream, true)
+        let err = run(tmp.path(), "1.82.0", upstream)
             .await
             .unwrap_err()
             .to_string();
@@ -316,7 +273,7 @@ mod tests {
         let tmp = fixture(&["1.93.0"], &[]);
         let path = template_path(tmp.path());
         let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
-        let err = run(tmp.path(), "1.82.0", upstream, true)
+        let err = run(tmp.path(), "1.82.0", upstream)
             .await
             .unwrap_err()
             .to_string();
@@ -329,7 +286,7 @@ mod tests {
         let tmp = fixture(&["1.93.0"], &[("1.93.0", "not json")]);
         let path = template_path(tmp.path());
         let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
-        let err = run(tmp.path(), "1.82.0", upstream, true)
+        let err = run(tmp.path(), "1.82.0", upstream)
             .await
             .unwrap_err()
             .to_string();

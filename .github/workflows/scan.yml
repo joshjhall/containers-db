@@ -6,6 +6,13 @@ name: Catalog scanner
 # fine-grained PAT or GitHub App token, this repo only, with
 # contents:write, pull-requests:write, and issues:write (the scanner
 # files tracking issues via `gh`). See docs/scanner.md#scanner_token-secret.
+#
+# Three jobs, so third-party code never runs where the secret is (#416):
+# `build` compiles the scanner (cargo only, no npm). `stage` runs that
+# binary's adapters and validates the generated files with ajv, with no
+# secret and no cargo cache. `deliver` runs only the prebuilt binary,
+# `gh`, and `git`, and is the one job that sees SCANNER_TOKEN. Dry runs
+# stop after `stage`.
 
 on:
   schedule:
@@ -29,10 +36,10 @@ on:
         required: false
         type: string
 
+# Every write goes through SCANNER_TOKEN. GITHUB_TOKEN only fetches this
+# public repo and makes the adapters' read-only API calls (#416).
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+  contents: read
 
 concurrency:
   # Serialize scans so a long-running scan doesn't race with the next
@@ -42,16 +49,136 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scan:
-    name: Scan upstream releases
+  build:
+    # Compiles the scanner that `deliver` later runs with the token. No
+    # secret, and no npm/node: the rust-cache saved from this job's target/
+    # was only ever written by cargo, so ajv's JS in `stage` has no path
+    # into a later run's build (#416). Build scripts and proc-macros of the
+    # locked dependencies still run here.
+    name: Build scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: .
+
+      - name: Build scanner
+        run: cargo build --release --locked -p scanner
+
+      - name: Upload scanner binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scanner
+          path: target/release/scanner
+          if-no-files-found: error
+          retention-days: 1
+
+  stage:
+    # No secret is referenced here. npm packages and ajv run in this job,
+    # which has no cargo cache and no token (#416).
+    name: Scan and validate
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download scanner binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scanner
+          # Outside the checkout, so it never shows up as an untracked
+          # file to the scanner's own git calls.
+          path: ${{ runner.temp }}/scanner-bin
+
+      - name: Set up Node 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+
+      - name: Install ajv-cli
+        # Mirror the version pins from validate.yml so the scanner's
+        # ajv gate matches the PR validation gate exactly. ajv-cli and
+        # ajv-formats are plain JS and need no install scripts.
+        run: npm install --no-save --ignore-scripts ajv-cli@5.0.0 ajv-formats@3.0.1
+
+      - name: Run scanner
+        # Inputs are piped via env to avoid GitHub Actions expression
+        # injection — see
+        # https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+        env:
+          # Read-only GitHub API calls from adapters (rate limit).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TOOL: ${{ inputs.tool }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_BACKFILL_FROM: ${{ inputs.backfill_from }}
+          PLAN: ${{ runner.temp }}/plan/plan.json
+          SCANNER_BIN: ${{ runner.temp }}/scanner-bin/scanner
+        run: |
+          set -euo pipefail
+          # The artifact round-trip drops the executable bit.
+          chmod +x "$SCANNER_BIN"
+          mkdir -p "$(dirname "$PLAN")"
+          # A dry run prints its plan and stops; anything else writes the
+          # validated changes to $PLAN for `deliver`.
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            mode=(--dry-run)
+          else
+            mode=(--stage "$PLAN")
+          fi
+          if [ -n "$INPUT_BACKFILL_FROM" ]; then
+            if [ -z "$INPUT_TOOL" ]; then
+              echo "::error::backfill_from requires tool" >&2
+              exit 1
+            fi
+            "$SCANNER_BIN" backfill "$INPUT_TOOL" --from "$INPUT_BACKFILL_FROM" "${mode[@]}"
+          elif [ -n "$INPUT_TOOL" ]; then
+            "$SCANNER_BIN" tool "$INPUT_TOOL" "${mode[@]}"
+          else
+            "$SCANNER_BIN" due "${mode[@]}"
+          fi
+
+      - name: Upload plan
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan/plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+  deliver:
+    # The only job with SCANNER_TOKEN. It runs the scanner binary built in
+    # `build`, `gh`, and `git` — no npm, node, ajv, or cargo (#416).
+    # Dry runs make no writes and skip it. A scheduled run has no inputs,
+    # so `inputs.dry_run` is null there and this job still runs.
+    name: Open scan PRs
+    needs: [build, stage]
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
       - name: Require SCANNER_TOKEN
-        # Must run BEFORE checkout: an unset secret expands to "", and
-        # actions/checkout silently falls back to github.token for an
-        # empty `token:` — exactly the identity this secret replaces.
+        # Fail with a clear message rather than at the first push or `gh`
+        # call.
         env:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
         run: |
@@ -64,11 +191,13 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Full history needed because the scanner creates branches
-          # and pushes commits back via `git`.
+          # and pushes commits back via `git`. Same commit as `stage`
+          # (`github.sha`); `scanner deliver` refuses any other.
           fetch-depth: 0
-          # Persisted into git config, so the scanner's `git push`
-          # authenticates as SCANNER_TOKEN, not GITHUB_TOKEN (#401).
-          token: ${{ secrets.SCANNER_TOKEN }}
+          # Fetch with the default read-only token and leave no
+          # credential in .git/config (#416). `Deliver` supplies push
+          # auth through git's command-line config.
+          persist-credentials: false
 
       - name: Configure git identity
         # Required for the scanner's `git commit` step. The bot identity
@@ -77,59 +206,34 @@ jobs:
           git config user.name "containers-db scanner"
           git config user.email "containers-db-scanner@users.noreply.github.com"
 
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+      - name: Download scanner binary and plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          toolchain: stable
+          # Outside the checkout, so neither shows up as an untracked
+          # file to the scanner's own git calls.
+          path: ${{ runner.temp }}/staged
 
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: .
-
-      - name: Set up Node 20
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "20"
-
-      - name: Install ajv-cli
-        # Mirror the version pins from validate.yml so the scanner's
-        # ajv gate matches the PR validation gate exactly.
-        run: npm install --no-save ajv-cli@5.0.0 ajv-formats@3.0.1
-
-      - name: Build scanner
-        run: cargo build --release -p scanner
-
-      - name: Run scanner
-        # Inputs are piped via env to avoid GitHub Actions expression
-        # injection — see
-        # https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+      - name: Deliver
         env:
-          # Read-only GitHub API calls from adapters (rate limit).
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # `gh` prefers GH_TOKEN, so PRs/issues are opened as this
           # identity and their pushes trigger validate.yml (#401).
           GH_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-          INPUT_TOOL: ${{ inputs.tool }}
-          INPUT_DRY_RUN: ${{ inputs.dry_run }}
-          INPUT_BACKFILL_FROM: ${{ inputs.backfill_from }}
+          STAGED: ${{ runner.temp }}/staged
+          # Command-line git config, which overrides every config file.
+          # The empty helper clears any helper list read from disk, so
+          # `git push` hands GH_TOKEN only to gh. Hooks and fsmonitor are
+          # off. Hardening only: nothing third-party runs in this job.
+          GIT_CONFIG_COUNT: "4"
+          GIT_CONFIG_KEY_0: credential.helper
+          GIT_CONFIG_VALUE_0: ""
+          GIT_CONFIG_KEY_1: credential.helper
+          GIT_CONFIG_VALUE_1: "!gh auth git-credential"
+          GIT_CONFIG_KEY_2: core.hooksPath
+          GIT_CONFIG_VALUE_2: /dev/null
+          GIT_CONFIG_KEY_3: core.fsmonitor
+          GIT_CONFIG_VALUE_3: "false"
         run: |
           set -euo pipefail
-          dry_run_flag=""
-          if [ "$INPUT_DRY_RUN" = "true" ]; then
-            dry_run_flag="--dry-run"
-          fi
-          if [ -n "$INPUT_BACKFILL_FROM" ]; then
-            if [ -z "$INPUT_TOOL" ]; then
-              echo "::error::backfill_from requires tool" >&2
-              exit 1
-            fi
-            # shellcheck disable=SC2086
-            cargo run --release -p scanner -- backfill "$INPUT_TOOL" --from "$INPUT_BACKFILL_FROM" $dry_run_flag
-          elif [ -n "$INPUT_TOOL" ]; then
-            # shellcheck disable=SC2086
-            cargo run --release -p scanner -- tool "$INPUT_TOOL" $dry_run_flag
-          else
-            # shellcheck disable=SC2086
-            cargo run --release -p scanner -- due $dry_run_flag
-          fi
+          # The artifact round-trip drops the executable bit.
+          chmod +x "$STAGED/scanner/scanner"
+          "$STAGED/scanner/scanner" deliver --plan "$STAGED/plan/plan.json"
