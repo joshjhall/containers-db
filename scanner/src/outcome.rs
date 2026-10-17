@@ -57,7 +57,8 @@ pub(crate) fn summary_line(tool_id: &str, outcome: &Outcome) -> Option<String> {
 
 fn append_step_summary(path: &Path, line: &str) -> std::io::Result<()> {
     let mut file = OpenOptions::new().append(true).create(true).open(path)?;
-    writeln!(file, "{line}")
+    // One write, so the line can't interleave with other appenders.
+    file.write_all(format!("{line}\n").as_bytes())
 }
 
 /// Append this outcome's [`summary_line`] to `$GITHUB_STEP_SUMMARY`.
