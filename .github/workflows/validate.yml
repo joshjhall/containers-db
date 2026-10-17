@@ -144,3 +144,38 @@ jobs:
             fi
             echo "Negative fixture $fixture correctly rejected (ajv=$ajv_rc, validate-catalog=$sem_rc)"
           done
+
+  # The job above floats on `stable`, which only ever moves past the declared
+  # minimum. This job builds on exactly `rust-version`, so a newer-than-MSRV
+  # API or a dependency raising its own MSRV fails here instead of quietly
+  # invalidating the floor.
+  msrv:
+    name: MSRV check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          if [ -z "$msrv" ]; then
+            echo "::error::no workspace rust-version found in Cargo.toml"
+            exit 1
+          fi
+          echo "version=$msrv" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Check workspace on MSRV
+        run: cargo check --workspace --all-targets --locked
