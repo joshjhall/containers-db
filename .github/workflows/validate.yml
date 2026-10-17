@@ -157,18 +157,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read rust-version from Cargo.toml
+      # Bootstrap toolchain, only to let cargo read the manifest below.
+      - name: Set up Rust (stable, for cargo metadata)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master @ 2026-10-16
+        with:
+          toolchain: stable
+
+      # Ask cargo for rust-version rather than parsing TOML by hand. Every
+      # workspace member inherits it, so exactly one distinct value is required.
+      - name: Read rust-version
         id: msrv
         run: |
-          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
-          if [ -z "$msrv" ]; then
-            echo "::error::no workspace rust-version found in Cargo.toml"
+          versions=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '[.packages[].rust_version] | unique | .[]')
+          if [ "$(printf '%s\n' "$versions" | grep -c .)" -ne 1 ] || [ "$versions" = null ]; then
+            echo "::error::expected one workspace rust-version, got: ${versions:-none}"
             exit 1
           fi
-          echo "version=$msrv" >> "$GITHUB_OUTPUT"
+          echo "version=$versions" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust ${{ steps.msrv.outputs.version }}
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master @ 2026-10-16
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
