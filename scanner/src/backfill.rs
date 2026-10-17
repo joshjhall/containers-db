@@ -249,6 +249,15 @@ mod tests {
 
     const TEMPLATE: &str = r#"{"schemaVersion": 1, "version": "1.93.0"}"#;
 
+    /// The `1.93.0` template path, joined segment by segment as
+    /// `backfill_one` builds it so the separators match on every platform.
+    fn template_path(root: &Path) -> PathBuf {
+        root.join("tools")
+            .join("demo")
+            .join("versions")
+            .join("1.93.0.json")
+    }
+
     #[tokio::test]
     async fn no_change_when_nothing_upstream_falls_below_the_oldest_entry() {
         let tmp = fixture(&["1.93.0"], &[("1.93.0", TEMPLATE)]);
@@ -276,6 +285,8 @@ mod tests {
             up("1.85.0", 2025, 2, 20, "stable"),
             up("1.81.0", 2024, 9, 5, "stable"),
             up("1.82.0", 2024, 10, 17, "stable"),
+            // A release the source reports twice is backfilled once.
+            up("1.85.0", 2025, 2, 20, "stable"),
             up("1.90.0-beta.1", 2025, 8, 1, "beta"),
             up("1.94.0", 2026, 3, 5, "stable"),
         ];
@@ -303,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn errors_when_the_template_file_is_missing() {
         let tmp = fixture(&["1.93.0"], &[]);
-        let path = tmp.path().join("tools/demo/versions/1.93.0.json");
+        let path = template_path(tmp.path());
         let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
         let err = run(tmp.path(), "1.82.0", upstream, true)
             .await
@@ -316,7 +327,7 @@ mod tests {
     #[tokio::test]
     async fn errors_when_the_template_is_not_json() {
         let tmp = fixture(&["1.93.0"], &[("1.93.0", "not json")]);
-        let path = tmp.path().join("tools/demo/versions/1.93.0.json");
+        let path = template_path(tmp.path());
         let upstream = vec![up("1.82.0", 2024, 10, 17, "stable")];
         let err = run(tmp.path(), "1.82.0", upstream, true)
             .await
