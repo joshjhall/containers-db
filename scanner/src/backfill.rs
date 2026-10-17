@@ -138,15 +138,22 @@ fn version_key(v: &str) -> Vec<u64> {
     v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
 
-/// Parse a user-supplied `--from` floor; every dot segment must be a `u64`.
+/// Parse a user-supplied `--from` floor; every dot segment must be ASCII digits
+/// that fit a `u64`.
 ///
 /// Unlike [`version_key`], nothing defaults to `0`: `v1.82.0` would otherwise
-/// key as `[0, 82, 0]` and select every release below the oldest entry.
+/// key as `[0, 82, 0]` and select every release below the oldest entry. The
+/// digit check comes first because `u64::from_str` alone accepts a leading `+`.
 fn parse_floor(from: &str) -> anyhow::Result<Vec<u64>> {
     from.split('.')
-        .map(str::parse::<u64>)
-        .collect::<Result<_, _>>()
-        .map_err(|_| {
+        .map(|p| {
+            if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            p.parse::<u64>().ok()
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(|| {
             anyhow::anyhow!(
                 "invalid --from `{from}`: expected a dotted numeric version like 1.82.0"
             )
@@ -200,7 +207,15 @@ mod tests {
 
     #[test]
     fn parse_floor_rejects_a_non_numeric_segment_naming_the_value() {
-        for bad in ["v1.82.0", "1.82.0-rc1", "", "1..2", "1.82."] {
+        for bad in [
+            "v1.82.0",
+            "1.82.0-rc1",
+            "",
+            "1..2",
+            "1.82.",
+            "+1.82.0",
+            "1.+82.0",
+        ] {
             let err = parse_floor(bad).expect_err(bad).to_string();
             assert_eq!(
                 err,
