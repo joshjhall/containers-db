@@ -378,6 +378,38 @@ mod tests {
     }
 
     #[test]
+    fn select_backfill_dedups_duplicates_that_are_not_adjacent_upstream() {
+        // The duplicates are apart on input, so dedup only works after the sort.
+        let upstream = vec![
+            up("1.85.0", 2025, 2, 20, "stable"),
+            up("1.84.0", 2025, 1, 9, "stable"),
+            up("1.85.0", 2025, 2, 20, "stable"),
+        ];
+        let ids: Vec<String> =
+            select_backfill(&upstream, &parse_floor("1.80.0").unwrap(), "1.93.0")
+                .into_iter()
+                .map(|v| v.version)
+                .collect();
+        assert_eq!(ids, vec!["1.84.0", "1.85.0"]);
+    }
+
+    #[test]
+    fn select_backfill_is_empty_when_floor_is_at_or_above_oldest() {
+        let upstream = vec![
+            up("1.84.0", 2025, 1, 9, "stable"),
+            up("1.85.0", 2025, 2, 20, "stable"),
+            up("1.86.0", 2025, 4, 3, "stable"),
+        ];
+        assert!(select_backfill(&upstream, &parse_floor("1.85.0").unwrap(), "1.85.0").is_empty());
+        assert!(select_backfill(&upstream, &parse_floor("1.86.0").unwrap(), "1.85.0").is_empty());
+    }
+
+    #[test]
+    fn select_backfill_is_empty_for_empty_upstream() {
+        assert!(select_backfill(&[], &parse_floor("1.0.0").unwrap(), "1.93.0").is_empty());
+    }
+
+    #[test]
     fn parse_floor_rejects_a_non_numeric_segment_naming_the_value() {
         for bad in [
             "v1.82.0",
