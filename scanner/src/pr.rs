@@ -138,6 +138,10 @@ pub enum Delivery {
 /// Open, update, or skip the PR for freshly generated `tools/<tool_id>/`
 /// files, so a tool never has more than one open PR per `prefix` (see
 /// [`crate::dedup`]). `branch` is used only when a new PR is opened.
+///
+/// Errors on an empty `new_versions` before touching `gh` or git: callers
+/// return `NoChange` first, and [`dedup::decide`] would otherwise read an
+/// empty list as vacuously covered by any open PR (#407).
 pub fn deliver(
     repo_root: &Path,
     tool_id: &str,
@@ -147,6 +151,10 @@ pub fn deliver(
     title: &str,
     body: &str,
 ) -> Result<Delivery> {
+    anyhow::ensure!(
+        !new_versions.is_empty(),
+        "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
+    );
     let open = list_open_prs(repo_root)?;
     deliver_with(
         repo_root,
@@ -448,6 +456,18 @@ mod tests {
             .unwrap()
             .trim()
             .to_string()
+    }
+
+    #[test]
+    fn deliver_rejects_empty_new_versions() {
+        // Not a repo and no `gh` stub: reaching `list_open_prs` would fail
+        // with a different message, so the text pins the guard itself.
+        let dir = tempfile::tempdir().unwrap();
+        let err = deliver(dir.path(), "rust", "scan/rust/", "b", &[], "t", "b").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("deliver called with no new versions"),
+            "got: {err:#}"
+        );
     }
 
     #[test]

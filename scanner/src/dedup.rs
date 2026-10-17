@@ -120,6 +120,9 @@ pub fn parse_pr_versions(body: &str) -> Vec<String> {
 /// `scan/rust-dev/…`. Fork PRs are ignored — their branch name and body are
 /// attacker-controlled, and trusting them would let anyone suppress a scan.
 /// When several open PRs match, the oldest (lowest number) is the one kept.
+///
+/// `new_versions` must be non-empty — an empty list would be vacuously
+/// covered by any open PR. [`crate::pr::deliver`] enforces this.
 pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Decision {
     let Some(pr) = open_prs
         .iter()
@@ -208,21 +211,6 @@ mod tests {
     fn parse_unions_duplicate_sections_and_skips_between() {
         let b = "## New versions\n- `1.0.0`\n## Activity\n- `9.9.9`\n## New versions\n- `1.0.1`\n";
         assert_eq!(parse_pr_versions(b), vs(&["1.0.0", "1.0.1"]));
-    }
-
-    #[test]
-    fn empty_new_versions_skip_vacuously() {
-        // Characterizes current behaviour; #407 decides the intended rule.
-        // Callers return `NoChange` before `deliver` on an empty list
-        // (`lib.rs` scan + backfill), so the vacuous Skip is a no-op today.
-        let prs = [pr(398, "scan/rust/2026-10-16", &["1.99.1"])];
-        assert_eq!(
-            decide("scan/rust/", &prs, &[]),
-            Decision::Skip {
-                pr: 398,
-                covered: vec![]
-            }
-        );
     }
 
     #[test]
