@@ -98,10 +98,13 @@ fn check_tool_id(id: &str) -> Result<()> {
 }
 
 /// A plain token for a version or backfill floor: no path, ref, or
-/// markdown syntax can ride along into a branch name or PR text.
+/// markdown syntax can ride along into a branch name or PR text. Starts
+/// alphanumeric and doesn't end in `.`, so it is also a valid git ref
+/// component and file name.
 fn check_token(id: &str, what: &str, v: &str) -> Result<()> {
     anyhow::ensure!(
-        !v.is_empty()
+        v.starts_with(|c: char| c.is_ascii_alphanumeric())
+            && !v.ends_with('.')
             && v.len() <= 64
             && !v.contains("..")
             && !v.ends_with(".lock")
@@ -552,7 +555,9 @@ mod tests {
 
     #[test]
     fn check_rejects_versions_and_floors_that_are_not_plain_tokens() {
-        for v in ["", "1.0/../x", "1..0", "v.lock", "1.0 ", "`x`", "[a](b)"] {
+        for v in [
+            "", "1.0/../x", "1..0", "v.lock", "1.0 ", "`x`", "[a](b)", "1.0.", ".x", "-x", "+1",
+        ] {
             let mut p = plan();
             p.new_versions = vec![v.into()];
             assert_eq!(

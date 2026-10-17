@@ -262,7 +262,10 @@ tamper with the plan, so `deliver` treats the plan as untrusted:
   before the plan's files are written over it.
 - The in-process rules run again on the written files before any push.
   ajv does not — it is third-party code, and it already ran in `stage`.
-- The PR still goes through `validate.yml`, which runs ajv again.
+  The `stage`-side ajv run is a correctness check, not a security gate:
+  a compromised `stage` job can skip it.
+- The PR still goes through `validate.yml`, which runs ajv again. That is
+  the schema gate that enforces, before anything merges.
 
 The remaining processes that hold the token are the scanner binary,
 `gh`, and `git`. Checkout uses the default token with
