@@ -798,6 +798,134 @@
           "version": "2.43-2ubuntu2.4"
         }
       ]
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "amd64",
+      "tested_at": "2026-10-18T08:09:42.309034765Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-amd64",
+      "image_digest": "sha256:3581124550ef0ca7526e360ccbe22efdc40ae17e4f702c8bab5fddce28dae45a",
+      "duration_seconds": 16.760293472,
+      "version_output": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ]
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "amd64",
+      "tested_at": "2026-10-18T08:08:42.771745862Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-amd64",
+      "image_digest": "sha256:91d4ae99f6190e4ca746a2b9f97bc59151d17d748f008e42449d2ef6e1a8e235",
+      "duration_seconds": 17.609124781,
+      "version_output": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2025.2.80_v9.0.305-102.el10_1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "14.3.1-4.4.el10"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.39-142.el10_2"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.40.2-18.el10"
+        }
+      ]
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "arm64",
+      "tested_at": "2026-10-18T08:10:18.922774374Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-arm64",
+      "image_digest": "sha256:38b70db30232c4d0010dbb2ba48cefd19d3ea4bea60b817880b9dc70f4a064da",
+      "duration_seconds": 15.316050259,
+      "version_output": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2025.2.80_v9.0.305-102.el10_1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "14.3.1-4.4.el10"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.39-142.el10_2"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.40.2-18.el10"
+        }
+      ]
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "arm64",
+      "tested_at": "2026-10-18T08:09:49.478214839Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-arm64",
+      "image_digest": "sha256:015cf65e33ea4a1dad39a098bd9346dbed0191ee7467b39dcaf3806c539ab4a3",
+      "duration_seconds": 14.260359584,
+      "version_output": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2025.2.80_v9.0.305-91.el9"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "11.5.0-14.el9"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.34-283.el9_8"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.37.4-25.el9"
+        }
+      ]
     }
   ],
   "tool": "rust",
