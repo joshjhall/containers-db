@@ -116,6 +116,7 @@ fn parse_floor(from: &str) -> anyhow::Result<Vec<u64>> {
 mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use async_trait::async_trait;
     use chrono::TimeZone;
@@ -133,6 +134,24 @@ mod tests {
         async fn fetch(&self, _index: &ToolIndex) -> anyhow::Result<AdapterResult> {
             Ok(AdapterResult {
                 upstream_versions: self.0.clone(),
+                signals: ActivitySignals::default(),
+                source_archived: false,
+            })
+        }
+    }
+
+    /// Like [`StubAdapter`], but records whether `fetch` was ever called.
+    struct RecordingAdapter {
+        upstream: Vec<UpstreamVersion>,
+        fetched: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Adapter for RecordingAdapter {
+        async fn fetch(&self, _index: &ToolIndex) -> anyhow::Result<AdapterResult> {
+            self.fetched.store(true, Ordering::SeqCst);
+            Ok(AdapterResult {
+                upstream_versions: self.upstream.clone(),
                 signals: ActivitySignals::default(),
                 source_archived: false,
             })
@@ -254,6 +273,34 @@ mod tests {
         );
         // A tampered or mis-built plan is refused at delivery; this one isn't.
         plan.check().unwrap();
+        assert_eq!(snapshot(tmp.path()), before);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_malformed_from_before_fetching_or_writing() {
+        // Everything but `--from` is valid, so a parse_floor moved below the
+        // fetch is reached and still returns this error; only `fetched`
+        // catches the reorder.
+        let tmp = fixture(&["1.93.0"], &[("1.93.0", TEMPLATE)]);
+        let before = snapshot(tmp.path());
+        let fetched = Arc::new(AtomicBool::new(false));
+        let adapter = RecordingAdapter {
+            upstream: vec![up("1.82.0", 2024, 10, 17, "stable")],
+            fetched: Arc::clone(&fetched),
+        };
+        let now = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        let err = backfill_one(tmp.path(), "demo", "v1.82.0", Arc::new(adapter), now)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "invalid --from `v1.82.0`: expected a dotted numeric version like 1.82.0"
+        );
+        assert!(
+            !fetched.load(Ordering::SeqCst),
+            "fetch must not run before --from is validated"
+        );
         assert_eq!(snapshot(tmp.path()), before);
     }
 
