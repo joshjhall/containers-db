@@ -166,6 +166,58 @@
           "package": "musl-dev"
         }
       ]
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "amd64",
+      "tested_at": "2026-10-18T08:16:08.702672231Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
+      "image_digest": "sha256:1bab19131203b180b65321d792f107dcfa256e1d7b3e84284daeac24546a0bb1",
+      "duration_seconds": 17.941346041,
+      "version_output": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ]
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "arm64",
+      "tested_at": "2026-10-18T08:15:53.89132999Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-arm64",
+      "image_digest": "sha256:a3e1e4958e06af9af4a67fbce257975d6261ae38b5c480f252217855f18d75b7",
+      "duration_seconds": 14.727316198,
+      "version_output": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ]
     }
   ],
   "install_methods": [

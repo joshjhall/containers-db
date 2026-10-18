@@ -798,6 +798,32 @@
           "version": "2.43-2ubuntu2.4"
         }
       ]
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "arm64",
+      "tested_at": "2026-10-18T08:09:34.247754105Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-arm64",
+      "image_digest": "sha256:da8da524be672a24028eb34f38cd14a9f824addd1269c009f5f14a8fc3b11867",
+      "duration_seconds": 15.676687485,
+      "version_output": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ]
     }
   ],
   "tool": "rust",

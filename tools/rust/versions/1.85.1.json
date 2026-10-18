@@ -798,6 +798,35 @@
           "version": "2.43-2ubuntu2.4"
         }
       ]
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "amd64",
+      "tested_at": "2026-10-18T08:08:42.197476766Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-amd64",
+      "image_digest": "sha256:8acb458fa0d04c2e0ad37571632311d4e9ff586e5c0f3e2295c5ae1a269e8149",
+      "duration_seconds": 19.877516585,
+      "version_output": "rustc 1.85.1 (4eb161250 2025-03-15)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260601~24.04.1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:13.2.0-7ubuntu1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.39-0ubuntu8.9"
+        }
+      ]
     }
   ],
   "tool": "rust",

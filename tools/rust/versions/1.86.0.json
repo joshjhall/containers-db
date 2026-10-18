@@ -798,6 +798,121 @@
           "version": "2.43-2ubuntu2.4"
         }
       ]
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "amd64",
+      "tested_at": "2026-10-18T08:08:26.144043685Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
+      "image_digest": "sha256:1bab19131203b180b65321d792f107dcfa256e1d7b3e84284daeac24546a0bb1",
+      "duration_seconds": 23.43591126,
+      "version_output": "rustc 1.86.0 (05f9846f8 2025-03-31)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ]
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "arm64",
+      "tested_at": "2026-10-18T08:10:13.303062839Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-arm64",
+      "image_digest": "sha256:da8da524be672a24028eb34f38cd14a9f824addd1269c009f5f14a8fc3b11867",
+      "duration_seconds": 17.871122746,
+      "version_output": "rustc 1.86.0 (05f9846f8 2025-03-31)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ]
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-10-18T08:08:26.320739286Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:d011d7a8c3959f2b48f31ee9f26dc9ec0e2197e48e94df85f17c378a979f1abf",
+      "duration_seconds": 16.932094866,
+      "version_output": "rustc 1.86.0 (05f9846f8 2025-03-31)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2025.2.80_v9.0.305-91.el9"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "11.5.0-14.el9"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.34-283.el9_8"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.37.4-25.el9"
+        }
+      ]
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "arm64",
+      "tested_at": "2026-10-18T08:10:05.33187464Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-arm64",
+      "image_digest": "sha256:7f406a7cf782b718ccadb9e0d582c45e78a826ae63c51e4150bb5c14c9e3d24e",
+      "duration_seconds": 16.541052553,
+      "version_output": "rustc 1.86.0 (05f9846f8 2025-03-31)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260601~24.04.1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:13.2.0-7ubuntu1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.39-0ubuntu8.9"
+        }
+      ]
     }
   ],
   "tool": "rust",
