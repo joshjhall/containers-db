@@ -908,7 +908,10 @@ mod tests {
     #[test]
     fn the_pr_upstream_link_comes_from_the_checkout_not_the_plan() {
         // write_and_gate reads the link before writing the plan's index, so
-        // even an index the plan controls can't change it.
+        // even an index the plan controls can't change it. Through
+        // deliver_plan, re-render refuses such an index before it gets here:
+        // see delivery_puts_the_checkouts_upstream_link_in_the_pr_body and
+        // a_plan_that_swaps_its_upstream_link_never_reaches_the_pr_step.
         let repo = catalog_repo();
         let p = repo.path();
         write_tool(p, Some("https://github.com/o/foo"), TEMPLATE);
@@ -923,6 +926,60 @@ mod tests {
         assert_eq!(link.as_deref(), Some("https://github.com/o/foo"));
         let on_disk = std::fs::read_to_string(p.join("tools/foo/index.json")).unwrap();
         assert!(on_disk.contains("evil.test"), "got {on_disk}");
+    }
+
+    /// `catalog_repo` with `foo`'s `source_repo` set and committed.
+    fn catalog_repo_with_upstream() -> tempfile::TempDir {
+        let repo = catalog_repo();
+        let p = repo.path();
+        write_tool(p, Some("https://github.com/o/foo"), TEMPLATE);
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "source_repo"]);
+        repo
+    }
+
+    #[test]
+    fn delivery_puts_the_checkouts_upstream_link_in_the_pr_body() {
+        let repo = catalog_repo_with_upstream();
+        let p = repo.path();
+        let plan = rendered_plan(p);
+        let mut captured = None;
+        stage::deliver_plan(p, &plan, |req| {
+            captured = Some(req.clone());
+            pr::discard_generated(p, &req.tool_id)?;
+            Ok(pr::Delivery::Opened("https://pr/1".into()))
+        })
+        .unwrap();
+        let body = captured.expect("the PR step ran").body;
+        assert!(
+            body.contains(
+                "## Upstream\n\n- https://github.com/o/foo\n\
+                 - Releases: https://github.com/o/foo/releases\n"
+            ),
+            "got {body}"
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn a_plan_that_swaps_its_upstream_link_never_reaches_the_pr_step() {
+        let repo = catalog_repo_with_upstream();
+        let p = repo.path();
+        let mut plan = rendered_plan(p);
+        let index = plan.files.last_mut().unwrap();
+        assert_eq!(index.path, "tools/foo/index.json");
+        let swapped = index.contents.replace(
+            "https://github.com/o/foo",
+            "[click](https://evil.test) @everyone",
+        );
+        assert_ne!(swapped, index.contents, "the swap must change the file");
+        index.contents = swapped;
+        let err = stage::deliver_plan(p, &plan, no_pr).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "plan for `foo`: staged files differ from what this checkout renders for its releases"
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
 
     #[test]
