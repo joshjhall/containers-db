@@ -31,7 +31,8 @@ run_case() {
   local name=$1 want_exit=$2 want_error=$3 sha=$4 bin=$5
   local stderr_file=$scratch/stderr rc errors ok=1
 
-  bash "$script" "$sha" "$bin" 2> "$stderr_file" > /dev/null
+  # Executed directly, as scan.yml does, so the mode bit and shebang count.
+  "$script" "$sha" "$bin" 2> "$stderr_file" > /dev/null
   rc=$?
   errors=$(grep '^::error::' "$stderr_file")
 
@@ -75,6 +76,22 @@ run_case "missing binary is rejected" nonzero "$mismatch_msg" "$good" \
 # about the malformed line and exits 0, so this case is what pins --strict.
 run_case "path with an embedded newline is rejected" nonzero "$mismatch_msg" \
   "$good" "$binary"$'\n'"junk"
+
+# Wrong argument count: exit 2 with the usage line and no ::error::.
+# run_case always passes two arguments, so these are checked here.
+for argv in "one" "one two three"; do
+  # shellcheck disable=SC2086 # word-split on purpose: one arg vs three
+  "$script" $argv 2> "$scratch/stderr" > /dev/null
+  rc=$?
+  if [ "$rc" -eq 2 ] && grep -q '^usage: ' "$scratch/stderr" \
+      && ! grep -q '^::error::' "$scratch/stderr"; then
+    echo "PASS: wrong argument count ($argv) exits 2 with usage"
+  else
+    echo "FAIL: wrong argument count ($argv) (exit=$rc)"
+    sed 's/^/  stderr: /' "$scratch/stderr"
+    failures=$((failures + 1))
+  fi
+done
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures case(s) failed"
