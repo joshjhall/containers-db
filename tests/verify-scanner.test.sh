@@ -68,6 +68,16 @@ run_case "65-char hash is rejected" nonzero "$invalid_msg" "${good}0" "$binary"
 run_case "hash with trailing newline is rejected" nonzero "$invalid_msg" \
   "$good"$'\n' "$binary"
 
+# The invalid value must never reach stderr, where a newline would let it
+# start a workflow command. The exact ::error:: comparison catches an
+# echoed `::error::` line; the marker grep catches any other prefix.
+run_case "hash carrying a workflow command is not echoed" nonzero \
+  "$invalid_msg" "deadbeef"$'\n'"::warning::injected-marker" "$binary"
+if grep -q 'injected-marker' "$scratch/stderr"; then
+  echo "FAIL: invalid hash value was echoed to stderr"
+  failures=$((failures + 1))
+fi
+
 run_case "missing binary is rejected" nonzero "$mismatch_msg" "$good" \
   "$scratch/does-not-exist"
 
