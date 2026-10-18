@@ -223,7 +223,8 @@ The workflow runs in three jobs so that no third-party code runs where
 the secret is (#416):
 
 1. **`build` (no secret).** Compiles the scanner with
-   `cargo build --release --locked` and uploads the binary. No npm or
+   `cargo build --release --locked`, uploads the binary, and publishes its
+   sha256 as the job output `scanner_sha256`. No npm or
    node runs here, so the Rust cache this job saves was only ever written
    by cargo.
 2. **`stage` (no secret).** Downloads the binary, installs ajv-cli
@@ -235,7 +236,10 @@ the secret is (#416):
    recorded in the plan's `failures` instead of filing an issue — this
    job has no token to file one with. The plan is uploaded as an artifact.
 3. **`deliver` (`SCANNER_TOKEN`).** Checks out the same commit, downloads
-   the binary and the plan, and runs `scanner deliver --plan <plan.json>`.
+   the `scanner` and `plan` artifacts by name into separate directories,
+   checks the binary against `build`'s `scanner_sha256` (the job fails before
+   `chmod` on a mismatch or a missing hash), and runs
+   `scanner deliver --plan <plan.json>`.
    No cargo, npm, node, or ajv runs here. The token is `GH_TOKEN` (`gh`
    prefers it over `GITHUB_TOKEN`); `git push` gets it through
    `credential.helper=!gh auth git-credential`, set by `GIT_CONFIG_*`
@@ -243,7 +247,12 @@ the secret is (#416):
 
 JavaScript in `stage` never shares a job with the build, so it can
 neither replace the binary `deliver` runs nor poison the cargo cache a
-later run builds from. The locked dependencies' build scripts and
+later run builds from. `stage` does hold the run's artifact-service token,
+though, so `deliver` doesn't rely on artifact names alone to identify the
+binary. It trusts the binary through the hash: job outputs are written only
+by the job that declares them, so `stage` can't change the sha256 `build`
+recorded, and any binary other than the one `build` produced is refused.
+The locked dependencies' build scripts and
 proc-macros still shape the binary — the same trust any Rust release
 build carries. `stage` can still tamper with the plan, so `deliver`
 treats the plan as untrusted:

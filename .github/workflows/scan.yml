@@ -11,8 +11,9 @@ name: Catalog scanner
 # `build` compiles the scanner (cargo only, no npm). `stage` runs that
 # binary's adapters and validates the generated files with ajv, with no
 # secret and no cargo cache. `deliver` runs only the prebuilt binary,
-# `gh`, and `git`, and is the one job that sees SCANNER_TOKEN. Dry runs
-# stop after `stage`.
+# `gh`, and `git`, and is the one job that sees SCANNER_TOKEN. It checks
+# the binary against the sha256 `build` publishes before running it
+# (#427). Dry runs stop after `stage`.
 
 on:
   schedule:
@@ -58,6 +59,9 @@ jobs:
     name: Build scanner
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      # `deliver` checks the binary it downloads against this (#427).
+      scanner_sha256: ${{ steps.hash.outputs.sha256 }}
 
     steps:
       - name: Checkout
@@ -77,6 +81,15 @@ jobs:
 
       - name: Build scanner
         run: cargo build --release --locked -p scanner
+
+      - name: Hash scanner binary
+        # Job outputs are set by this job alone, so `stage` (which holds
+        # the run's artifact token) can't change the hash `deliver` checks.
+        id: hash
+        run: |
+          set -euo pipefail
+          sha256=$(sha256sum target/release/scanner | cut -d' ' -f1)
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload scanner binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -206,19 +219,30 @@ jobs:
           git config user.name "containers-db scanner"
           git config user.email "containers-db-scanner@users.noreply.github.com"
 
-      - name: Download scanner binary and plan
+      # Each artifact is downloaded by name into its own directory, so
+      # nothing else in the run lands next to the binary (#427). Both
+      # directories are outside the checkout, so neither shows up as an
+      # untracked file to the scanner's own git calls.
+      - name: Download scanner binary
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          # Outside the checkout, so neither shows up as an untracked
-          # file to the scanner's own git calls.
-          path: ${{ runner.temp }}/staged
+          name: scanner
+          path: ${{ runner.temp }}/scanner-bin
+
+      - name: Download plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
 
       - name: Deliver
         env:
           # `gh` prefers GH_TOKEN, so PRs/issues are opened as this
           # identity and their pushes trigger validate.yml (#401).
           GH_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-          STAGED: ${{ runner.temp }}/staged
+          SCANNER_BIN: ${{ runner.temp }}/scanner-bin/scanner
+          SCANNER_SHA256: ${{ needs.build.outputs.scanner_sha256 }}
+          PLAN: ${{ runner.temp }}/plan/plan.json
           # Command-line git config, which overrides every config file.
           # The empty helper clears any helper list read from disk, so
           # `git push` hands GH_TOKEN only to gh. Hooks and fsmonitor are
@@ -234,6 +258,19 @@ jobs:
           GIT_CONFIG_VALUE_3: "false"
         run: |
           set -euo pipefail
+          # Run only the binary `build` hashed (#427). An empty or
+          # malformed hash means the job output is miswired, not a match.
+          if ! [[ "$SCANNER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            # The value itself is not echoed: it is not a hash, so it could
+            # carry a newline and start a workflow command.
+            echo "::error::build did not publish a valid scanner sha256." >&2
+            exit 1
+          fi
+          if ! printf '%s  %s\n' "$SCANNER_SHA256" "$SCANNER_BIN" \
+              | sha256sum --check --strict --quiet -; then
+            echo "::error::Scanner binary does not match the sha256 build published; refusing to run it." >&2
+            exit 1
+          fi
           # The artifact round-trip drops the executable bit.
-          chmod +x "$STAGED/scanner/scanner"
-          "$STAGED/scanner/scanner" deliver --plan "$STAGED/plan/plan.json"
+          chmod +x "$SCANNER_BIN"
+          "$SCANNER_BIN" deliver --plan "$PLAN"
