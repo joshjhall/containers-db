@@ -2,7 +2,7 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::pr;
 
@@ -71,8 +71,18 @@ fn append_step_summary(path: &Path, line: &str) -> std::io::Result<()> {
 /// A no-op outside Actions; a write failure only warns, because the
 /// summary is a convenience and must never fail the scan.
 pub(crate) fn report_step_summary(tool_id: &str, outcome: &Outcome) {
-    let path = std::env::var_os("GITHUB_STEP_SUMMARY");
-    if let Err(e) = report_to(path.as_deref().map(Path::new), tool_id, outcome) {
+    report_step_summary_to(step_summary_path().as_deref(), tool_id, outcome);
+}
+
+/// `$GITHUB_STEP_SUMMARY`, if set.
+pub(crate) fn step_summary_path() -> Option<PathBuf> {
+    std::env::var_os("GITHUB_STEP_SUMMARY").map(PathBuf::from)
+}
+
+/// [`report_step_summary`] to an explicit summary path (`None`: no-op),
+/// so a caller under test doesn't write to the real job summary.
+pub(crate) fn report_step_summary_to(path: Option<&Path>, tool_id: &str, outcome: &Outcome) {
+    if let Err(e) = report_to(path, tool_id, outcome) {
         eprintln!("scanner: {tool_id}: could not write step summary: {e}");
     }
 }

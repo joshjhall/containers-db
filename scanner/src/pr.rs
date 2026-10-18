@@ -476,6 +476,28 @@ mod tests {
     }
 
     #[test]
+    fn head_sha_is_the_checked_out_commit() {
+        let dir = temp_repo();
+        let sha = head_sha(dir.path()).unwrap();
+        assert_eq!(sha.len(), 40);
+        assert!(
+            sha.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
+            "got {sha:?}"
+        );
+        assert_eq!(sha, git(dir.path(), &["rev-parse", "HEAD"]).unwrap().trim());
+    }
+
+    #[test]
+    fn head_sha_errors_outside_a_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = head_sha(dir.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").starts_with("git rev-parse HEAD failed:"),
+            "got {err:#}"
+        );
+    }
+
+    #[test]
     fn deliver_rejects_empty_new_versions() {
         // Not a repo and no `gh` stub: reaching `list_open_prs` would fail
         // with a different message, so the text pins the guard itself.

@@ -483,10 +483,16 @@ mod tests {
     /// `tools/foo` with one cataloged version, 0.9.0, whose file is
     /// `template`, and an optional `source_repo`.
     fn write_tool(p: &Path, source_repo: Option<&str>, template: &str) {
-        let tool = p.join("tools").join("foo");
+        write_tool_as(p, "foo", source_repo, template);
+    }
+
+    /// [`write_tool`] for tool `id`.
+    fn write_tool_as(p: &Path, id: &str, source_repo: Option<&str>, template: &str) {
+        let tool = p.join("tools").join(id);
         std::fs::create_dir_all(tool.join("versions")).unwrap();
+        let template = template.replace("\"tool\": \"foo\"", &format!("\"tool\": \"{id}\""));
         let mut index = json!({
-            "schemaVersion": 1, "id": "foo", "kind": "cli",
+            "schemaVersion": 1, "id": id, "kind": "cli",
             "available": [ { "version": "0.9.0" } ],
         });
         if let Some(repo) = source_repo {
@@ -502,8 +508,14 @@ mod tests {
         let kind = Kind::Scan {
             date: NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
         };
+        rendered_plan_for(p, "foo", kind, "1.0.0")
+    }
+
+    /// The plan the staging job would produce for adding `version` to tool
+    /// `id` in `p`'s catalog.
+    fn rendered_plan_for(p: &Path, id: &str, kind: Kind, version: &str) -> Plan {
         let releases = vec![UpstreamVersion {
-            version: "1.0.0".into(),
+            version: version.into(),
             released_at: at(2026, 10, 1),
             channel: "stable".into(),
         }];
@@ -513,11 +525,11 @@ mod tests {
             signals: activity::ActivitySignals::default(),
         };
         let now = at(2026, 10, 17);
-        let files = stage::render_files(p, "foo", &kind, &releases, &activity, now).unwrap();
+        let files = stage::render_files(p, id, &kind, &releases, &activity, now).unwrap();
         Plan {
-            tool_id: "foo".into(),
+            tool_id: id.into(),
             kind,
-            new_versions: vec!["1.0.0".into()],
+            new_versions: vec![version.into()],
             releases,
             now,
             activity,
@@ -584,7 +596,7 @@ mod tests {
             tool_id: "foo".into(),
             error: "boom".into(),
         });
-        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        let err = deliver_refused(p, &manifest);
         assert_eq!(
             err.to_string(),
             format!(
@@ -610,9 +622,253 @@ mod tests {
             });
             m
         };
-        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        let err = deliver_refused(p, &manifest);
         assert_eq!(err.to_string(), "scan failed for: \"ghost\"");
         assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    /// A PR step for a test whose plan must be refused before `gh`.
+    fn no_pr(req: &stage::PrRequest) -> anyhow::Result<pr::Delivery> {
+        panic!("refused plan reached the PR step: {req:?}");
+    }
+
+    /// [`stage::deliver_manifest`] for a manifest whose every entry must be
+    /// refused: filing an issue or reaching the PR step panics instead of
+    /// calling `gh`.
+    fn deliver_refused(p: &Path, manifest: &Manifest) -> anyhow::Error {
+        stage::deliver_manifest_with(
+            p,
+            manifest,
+            |tool, error| panic!("refused entry was reported: {tool}: {error}"),
+            no_pr,
+            None,
+        )
+        .unwrap_err()
+    }
+
+    #[test]
+    fn delivery_files_failures_and_delivers_every_other_plan() {
+        // A staged failure, a plan whose PR step fails, then a backfill
+        // that delivers: each is handled and the loop keeps going.
+        let repo = catalog_repo();
+        let p = repo.path();
+        write_tool_as(p, "bar", None, TEMPLATE);
+        write_tool_as(p, "baz", None, TEMPLATE);
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "bar, baz"]);
+        let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
+        manifest.failures.push(Failure {
+            tool_id: "baz".into(),
+            error: "upstream 502".into(),
+        });
+        manifest.plans.push(rendered_plan(p));
+        let backfill = Kind::Backfill {
+            from: "0.5.0".into(),
+        };
+        manifest
+            .plans
+            .push(rendered_plan_for(p, "bar", backfill, "0.5.0"));
+
+        let mut reports = Vec::new();
+        let mut requests = Vec::new();
+        // Outside the checkout, so the clean-tree check below still holds.
+        let summary_dir = tempfile::tempdir().unwrap();
+        let summary = summary_dir.path().join("summary.md");
+        let err = stage::deliver_manifest_with(
+            p,
+            &manifest,
+            |tool, error| reports.push((tool.to_string(), error.to_string())),
+            |req| {
+                requests.push(req.clone());
+                // What pr::deliver leaves behind either way: a clean base.
+                pr::discard_generated(p, &req.tool_id)?;
+                match req.tool_id.as_str() {
+                    "foo" => anyhow::bail!("gh pr create failed: 502"),
+                    _ => Ok(pr::Delivery::Opened("https://pr/1".into())),
+                }
+            },
+            Some(&summary),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            reports,
+            [
+                ("baz".to_string(), "upstream 502".to_string()),
+                ("foo".to_string(), "gh pr create failed: 502".to_string()),
+            ]
+        );
+        let tools: Vec<&str> = requests.iter().map(|r| r.tool_id.as_str()).collect();
+        assert_eq!(tools, ["foo", "bar"]);
+        let foo = &requests[0];
+        assert_eq!(foo.prefix, "scan/foo/");
+        assert_eq!(foo.branch, "scan/foo/2026-10-17");
+        let bar = &requests[1];
+        assert_eq!(bar.prefix, "backfill/bar/");
+        assert_eq!(bar.branch, "backfill/bar/0.5.0");
+        assert_eq!(bar.title, "feat(bar): backfill versions 0.5.0 to 0.5.0");
+        assert_eq!(bar.new_versions, ["0.5.0"]);
+        // Staged failures are named debug-escaped, delivery failures raw.
+        assert_eq!(err.to_string(), "scan failed for: \"baz\", foo");
+        // Only the delivered plan reaches the job summary.
+        assert_eq!(
+            std::fs::read_to_string(&summary).unwrap(),
+            "- `bar`: opened https://pr/1\n"
+        );
+        assert_eq!(git(p, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn delivery_stops_before_the_next_plan_once_off_base() {
+        // A PR step that fails and leaves the checkout on another branch
+        // must stop the loop: the next plan's branch would be cut from the
+        // wrong commit.
+        let repo = catalog_repo();
+        let p = repo.path();
+        write_tool_as(p, "bar", None, TEMPLATE);
+        write_tool_as(p, "baz", None, TEMPLATE);
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "bar, baz"]);
+        let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
+        manifest.failures.push(Failure {
+            tool_id: "baz".into(),
+            error: "upstream 502".into(),
+        });
+        manifest.plans.push(rendered_plan(p));
+        let backfill = Kind::Backfill {
+            from: "0.5.0".into(),
+        };
+        manifest
+            .plans
+            .push(rendered_plan_for(p, "bar", backfill, "0.5.0"));
+
+        let mut reports = Vec::new();
+        let mut requests = Vec::new();
+        let summary_dir = tempfile::tempdir().unwrap();
+        let summary = summary_dir.path().join("summary.md");
+        let err = stage::deliver_manifest_with(
+            p,
+            &manifest,
+            |tool, error| reports.push((tool.to_string(), error.to_string())),
+            |req| {
+                requests.push(req.tool_id.clone());
+                pr::discard_generated(p, &req.tool_id)?;
+                git(p, &["checkout", "-q", "-b", "stranded"]);
+                anyhow::bail!("return checkout failed")
+            },
+            Some(&summary),
+        )
+        .unwrap_err();
+
+        assert_eq!(requests, ["foo"]);
+        assert_eq!(
+            reports,
+            [
+                ("baz".to_string(), "upstream 502".to_string()),
+                ("foo".to_string(), "return checkout failed".to_string()),
+            ]
+        );
+        assert_eq!(
+            err.to_string(),
+            "aborted before `bar`; earlier failures: [\"baz\", foo]"
+        );
+        assert!(!summary.exists());
+    }
+
+    #[test]
+    fn start_is_a_no_op_without_stage() {
+        // Not a repo: reaching head_sha (or ajv) would fail.
+        let dir = tempfile::tempdir().unwrap();
+        let args = RunArgs {
+            dry_run: false,
+            stage: None,
+        };
+        assert_eq!(stage::start(dir.path(), &args).unwrap(), None);
+    }
+
+    /// Run the `#[ignore]`d test `name` in a child of this test binary with
+    /// an empty environment and `PATH` set to an empty directory, so no
+    /// `npx`/`gh` and no token. `PATH` is set, not just cleared: with it
+    /// unset, libc falls back to a default search path (`/bin:/usr/bin`)
+    /// that may well hold them. Asserts that exactly that one test ran and
+    /// passed.
+    fn run_without_path(name: &str) {
+        let empty = tempfile::tempdir().unwrap();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--ignored", "--test-threads=1"])
+            .env_clear()
+            .env("PATH", empty.path())
+            .env(CHILD_MARKER, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "child {name}: {out:?}"
+        );
+    }
+
+    /// Set only in a [`run_without_path`] child.
+    const CHILD_MARKER: &str = "SCANNER_TEST_NO_PATH_CHILD";
+
+    fn in_child() -> bool {
+        std::env::var_os(CHILD_MARKER).is_some()
+    }
+
+    #[test]
+    fn stage_refuses_to_start_without_ajv() {
+        run_without_path("tests::no_path_stage_start_needs_ajv");
+    }
+
+    #[test]
+    #[ignore = "run by stage_refuses_to_start_without_ajv"]
+    fn no_path_stage_start_needs_ajv() {
+        if !in_child() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let args = RunArgs {
+            dry_run: false,
+            stage: Some(dir.path().join("plan.json")),
+        };
+        let err = stage::start(dir.path(), &args).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "--stage needs `npx ajv` (ajv-cli + ajv-formats) to validate the plans it writes"
+        );
+    }
+
+    #[test]
+    fn the_schema_gate_is_mandatory_only_when_required() {
+        run_without_path("tests::no_path_write_and_gate_schemas");
+    }
+
+    #[test]
+    #[ignore = "run by the_schema_gate_is_mandatory_only_when_required"]
+    fn no_path_write_and_gate_schemas() {
+        if !in_child() {
+            return;
+        }
+        // No git either: a plain catalog dir, built per case.
+        let cases = [
+            (Schemas::Skip, true),
+            (Schemas::IfAvailable, true),
+            (Schemas::Require, false),
+        ];
+        for (schemas, ok) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let p = dir.path();
+            write_tool(p, None, TEMPLATE);
+            let result = stage::write_and_gate(p, &rendered_plan(p), schemas);
+            match (ok, result) {
+                (true, Ok(link)) => assert_eq!(link, None),
+                (false, Err(e)) => assert!(
+                    format!("{e:#}").starts_with("running `npx ajv validate"),
+                    "{schemas:?}: got {e:#}"
+                ),
+                (_, r) => panic!("{schemas:?}: got {r:?}"),
+            }
+        }
     }
 
     #[test]
@@ -650,7 +906,7 @@ mod tests {
             .replace("https://x/0.9.0", "https://evil.test/x");
         assert_ne!(swapped, version.contents, "the swap must change the file");
         version.contents = swapped;
-        let err = stage::deliver_plan(p, &plan).unwrap_err();
+        let err = stage::deliver_plan(p, &plan, no_pr).unwrap_err();
         assert_eq!(
             err.to_string(),
             "plan for `foo`: staged files differ from what this checkout renders for its releases"
@@ -670,7 +926,7 @@ mod tests {
             plan.tool_id = id.into();
             manifest.plans.push(plan);
         }
-        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        let err = deliver_refused(p, &manifest);
         assert_eq!(err.to_string(), "scan failed for: \"ghost\", \"@everyone\"");
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
@@ -684,7 +940,7 @@ mod tests {
         std::fs::write(p.join("tools/foo/versions/1.0.0.json"), original).unwrap();
         git(p, &["add", "."]);
         git(p, &["commit", "-q", "-m", "catalog 1.0.0"]);
-        let err = stage::deliver_plan(p, &plan).unwrap_err();
+        let err = stage::deliver_plan(p, &plan, no_pr).unwrap_err();
         assert_eq!(
             err.to_string(),
             "plan for `foo`: refusing to overwrite already-cataloged version(s) [\"1.0.0\"]"
@@ -702,7 +958,7 @@ mod tests {
         let p = repo.path();
         let mut plan = rendered_plan(p);
         plan.files[0].path = ".github/workflows/scan.yml".into();
-        let err = stage::deliver_plan(p, &plan).unwrap_err();
+        let err = stage::deliver_plan(p, &plan, no_pr).unwrap_err();
         assert!(
             err.to_string()
                 .starts_with("plan for `foo`: refusing to write"),
@@ -719,7 +975,7 @@ mod tests {
         let p = repo.path();
         write_tool(p, None, RULE_BREAKING_TEMPLATE);
         git(p, &["commit", "-qam", "break the template"]);
-        let err = stage::deliver_plan(p, &rendered_plan(p)).unwrap_err();
+        let err = stage::deliver_plan(p, &rendered_plan(p), no_pr).unwrap_err();
         assert!(format!("{err:#}").contains("ghost"), "got {err:#}");
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
