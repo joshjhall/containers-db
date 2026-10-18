@@ -1,7 +1,6 @@
-# npm artifacts from local schema validation runs
+# npm install tree for the ajv toolchain (package.json + package-lock.json
+# are committed; CI installs from them with `npm ci`)
 node_modules/
-package-lock.json
-package.json
 
 # ajv cache
 .ajv-cache/

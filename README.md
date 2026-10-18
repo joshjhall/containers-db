@@ -210,16 +210,19 @@ The CI workflow (`.github/workflows/validate.yml`) runs the same commands.
 To reproduce locally:
 
 ```bash
+# Install the pinned ajv toolchain from package-lock.json (same as CI)
+npm ci --ignore-scripts
+
 # Compile the schemas (catches schema-internal mistakes)
-npx --yes ajv-cli@5 compile --spec=draft2020 -c ajv-formats \
+npx --no-install ajv compile --spec=draft2020 -c ajv-formats \
   -s schema/tool.schema.json
-npx --yes ajv-cli@5 compile --spec=draft2020 -c ajv-formats \
+npx --no-install ajv compile --spec=draft2020 -c ajv-formats \
   -s schema/version.schema.json
 
 # Validate fixtures
-npx --yes ajv-cli@5 validate --spec=draft2020 -c ajv-formats \
+npx --no-install ajv validate --spec=draft2020 -c ajv-formats \
   -s schema/tool.schema.json -d fixtures/sample-tool/index.json
-npx --yes ajv-cli@5 validate --spec=draft2020 -c ajv-formats \
+npx --no-install ajv validate --spec=draft2020 -c ajv-formats \
   -s schema/version.schema.json -d "fixtures/sample-tool/versions/*.json"
 ```
 

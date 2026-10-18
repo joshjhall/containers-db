@@ -25,7 +25,10 @@ jobs:
           node-version: "20"
 
       - name: Install ajv-cli
-        run: npm install --no-save ajv-cli@5.0.0 ajv-formats@3.0.1
+        # Exact install from the committed package-lock.json, which pins
+        # ajv-cli, ajv-formats, and every transitive dependency. They are
+        # plain JS and need no install scripts.
+        run: npm ci --ignore-scripts
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1

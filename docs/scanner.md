@@ -228,8 +228,9 @@ the secret is (#416):
    node runs here, so the Rust cache this job saves was only ever written
    by cargo.
 2. **`stage` (no secret).** Downloads the binary, installs ajv-cli
-   (`--ignore-scripts`), and runs `scanner due|tool|backfill --stage
-   <plan.json>`. It has no Rust toolchain or cache. For each tool the
+   from the committed lockfile (`npm ci --ignore-scripts`), and runs
+   `scanner due|tool|backfill --stage <plan.json>`. It has no Rust
+   toolchain or cache. For each tool the
    scanner writes the new files, runs the in-process rules **and** ajv
    (required in this mode), records the files, versions, and activity
    block in the plan, and restores the tree. A tool that fails is

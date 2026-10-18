@@ -1,0 +1,9 @@
+{
+  "name": "containers-db-ci",
+  "private": true,
+  "description": "Pins the ajv toolchain that validate.yml and scan.yml install with npm ci.",
+  "devDependencies": {
+    "ajv-cli": "5.0.0",
+    "ajv-formats": "3.0.1"
+  }
+}
