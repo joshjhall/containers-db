@@ -14,9 +14,9 @@
 mod deliver;
 mod plan;
 
-#[cfg(test)]
-pub(crate) use deliver::{PrRequest, deliver_manifest_with, deliver_plan};
 pub(crate) use deliver::{
     Schemas, deliver_checked, deliver_manifest, finish, render_files, start, write_and_gate,
 };
+#[cfg(test)]
+pub(crate) use deliver::{deliver_manifest_with, deliver_plan};
 pub use plan::{Activity, Failure, Kind, Manifest, Plan, StagedFile};

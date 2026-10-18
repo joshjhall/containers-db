@@ -11,7 +11,7 @@ use super::plan::{
     Activity, Kind, Manifest, Plan, StagedFile, check_additive, check_known_tool, check_rerender,
 };
 use crate::adapter::{ToolIndex, UpstreamVersion};
-use crate::pr::Delivery;
+use crate::pr::{Delivery, PrRequest};
 use crate::{Outcome, RunArgs, generate, outcome, pr, validate, which_ajv};
 
 /// Which schema gate [`write_and_gate`] runs after the in-process rules.
@@ -196,7 +196,7 @@ pub(crate) fn deliver_manifest(
         repo_root,
         manifest,
         |tool_id, error| crate::report_failure(repo_root, tool_id, error, now),
-        |req| req.deliver(repo_root),
+        |req| pr::deliver(repo_root, req),
         outcome::step_summary_path().as_deref(),
     )
 }
@@ -264,7 +264,7 @@ pub(crate) fn deliver_manifest_with(
 /// Deliver one plan from the token job: check it, write its files, re-run
 /// the in-process rules, then open, update, or skip its PR. ajv is not
 /// re-run here — the staging job already required it.
-/// `deliver` is the PR step: [`PrRequest::deliver`] outside tests.
+/// `deliver` is the PR step: [`pr::deliver`] outside tests.
 pub(crate) fn deliver_plan(
     repo_root: &Path,
     plan: &Plan,
@@ -305,7 +305,7 @@ pub(crate) fn deliver_checked(
     plan: &Plan,
     source_repo: Option<&str>,
 ) -> Result<Outcome> {
-    deliver_checked_with(plan, source_repo, |req| req.deliver(repo_root))
+    deliver_checked_with(plan, source_repo, |req| pr::deliver(repo_root, req))
 }
 
 fn deliver_checked_with(
@@ -322,31 +322,6 @@ fn deliver_checked_with(
         body: plan.body(source_repo),
     })?;
     Ok(Outcome::delivered(delivery, plan.new_versions.clone()))
-}
-
-/// What a plan hands [`pr::deliver`]: its arguments besides the checkout.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PrRequest {
-    pub tool_id: String,
-    pub prefix: String,
-    pub branch: String,
-    pub new_versions: Vec<String>,
-    pub title: String,
-    pub body: String,
-}
-
-impl PrRequest {
-    fn deliver(&self, repo_root: &Path) -> Result<Delivery> {
-        pr::deliver(
-            repo_root,
-            &self.tool_id,
-            &self.prefix,
-            &self.branch,
-            &self.new_versions,
-            &self.title,
-            &self.body,
-        )
-    }
 }
 
 #[cfg(test)]
