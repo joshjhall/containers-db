@@ -1,8 +1,24 @@
 # Keeps the SHA-pinned GitHub Actions in .github/workflows/ current. A SHA pin
 # is immutable, which is the point, but it goes stale silently with no updater.
 # Dependabot rewrites the pin and its trailing `# vN` comment together.
+#
+# The npm entry keeps package-lock.json (the ajv toolchain both workflows
+# install with `npm ci`) current. Version updates cover direct dependencies
+# only by default; `dependency-type: all` extends them to the transitive
+# entries, which are what the lockfile exists to pin.
 version: 2
 updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: all
+    groups:
+      npm:
+        patterns:
+          - "*"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

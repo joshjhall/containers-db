@@ -127,10 +127,11 @@ jobs:
           node-version: "20"
 
       - name: Install ajv-cli
-        # Mirror the version pins from validate.yml so the scanner's
-        # ajv gate matches the PR validation gate exactly. ajv-cli and
-        # ajv-formats are plain JS and need no install scripts.
-        run: npm install --no-save --ignore-scripts ajv-cli@5.0.0 ajv-formats@3.0.1
+        # Same committed package-lock.json as validate.yml, so the
+        # scanner's ajv gate matches the PR validation gate exactly,
+        # transitive dependencies included. ajv-cli and ajv-formats are
+        # plain JS and need no install scripts.
+        run: npm ci --ignore-scripts
 
       - name: Run scanner
         # Inputs are piped via env to avoid GitHub Actions expression
