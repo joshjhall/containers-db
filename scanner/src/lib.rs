@@ -596,7 +596,7 @@ mod tests {
             tool_id: "foo".into(),
             error: "boom".into(),
         });
-        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        let err = deliver_refused(p, &manifest);
         assert_eq!(
             err.to_string(),
             format!(
@@ -622,7 +622,7 @@ mod tests {
             });
             m
         };
-        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        let err = deliver_refused(p, &manifest);
         assert_eq!(err.to_string(), "scan failed for: \"ghost\"");
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
@@ -630,6 +630,19 @@ mod tests {
     /// A PR step for a test whose plan must be refused before `gh`.
     fn no_pr(req: &stage::PrRequest) -> anyhow::Result<pr::Delivery> {
         panic!("refused plan reached the PR step: {req:?}");
+    }
+
+    /// [`stage::deliver_manifest`] for a manifest whose every entry must be
+    /// refused: filing an issue or reaching the PR step panics instead of
+    /// calling `gh`.
+    fn deliver_refused(p: &Path, manifest: &Manifest) -> anyhow::Error {
+        stage::deliver_manifest_with(
+            p,
+            manifest,
+            |tool, error| panic!("refused entry was reported: {tool}: {error}"),
+            no_pr,
+        )
+        .unwrap_err()
     }
 
     #[test]
@@ -833,7 +846,7 @@ mod tests {
             plan.tool_id = id.into();
             manifest.plans.push(plan);
         }
-        let err = stage::deliver_manifest(p, &manifest, at(2026, 10, 17)).unwrap_err();
+        let err = deliver_refused(p, &manifest);
         assert_eq!(err.to_string(), "scan failed for: \"ghost\", \"@everyone\"");
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
