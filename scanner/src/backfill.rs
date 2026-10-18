@@ -341,6 +341,85 @@ mod tests {
         assert!(err.starts_with(&prefix), "got {err:?}");
     }
 
+    /// A `1.93.0` version file the semantic rules accept. The version also
+    /// sits whole in `invoke.args` (the deep rewrite's target) and inside a
+    /// URL (a substring, which the rewrite leaves alone).
+    const VALID_TEMPLATE: &str = r#"{
+        "schemaVersion": 1, "tool": "demo", "version": "1.93.0",
+        "install_methods": [
+            { "name": "x",
+              "verification": { "tier": 4, "algorithm": "sha256", "tofu": true },
+              "source_url_template": "https://x/1.93.0/demo.tar.gz",
+              "invoke": { "args": ["--toolchain", "1.93.0"] } }
+        ]
+    }"#;
+
+    fn read_json(path: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_backfill_plan_writes_its_version_files_and_index() {
+        // The write half of a non-dry backfill: the same write_and_gate that
+        // apply's deliver mode runs before pr::deliver, minus git and gh.
+        let tmp = fixture(&["1.93.0"], &[("1.93.0", VALID_TEMPLATE)]);
+        let root = tmp.path();
+        let before = snapshot(root);
+        let upstream = vec![
+            up("1.85.0", 2025, 2, 20, "stable"),
+            up("1.82.0", 2024, 10, 17, "stable"),
+            up("1.90.0-beta.1", 2025, 8, 1, "beta"),
+            up("1.94.0", 2026, 3, 5, "stable"),
+        ];
+        let Scanned::Plan(plan) = run(root, "1.82.0", upstream).await.unwrap() else {
+            panic!("expected a plan");
+        };
+        stage::write_and_gate(root, &plan, stage::Schemas::Skip).unwrap();
+
+        let tool = root.join("tools").join("demo");
+        let versions = tool.join("versions");
+        for (v, released) in [("1.82.0", "2024-10-17"), ("1.85.0", "2025-02-20")] {
+            let got = read_json(&versions.join(format!("{v}.json")));
+            assert_eq!(got["version"], v);
+            assert_eq!(got["tool"], "demo");
+            assert_eq!(got["released"], released);
+            assert_eq!(got["tested"], serde_json::json!([]));
+            assert_eq!(got["metadata"]["added_at"], "2026-06-01T00:00:00Z");
+            let method = &got["install_methods"][0];
+            assert_eq!(
+                method["invoke"]["args"],
+                serde_json::json!(["--toolchain", v])
+            );
+            assert_eq!(
+                method["source_url_template"],
+                "https://x/1.93.0/demo.tar.gz"
+            );
+        }
+        let index = read_json(&tool.join("index.json"));
+        let available: Vec<&str> = index["available"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["version"].as_str().unwrap())
+            .collect();
+        assert_eq!(available, vec!["1.82.0", "1.85.0", "1.93.0"]);
+
+        // Exactly the two new version files appear (none for the beta or
+        // 1.94.0) and, of the existing files, only the index changes.
+        let after = snapshot(root);
+        let added: Vec<&PathBuf> = after.keys().filter(|p| !before.contains_key(*p)).collect();
+        assert_eq!(
+            added,
+            vec![&versions.join("1.82.0.json"), &versions.join("1.85.0.json")]
+        );
+        let changed: Vec<&PathBuf> = before
+            .iter()
+            .filter(|(p, bytes)| after.get(*p) != Some(*bytes))
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(changed, vec![&tool.join("index.json")]);
+    }
+
     fn up(version: &str, y: i32, m: u32, d: u32, channel: &str) -> UpstreamVersion {
         UpstreamVersion {
             version: version.into(),
