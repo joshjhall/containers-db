@@ -125,6 +125,14 @@ jobs:
       - name: Semantic validation (full catalog walk)
         run: cargo run --release -p db-validator --bin validate-catalog
 
+      - name: Lint scanner sha256 gate
+        run: shellcheck bin/verify-scanner.sh tests/verify-scanner.test.sh
+
+      - name: Test scanner sha256 gate reject paths
+        # scan.yml's deliver job runs this gate before the scanner gets
+        # SCANNER_TOKEN; real runs only ever take the matching path (#436).
+        run: tests/verify-scanner.test.sh
+
       - name: Negative test — broken fixtures must each fail validation
         run: |
           set -e
