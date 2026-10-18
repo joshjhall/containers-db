@@ -20,6 +20,7 @@ use serde_json::Value;
 
 use crate::activity::{ActivitySignals, Score};
 use crate::adapter::{ToolIndex, UpstreamVersion};
+use crate::pr::Delivery;
 use crate::{Outcome, RunArgs, generate, outcome, pr, validate, which_ajv};
 
 /// Manifest format version; [`Manifest::read`] rejects any other.
@@ -294,8 +295,12 @@ impl Plan {
             !self.new_versions.is_empty(),
             "plan for `{id}`: no new versions"
         );
-        for v in &self.new_versions {
+        for (i, v) in self.new_versions.iter().enumerate() {
             check_token(id, "version", v)?;
+            anyhow::ensure!(
+                !self.new_versions[..i].contains(v),
+                "plan for `{id}`: version {v:?} is listed twice"
+            );
         }
         let released: Vec<&str> = self.releases.iter().map(|r| r.version.as_str()).collect();
         let announced: Vec<&str> = self.new_versions.iter().map(String::as_str).collect();
@@ -515,6 +520,23 @@ pub(crate) fn deliver_manifest(
     manifest: &Manifest,
     now: DateTime<Utc>,
 ) -> anyhow::Result<()> {
+    deliver_manifest_with(
+        repo_root,
+        manifest,
+        |tool_id, error| crate::report_failure(repo_root, tool_id, error, now),
+        |req| req.deliver(repo_root),
+    )
+}
+
+/// [`deliver_manifest`] with its two `gh` steps — filing a tracking issue
+/// and opening/updating a PR — injected, so the loop is testable without
+/// `gh`.
+pub(crate) fn deliver_manifest_with(
+    repo_root: &Path,
+    manifest: &Manifest,
+    mut report: impl FnMut(&str, &str),
+    mut deliver: impl FnMut(&PrRequest) -> Result<Delivery>,
+) -> anyhow::Result<()> {
     let sha = pr::head_sha(repo_root)?;
     anyhow::ensure!(
         sha == manifest.base_sha,
@@ -533,7 +555,7 @@ pub(crate) fn deliver_manifest(
         match f.check(repo_root) {
             Ok(()) => {
                 eprintln!("scanner: {} FAILED while staging: {:?}", f.tool_id, f.error);
-                crate::report_failure(repo_root, &f.tool_id, &f.error, now);
+                report(&f.tool_id, &f.error);
             }
             Err(e) => eprintln!("scanner: refusing staged failure for {tool}: {e:#}"),
         }
@@ -549,7 +571,7 @@ pub(crate) fn deliver_manifest(
             continue;
         }
         base.guard(repo_root, &plan.tool_id, &failed)?;
-        match deliver_plan(repo_root, plan) {
+        match deliver_plan(repo_root, plan, &mut deliver) {
             Ok(outcome) => {
                 println!("scanner: {}: {outcome:?}", plan.tool_id);
                 outcome::report_step_summary(&plan.tool_id, &outcome);
@@ -557,7 +579,7 @@ pub(crate) fn deliver_manifest(
             Err(e) => {
                 let error = format!("{e:#}");
                 eprintln!("scanner: {} FAILED: {error:?}", plan.tool_id);
-                crate::report_failure(repo_root, &plan.tool_id, &error, now);
+                report(&plan.tool_id, &error);
                 failed.push(plan.tool_id.clone());
             }
         }
@@ -568,7 +590,12 @@ pub(crate) fn deliver_manifest(
 /// Deliver one plan from the token job: check it, write its files, re-run
 /// the in-process rules, then open, update, or skip its PR. ajv is not
 /// re-run here — the staging job already required it.
-pub(crate) fn deliver_plan(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
+/// `deliver` is the PR step: [`PrRequest::deliver`] outside tests.
+pub(crate) fn deliver_plan(
+    repo_root: &Path,
+    plan: &Plan,
+    deliver: impl FnOnce(&PrRequest) -> Result<Delivery>,
+) -> Result<Outcome> {
     plan.check()?;
     check_additive(repo_root, plan)?;
     check_rerender(repo_root, plan)?;
@@ -584,7 +611,7 @@ pub(crate) fn deliver_plan(repo_root: &Path, plan: &Plan) -> Result<Outcome> {
             return Err(e);
         }
     };
-    deliver_checked(repo_root, plan, source_repo.as_deref())
+    deliver_checked_with(plan, source_repo.as_deref(), deliver)
 }
 
 /// The tool's `source_repo` as the checkout has it. `None` for a tool new
@@ -604,16 +631,48 @@ pub(crate) fn deliver_checked(
     plan: &Plan,
     source_repo: Option<&str>,
 ) -> Result<Outcome> {
-    let delivery = pr::deliver(
-        repo_root,
-        &plan.tool_id,
-        &plan.prefix(),
-        &plan.branch(),
-        &plan.new_versions,
-        &plan.title(),
-        &plan.body(source_repo),
-    )?;
+    deliver_checked_with(plan, source_repo, |req| req.deliver(repo_root))
+}
+
+fn deliver_checked_with(
+    plan: &Plan,
+    source_repo: Option<&str>,
+    deliver: impl FnOnce(&PrRequest) -> Result<Delivery>,
+) -> Result<Outcome> {
+    let delivery = deliver(&PrRequest {
+        tool_id: plan.tool_id.clone(),
+        prefix: plan.prefix(),
+        branch: plan.branch(),
+        new_versions: plan.new_versions.clone(),
+        title: plan.title(),
+        body: plan.body(source_repo),
+    })?;
     Ok(Outcome::delivered(delivery, plan.new_versions.clone()))
+}
+
+/// What a plan hands [`pr::deliver`]: its arguments besides the checkout.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PrRequest {
+    pub tool_id: String,
+    pub prefix: String,
+    pub branch: String,
+    pub new_versions: Vec<String>,
+    pub title: String,
+    pub body: String,
+}
+
+impl PrRequest {
+    fn deliver(&self, repo_root: &Path) -> Result<Delivery> {
+        pr::deliver(
+            repo_root,
+            &self.tool_id,
+            &self.prefix,
+            &self.branch,
+            &self.new_versions,
+            &self.title,
+            &self.body,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -694,6 +753,88 @@ mod tests {
         p.check().unwrap();
         assert_eq!(p.branch(), "backfill/rust/1.82.0");
         assert_eq!(p.title(), "feat(rust): backfill versions 1.82.0 to 1.96.0");
+    }
+
+    #[test]
+    fn check_rejects_a_version_listed_twice() {
+        // The file is listed twice too, so the files check alone (sorted
+        // versions == sorted new_versions) would accept it.
+        let mut p = plan();
+        p.new_versions.push("1.96.0".into());
+        p.releases.push(p.releases[0].clone());
+        p.files.push(p.files[1].clone());
+        assert_eq!(
+            check_err(&p),
+            "plan for `rust`: version \"1.96.0\" is listed twice"
+        );
+    }
+
+    #[test]
+    fn check_caps_a_token_at_64_chars() {
+        let mut p = plan();
+        let floor = |n: usize| Kind::Backfill {
+            from: "1".repeat(n),
+        };
+        p.kind = floor(64);
+        p.check().unwrap();
+        p.kind = floor(65);
+        assert_eq!(
+            check_err(&p),
+            format!(
+                "plan for `rust`: backfill floor {:?} is not a plain version",
+                "1".repeat(65)
+            )
+        );
+    }
+
+    #[test]
+    fn failure_check_takes_exactly_max_error_chars() {
+        // Counted in chars, not bytes: `é` is two bytes.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("tools/rust")).unwrap();
+        std::fs::write(tmp.path().join("tools/rust/index.json"), "{}").unwrap();
+        for c in ["x", "é"] {
+            let f = Failure {
+                tool_id: "rust".into(),
+                error: c.repeat(MAX_ERROR_CHARS),
+            };
+            f.check(tmp.path()).unwrap();
+        }
+    }
+
+    #[test]
+    fn finish_writes_a_manifest_that_reads_back() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("plan.json");
+        let mut manifest = Manifest::new("a".repeat(40));
+        manifest.plans.push(plan());
+        manifest.failures.push(Failure {
+            tool_id: "gcc".into(),
+            error: "boom".into(),
+        });
+        let args = RunArgs {
+            dry_run: false,
+            stage: Some(path.clone()),
+        };
+        finish(&args, Some(manifest.clone())).unwrap();
+        assert_eq!(Manifest::read(&path).unwrap(), manifest);
+    }
+
+    #[test]
+    fn finish_writes_only_a_started_manifest() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("plan.json");
+        let staged = RunArgs {
+            dry_run: false,
+            stage: Some(path.clone()),
+        };
+        finish(&staged, None).unwrap();
+        assert!(!path.exists());
+        let unstaged = RunArgs {
+            dry_run: false,
+            stage: None,
+        };
+        finish(&unstaged, Some(Manifest::new("a".repeat(40)))).unwrap();
     }
 
     #[test]
