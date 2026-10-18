@@ -641,6 +641,7 @@ mod tests {
             manifest,
             |tool, error| panic!("refused entry was reported: {tool}: {error}"),
             no_pr,
+            None,
         )
         .unwrap_err()
     }
@@ -670,6 +671,9 @@ mod tests {
 
         let mut reports = Vec::new();
         let mut requests = Vec::new();
+        // Outside the checkout, so the clean-tree check below still holds.
+        let summary_dir = tempfile::tempdir().unwrap();
+        let summary = summary_dir.path().join("summary.md");
         let err = stage::deliver_manifest_with(
             p,
             &manifest,
@@ -683,6 +687,7 @@ mod tests {
                     _ => Ok(pr::Delivery::Opened("https://pr/1".into())),
                 }
             },
+            Some(&summary),
         )
         .unwrap_err();
 
@@ -695,6 +700,9 @@ mod tests {
         );
         let tools: Vec<&str> = requests.iter().map(|r| r.tool_id.as_str()).collect();
         assert_eq!(tools, ["foo", "bar"]);
+        let foo = &requests[0];
+        assert_eq!(foo.prefix, "scan/foo/");
+        assert_eq!(foo.branch, "scan/foo/2026-10-17");
         let bar = &requests[1];
         assert_eq!(bar.prefix, "backfill/bar/");
         assert_eq!(bar.branch, "backfill/bar/0.5.0");
@@ -702,6 +710,11 @@ mod tests {
         assert_eq!(bar.new_versions, ["0.5.0"]);
         // Staged failures are named debug-escaped, delivery failures raw.
         assert_eq!(err.to_string(), "scan failed for: \"baz\", foo");
+        // Only the delivered plan reaches the job summary.
+        assert_eq!(
+            std::fs::read_to_string(&summary).unwrap(),
+            "- `bar`: opened https://pr/1\n"
+        );
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
 
@@ -780,7 +793,12 @@ mod tests {
             return;
         }
         // No git either: a plain catalog dir, built per case.
-        for (schemas, ok) in [(Schemas::Skip, true), (Schemas::Require, false)] {
+        let cases = [
+            (Schemas::Skip, true),
+            (Schemas::IfAvailable, true),
+            (Schemas::Require, false),
+        ];
+        for (schemas, ok) in cases {
             let dir = tempfile::tempdir().unwrap();
             let p = dir.path();
             write_tool(p, None, TEMPLATE);

@@ -525,17 +525,19 @@ pub(crate) fn deliver_manifest(
         manifest,
         |tool_id, error| crate::report_failure(repo_root, tool_id, error, now),
         |req| req.deliver(repo_root),
+        outcome::step_summary_path().as_deref(),
     )
 }
 
 /// [`deliver_manifest`] with its two `gh` steps — filing a tracking issue
-/// and opening/updating a PR — injected, so the loop is testable without
-/// `gh`.
+/// and opening/updating a PR — and its step-summary path injected, so the
+/// loop is testable without `gh` or the real job summary.
 pub(crate) fn deliver_manifest_with(
     repo_root: &Path,
     manifest: &Manifest,
     mut report: impl FnMut(&str, &str),
     mut deliver: impl FnMut(&PrRequest) -> Result<Delivery>,
+    summary: Option<&Path>,
 ) -> anyhow::Result<()> {
     let sha = pr::head_sha(repo_root)?;
     anyhow::ensure!(
@@ -574,7 +576,7 @@ pub(crate) fn deliver_manifest_with(
         match deliver_plan(repo_root, plan, &mut deliver) {
             Ok(outcome) => {
                 println!("scanner: {}: {outcome:?}", plan.tool_id);
-                outcome::report_step_summary(&plan.tool_id, &outcome);
+                outcome::report_step_summary_to(summary, &plan.tool_id, &outcome);
             }
             Err(e) => {
                 let error = format!("{e:#}");
