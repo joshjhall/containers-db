@@ -261,7 +261,9 @@ jobs:
           # Run only the binary `build` hashed (#427). An empty or
           # malformed hash means the job output is miswired, not a match.
           if ! [[ "$SCANNER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-            echo "::error::build did not publish a valid scanner sha256 (got '$SCANNER_SHA256')." >&2
+            # The value itself is not echoed: it is not a hash, so it could
+            # carry a newline and start a workflow command.
+            echo "::error::build did not publish a valid scanner sha256." >&2
             exit 1
           fi
           if ! printf '%s  %s\n' "$SCANNER_SHA256" "$SCANNER_BIN" \
