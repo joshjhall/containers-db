@@ -873,6 +873,34 @@ mod tests {
     }
 
     #[test]
+    fn which_ajv_rejects_npx_that_always_fails() {
+        // A stub `npx` that runs but fails for every argument, the way
+        // `npx --no-install` does when ajv-cli isn't installed. Pins the
+        // `status.success()` arm; a missing `npx` only reaches `unwrap_or`.
+        let dir = tempfile::tempdir().unwrap();
+        let npx = dir.path().join("npx");
+        std::fs::write(
+            &npx,
+            "#!/bin/sh\n\
+             echo \"npx: command not found: ajv\" >&2\n\
+             exit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&npx, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        run_with_path("tests::stub_path_which_ajv_fails", dir.path());
+    }
+
+    #[test]
+    #[ignore = "run by which_ajv_rejects_npx_that_always_fails"]
+    fn stub_path_which_ajv_fails() {
+        if !in_child() {
+            return;
+        }
+        assert!(!which_ajv());
+    }
+
+    #[test]
     fn the_schema_gate_is_mandatory_only_when_required() {
         run_without_path("tests::no_path_write_and_gate_schemas");
     }
