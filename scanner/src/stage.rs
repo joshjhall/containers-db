@@ -823,7 +823,9 @@ mod tests {
     }
 
     #[test]
-    fn finish_writes_only_a_started_manifest() {
+    fn finish_writes_nothing_without_a_started_manifest() {
+        // `--stage` given but staging never started (e.g. nothing due).
+        // The no-`--stage` case has no path to observe, so it isn't pinned.
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("plan.json");
         let staged = RunArgs {
@@ -831,12 +833,7 @@ mod tests {
             stage: Some(path.clone()),
         };
         finish(&staged, None).unwrap();
-        assert!(!path.exists());
-        let unstaged = RunArgs {
-            dry_run: false,
-            stage: None,
-        };
-        finish(&unstaged, Some(Manifest::new("a".repeat(40)))).unwrap();
+        assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
     }
 
     #[test]
