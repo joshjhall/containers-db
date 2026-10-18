@@ -717,12 +717,17 @@ mod tests {
     }
 
     /// Run the `#[ignore]`d test `name` in a child of this test binary with
-    /// an empty environment: no `PATH`, so no `npx`/`gh`, and no token.
-    /// Asserts that exactly that one test ran and passed.
+    /// an empty environment and `PATH` set to an empty directory, so no
+    /// `npx`/`gh` and no token. `PATH` is set, not just cleared: with it
+    /// unset, libc falls back to a default search path (`/bin:/usr/bin`)
+    /// that may well hold them. Asserts that exactly that one test ran and
+    /// passed.
     fn run_without_path(name: &str) {
+        let empty = tempfile::tempdir().unwrap();
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--ignored", "--test-threads=1"])
             .env_clear()
+            .env("PATH", empty.path())
             .env(CHILD_MARKER, "1")
             .output()
             .unwrap();
