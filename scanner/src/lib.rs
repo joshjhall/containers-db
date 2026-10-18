@@ -719,6 +719,63 @@ mod tests {
     }
 
     #[test]
+    fn delivery_stops_before_the_next_plan_once_off_base() {
+        // A PR step that fails and leaves the checkout on another branch
+        // must stop the loop: the next plan's branch would be cut from the
+        // wrong commit.
+        let repo = catalog_repo();
+        let p = repo.path();
+        write_tool_as(p, "bar", None, TEMPLATE);
+        write_tool_as(p, "baz", None, TEMPLATE);
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "bar, baz"]);
+        let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
+        manifest.failures.push(Failure {
+            tool_id: "baz".into(),
+            error: "upstream 502".into(),
+        });
+        manifest.plans.push(rendered_plan(p));
+        let backfill = Kind::Backfill {
+            from: "0.5.0".into(),
+        };
+        manifest
+            .plans
+            .push(rendered_plan_for(p, "bar", backfill, "0.5.0"));
+
+        let mut reports = Vec::new();
+        let mut requests = Vec::new();
+        let summary_dir = tempfile::tempdir().unwrap();
+        let summary = summary_dir.path().join("summary.md");
+        let err = stage::deliver_manifest_with(
+            p,
+            &manifest,
+            |tool, error| reports.push((tool.to_string(), error.to_string())),
+            |req| {
+                requests.push(req.tool_id.clone());
+                pr::discard_generated(p, &req.tool_id)?;
+                git(p, &["checkout", "-q", "-b", "stranded"]);
+                anyhow::bail!("return checkout failed")
+            },
+            Some(&summary),
+        )
+        .unwrap_err();
+
+        assert_eq!(requests, ["foo"]);
+        assert_eq!(
+            reports,
+            [
+                ("baz".to_string(), "upstream 502".to_string()),
+                ("foo".to_string(), "return checkout failed".to_string()),
+            ]
+        );
+        assert_eq!(
+            err.to_string(),
+            "aborted before `bar`; earlier failures: [\"baz\", foo]"
+        );
+        assert!(!summary.exists());
+    }
+
+    #[test]
     fn start_is_a_no_op_without_stage() {
         // Not a repo: reaching head_sha (or ajv) would fail.
         let dir = tempfile::tempdir().unwrap();
