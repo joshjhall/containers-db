@@ -136,6 +136,17 @@ pub enum Delivery {
     Skipped(u64),
 }
 
+/// What a plan hands [`deliver`]: its arguments besides the checkout.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrRequest {
+    pub tool_id: String,
+    pub prefix: String,
+    pub branch: String,
+    pub new_versions: Vec<String>,
+    pub title: String,
+    pub body: String,
+}
+
 /// Open, update, or skip the PR for freshly generated `tools/<tool_id>/`
 /// files, so a tool never has more than one open PR per `prefix` (see
 /// [`crate::dedup`]). `branch` is used only when a new PR is opened.
@@ -143,15 +154,16 @@ pub enum Delivery {
 /// Errors on an empty `new_versions` before touching `gh` or git: callers
 /// return `NoChange` first, and [`dedup::decide`] would otherwise read an
 /// empty list as vacuously covered by any open PR (#407).
-pub fn deliver(
-    repo_root: &Path,
-    tool_id: &str,
-    prefix: &str,
-    branch: &str,
-    new_versions: &[String],
-    title: &str,
-    body: &str,
-) -> Result<Delivery> {
+pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
+    // Exhaustive: a new or renamed field fails to compile here (#433).
+    let PrRequest {
+        tool_id,
+        prefix,
+        branch,
+        new_versions,
+        title,
+        body,
+    } = req;
     anyhow::ensure!(
         !new_versions.is_empty(),
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
@@ -502,7 +514,15 @@ mod tests {
         // Not a repo and no `gh` stub: reaching `list_open_prs` would fail
         // with a different message, so the text pins the guard itself.
         let dir = tempfile::tempdir().unwrap();
-        let err = deliver(dir.path(), "rust", "scan/rust/", "b", &[], "t", "b").unwrap_err();
+        let req = PrRequest {
+            tool_id: "rust".into(),
+            prefix: "scan/rust/".into(),
+            branch: "b".into(),
+            new_versions: vec![],
+            title: "t".into(),
+            body: "b".into(),
+        };
+        let err = deliver(dir.path(), &req).unwrap_err();
         assert!(
             format!("{err:#}").contains("deliver called with no new versions"),
             "got: {err:#}"

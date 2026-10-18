@@ -630,7 +630,7 @@ mod tests {
     }
 
     /// A PR step for a test whose plan must be refused before `gh`.
-    fn no_pr(req: &stage::PrRequest) -> anyhow::Result<pr::Delivery> {
+    fn no_pr(req: &pr::PrRequest) -> anyhow::Result<pr::Delivery> {
         panic!("refused plan reached the PR step: {req:?}");
     }
 
