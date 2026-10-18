@@ -259,19 +259,10 @@ jobs:
           GIT_CONFIG_VALUE_3: "false"
         run: |
           set -euo pipefail
-          # Run only the binary `build` hashed (#427). An empty or
-          # malformed hash means the job output is miswired, not a match.
-          if ! [[ "$SCANNER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-            # The value itself is not echoed: it is not a hash, so it could
-            # carry a newline and start a workflow command.
-            echo "::error::build did not publish a valid scanner sha256." >&2
-            exit 1
-          fi
-          if ! printf '%s  %s\n' "$SCANNER_SHA256" "$SCANNER_BIN" \
-              | sha256sum --check --strict --quiet -; then
-            echo "::error::Scanner binary does not match the sha256 build published; refusing to run it." >&2
-            exit 1
-          fi
+          # Run only the binary `build` hashed (#427). The gate rejects an
+          # invalid hash, a mismatch, and a missing binary; its reject
+          # paths are tested in validate.yml (#436).
+          bin/verify-scanner.sh "$SCANNER_SHA256" "$SCANNER_BIN"
           # The artifact round-trip drops the executable bit.
           chmod +x "$SCANNER_BIN"
           "$SCANNER_BIN" deliver --plan "$PLAN"
