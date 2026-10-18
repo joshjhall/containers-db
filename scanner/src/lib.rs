@@ -405,9 +405,11 @@ fn diff_new_versions(
     new_ones
 }
 
+/// Whether `npx` can run ajv-cli. Probes with `help`: ajv-cli 5 has no
+/// `--version` flag and exits 2 on it (#438).
 pub(crate) fn which_ajv() -> bool {
     validate::npx()
-        .args(["--no-install", "ajv", "--version"])
+        .args(["--no-install", "ajv", "help"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -793,11 +795,15 @@ mod tests {
     /// that may well hold them. Asserts that exactly that one test ran and
     /// passed.
     fn run_without_path(name: &str) {
-        let empty = tempfile::tempdir().unwrap();
+        run_with_path(name, tempfile::tempdir().unwrap().path());
+    }
+
+    /// [`run_without_path`], but with `PATH` set to `path`.
+    fn run_with_path(name: &str, path: &std::path::Path) {
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--ignored", "--test-threads=1"])
             .env_clear()
-            .env("PATH", empty.path())
+            .env("PATH", path)
             .env(CHILD_MARKER, "1")
             .output()
             .unwrap();
@@ -836,6 +842,34 @@ mod tests {
             err.to_string(),
             "--stage needs `npx ajv` (ajv-cli + ajv-formats) to validate the plans it writes"
         );
+    }
+
+    #[test]
+    fn which_ajv_accepts_ajv_cli_5() {
+        // A stub `npx` that answers like ajv-cli 5.0.0: `help` exits 0, an
+        // unknown parameter such as `--version` exits 2.
+        let dir = tempfile::tempdir().unwrap();
+        let npx = dir.path().join("npx");
+        std::fs::write(
+            &npx,
+            "#!/bin/sh\n\
+             [ \"$*\" = \"--no-install ajv help\" ] && exit 0\n\
+             echo \"error: parameter $3 is unknown\" >&2\n\
+             exit 2\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&npx, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        run_with_path("tests::stub_path_which_ajv", dir.path());
+    }
+
+    #[test]
+    #[ignore = "run by which_ajv_accepts_ajv_cli_5"]
+    fn stub_path_which_ajv() {
+        if !in_child() {
+            return;
+        }
+        assert!(which_ajv());
     }
 
     #[test]
