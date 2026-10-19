@@ -398,6 +398,23 @@ else
   fail "middle row" "code=$code out=$out"
 fi
 
+# 27. Populated dependencies that differ are compared deeply, so the tuple is
+# divergent; under --check a collapsible tuple beside it still exits 1.
+f=$(fixture deps \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.dependencies = [{name: "a", version: "1"}, {name: "b", version: "2"}]')" \
+  "$(row alpine 3.22 arm64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.dependencies = [{name: "a", version: "1"}, {name: "b", version: "3"}]')" \
+  "$(row alpine 3.22 arm64 2026-02-01T00:00:00Z pass)")
+before=$(cat "$f")
+run --check "$f"
+if [ "$code" -eq 1 ] \
+    && [ "$out" = "$(printf 'DIVERGENT %s debian/12/amd64 dependencies\n%s: 4 -> 3' "$f" "$f")" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "differing dependency arrays divergent; --check still exits 1"
+else
+  fail "deps arrays" "code=$code out=$out"
+fi
+
 # 12. With no file args and no version files under tools/, exit 2 clearly.
 mkdir -p "$scratch/empty/bin" "$scratch/empty/tools"
 cp "$script" "$scratch/empty/bin/dedupe-tested.sh"
