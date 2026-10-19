@@ -133,6 +133,14 @@ jobs:
         # SCANNER_TOKEN; real runs only ever take the matching path (#436).
         run: tests/verify-scanner.test.sh
 
+      - name: Lint tested[] dedupe script
+        run: shellcheck bin/dedupe-tested.sh tests/dedupe-tested.test.sh
+
+      - name: Test tested[] dedupe script
+        # One-off cleanup for evidence re-test repeats (#450); keeps the
+        # mixed-result guard and the triple-set invariant pinned.
+        run: tests/dedupe-tested.test.sh
+
       - name: Negative test — broken fixtures must each fail validation
         run: |
           set -e
