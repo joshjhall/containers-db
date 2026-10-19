@@ -125,12 +125,68 @@ else
   fail "no tested[]" "code=$code out=$out"
 fi
 
-# 8. An unknown flag is a usage error.
+# 8. An unknown flag is a usage error and touches nothing.
+before=$(cat "$expect")
 run --bogus "$expect"
-if [ "$code" -eq 2 ]; then
-  pass "unknown flag exits 2"
+if [ "$code" -eq 2 ] && [ "$out" = "usage: $script [--check|--write] [file...]" ] \
+    && [ "$(cat "$expect")" = "$before" ]; then
+  pass "unknown flag exits 2 with usage"
 else
   fail "unknown flag" "code=$code out=$out"
+fi
+
+# 9. In one file, a uniform tuple collapses while a mixed one keeps every row.
+f=$(fixture both \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+  "$(row alpine 3.22 arm64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass)" \
+  "$(row alpine 3.22 arm64 2026-02-01T00:00:00Z fail)")
+run --write "$f"
+got=$(jq -c '[.tested[] | [.os, .tested_at, .result]]' "$f")
+want='[["alpine","2026-01-01T00:00:00Z","pass"],["debian","2026-02-01T00:00:00Z","pass"],["alpine","2026-02-01T00:00:00Z","fail"]]'
+if [ "$code" -eq 0 ] \
+    && [ "$out" = "$(printf 'MIXED %s alpine/3.22/arm64\n%s: 4 -> 3' "$f" "$f")" ] \
+    && [ "$got" = "$want" ]; then
+  pass "uniform collapses beside an untouched mixed tuple"
+else
+  fail "uniform + mixed" "code=$code out=$out rows=$got"
+fi
+
+# 10. A file without the trailing blank line gains none; its mode is kept.
+f=$(fixture noblank \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass)")
+truncate -s -1 "$f"
+chmod 640 "$f"
+run --write "$f"
+if [ "$code" -eq 0 ] && [ "$(tail -c 2 "$f" | od -An -c | tr -d ' ')" = '}\n' ] \
+    && [ "$(stat -c %a "$f")" = 640 ] && [ "$(jq '.tested | length' "$f")" = 1 ]; then
+  pass "no trailing blank line added; mode preserved"
+else
+  fail "noblank" "code=$code out=$out mode=$(stat -c %a "$f")"
+fi
+
+# 11. The (tuple, result) guard refuses a collapse that loses a fact. The real
+# filter cannot produce one, so drive the guard with a mutated scratch copy
+# whose uniform-outcome check is removed (mixed groups then collapse too).
+mutant="$scratch/mutant.sh"
+sed 's/| unique | length) == 1$/| unique | length) >= 1/' "$script" >"$mutant"
+chmod +x "$mutant"
+if cmp -s "$script" "$mutant"; then
+  fail "guard" "mutation did not apply; the filter text changed"
+else
+  f=$(fixture guard \
+    "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+    "$(row debian 12 amd64 2026-02-01T00:00:00Z fail)")
+  before=$(cat "$f")
+  out=$("$mutant" --write "$f" 2>&1); code=$?
+  want=$(printf 'MIXED %s debian/12/amd64\n%s: 2 -> 1\nerror: %s: (tuple, result) set changed; refusing to write' "$f" "$f" "$f")
+  if [ "$code" -eq 1 ] && [ "$out" = "$want" ] && [ "$(cat "$f")" = "$before" ] \
+      && [ -z "$(find "$scratch" -name 'guard.json.*')" ]; then
+    pass "guard refuses a fact-losing collapse and writes nothing"
+  else
+    fail "guard" "code=$code out=$out"
+  fi
 fi
 
 [ "$fails" -eq 0 ] || { echo "$fails case(s) failed"; exit 1; }

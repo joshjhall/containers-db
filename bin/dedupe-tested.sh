@@ -23,7 +23,13 @@ esac
 
 if [ "$#" -eq 0 ]; then
   repo_root=$(cd "$(dirname "$0")/.." && pwd)
+  shopt -s nullglob
   set -- "$repo_root"/tools/*/versions/*.json
+  shopt -u nullglob
+  if [ "$#" -eq 0 ]; then
+    echo "error: no version files under $repo_root/tools" >&2
+    exit 2
+  fi
 fi
 
 # Rows are grouped by tuple; the kept rows stay in their original order so the
@@ -50,6 +56,9 @@ mixed='
 # The set of (tuple, result) facts must survive the collapse unchanged.
 triples='[(.tested // [])[] | [.os, .os_version, .arch, .result]] | unique'
 
+tmp=""
+trap 'rm -f "$tmp"' EXIT
+
 changed=0
 for f in "$@"; do
   rows=$(jq '(.tested // []) | length' "$f")
@@ -73,9 +82,11 @@ for f in "$@"; do
     tmp=$(mktemp "$f.XXXXXX")
     printf '%s\n' "$out" >"$tmp"
     # Keep the trailing blank line the version files carry.
-    [ "$(tail -c 2 "$f" | wc -l)" -eq 2 ] && printf '\n' >>"$tmp"
-    chmod --reference="$f" "$tmp"
-    mv "$tmp" "$f"
+    if [ "$(tail -c 2 "$f" | wc -l)" -eq 2 ]; then printf '\n' >>"$tmp"; fi
+    # Copy over the original rather than mv, so its mode is kept without the
+    # GNU-only `chmod --reference`.
+    cat "$tmp" >"$f"
+    rm -f "$tmp"
   fi
 done
 
