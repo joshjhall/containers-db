@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Collapse repeat tested[] rows left by the evidence re-test loop (#450,
-# containers#1319). Repeats differ only in image_digest/ci_run/tested_at, so
-# for each (os, os_version, arch) whose rows all agree on result and
-# error_class, keep the newest by tested_at. A tuple whose rows disagree is
-# left as-is and printed as MIXED, so a regression is never hidden.
+# containers#1319). For each (os, os_version, arch) whose rows all agree on
+# result and error_class, keep the newest by tested_at. A tuple whose rows
+# disagree is left as-is and printed as MIXED, so a regression is never hidden.
+#
+# Only result and error_class are compared. Every other field of a dropped
+# row is discarded, including version_output and dependencies, and the guard
+# checks only that the (tuple, result) set survives. So review the diff
+# before committing a --write.
 #
 # This is a one-off cleanup, not a gate: ingest's append-on-new-digest policy
 # is intended, and a rebuilt image is new evidence.
