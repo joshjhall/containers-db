@@ -20,6 +20,12 @@ case "${1:-}" in
   --write) mode="write"; shift ;;
   -*) echo "usage: $0 [--check|--write] [file...]" >&2; exit 2 ;;
 esac
+# The mode flag goes first; a later one would otherwise be read as a path.
+for a in "$@"; do
+  case "$a" in
+    -*) echo "usage: $0 [--check|--write] [file...]" >&2; exit 2 ;;
+  esac
+done
 
 if [ "$#" -eq 0 ]; then
   repo_root=$(cd "$(dirname "$0")/.." && pwd)
@@ -42,7 +48,8 @@ dedupe='
   # order as strings. Sort on [seconds, fraction right-padded to 9 digits].
   # The zone must be Z: an offset cannot be ordered this way, so fail loudly.
   def when: (if type == "string" then
-      capture("^(?<s>[0-9-]+T[0-9:]+)(?:\\.(?<f>[0-9]+))?Z$") else null end)
+      capture("^(?<s>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<f>[0-9]{1,9}))?Z$")
+      else null end)
     // error("tested_at not a UTC RFC3339 timestamp: \(.)")
     | [.s, ((.f // "") + "000000000")[0:9]];
   (.tested // []) as $t

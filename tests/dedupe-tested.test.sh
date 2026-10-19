@@ -257,6 +257,41 @@ else
   fail "later bad tested_at" "code=$code out=$out"
 fi
 
+# 17. A non-canonical stamp (no seconds) is refused, not string-ordered.
+f=$(fixture short \
+  "$(row debian 12 amd64 2026-10-18T08:15Z pass)" \
+  "$(row debian 12 amd64 2026-10-18T08:15:54Z pass)")
+before=$(cat "$f")
+run --write "$f"
+if [ "$code" -ne 0 ] \
+    && [[ "$out" == *'tested_at not a UTC RFC3339 timestamp: 2026-10-18T08:15Z'* ]] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "short-form tested_at refused"
+else
+  fail "short-form" "code=$code out=$out"
+fi
+
+# 18. With no flag the default is --check: report, exit 1, write nothing.
+f=$(fixture bare \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass)")
+before=$(cat "$f")
+out=$("$script" "$f" 2>&1); code=$?
+if [ "$code" -eq 1 ] && [ "$out" = "$f: 2 -> 1" ] && [ "$(cat "$f")" = "$before" ]; then
+  pass "bare invocation defaults to --check"
+else
+  fail "bare default" "code=$code out=$out"
+fi
+
+# 19. A flag after a file is a usage error, not a path.
+run "$f" --write
+if [ "$code" -eq 2 ] && [ "$out" = "usage: $script [--check|--write] [file...]" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "misplaced flag is a usage error"
+else
+  fail "misplaced flag" "code=$code out=$out"
+fi
+
 # 12. With no file args and no version files under tools/, exit 2 clearly.
 mkdir -p "$scratch/empty/bin" "$scratch/empty/tools"
 cp "$script" "$scratch/empty/bin/dedupe-tested.sh"
