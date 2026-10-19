@@ -119,58 +119,6 @@
       "os": "alpine",
       "os_version": "3.22",
       "arch": "amd64",
-      "tested_at": "2026-10-13T19:47:24.467068696Z",
-      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38455722004",
-      "result": "pass",
-      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
-      "image_digest": "sha256:372b5b05e7aeec0d70cfad25f4dc6bf05e712a64198aabfa921c44bfefcc2a6d",
-      "duration_seconds": 16.166667056,
-      "version_output": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
-      "dependencies": [
-        {
-          "tool": "ca_certificates",
-          "package": "ca-certificates"
-        },
-        {
-          "tool": "gcc",
-          "package": "gcc"
-        },
-        {
-          "tool": "musl_dev",
-          "package": "musl-dev"
-        }
-      ]
-    },
-    {
-      "os": "alpine",
-      "os_version": "3.22",
-      "arch": "arm64",
-      "tested_at": "2026-10-13T19:47:50.973247604Z",
-      "ci_run": "https://github.com/joshjhall/containers/actions/runs/38455722004",
-      "result": "pass",
-      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-arm64",
-      "image_digest": "sha256:5d1623dbc1d47b12a45141cc6f8feff229bbc9d198f397fee98c8f9d89a1db95",
-      "duration_seconds": 17.532435933,
-      "version_output": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
-      "dependencies": [
-        {
-          "tool": "ca_certificates",
-          "package": "ca-certificates"
-        },
-        {
-          "tool": "gcc",
-          "package": "gcc"
-        },
-        {
-          "tool": "musl_dev",
-          "package": "musl-dev"
-        }
-      ]
-    },
-    {
-      "os": "alpine",
-      "os_version": "3.22",
-      "arch": "amd64",
       "tested_at": "2026-10-18T08:16:08.702672231Z",
       "ci_run": "https://github.com/joshjhall/containers/actions/runs/39109493424",
       "result": "pass",
