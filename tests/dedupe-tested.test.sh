@@ -175,18 +175,52 @@ chmod +x "$mutant"
 if cmp -s "$script" "$mutant"; then
   fail "guard" "mutation did not apply; the filter text changed"
 else
+  # A collapsible file ahead of the refused one must not be written either.
+  ok=$(fixture guard-ok \
+    "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+    "$(row debian 12 amd64 2026-02-01T00:00:00Z pass)")
   f=$(fixture guard \
     "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
     "$(row debian 12 amd64 2026-02-01T00:00:00Z fail)")
-  before=$(cat "$f")
-  out=$("$mutant" --write "$f" 2>&1); code=$?
-  want=$(printf 'MIXED %s debian/12/amd64\n%s: 2 -> 1\nerror: %s: (tuple, result) set changed; refusing to write' "$f" "$f" "$f")
+  before=$(cat "$f"); before_ok=$(cat "$ok")
+  out=$("$mutant" --write "$ok" "$f" 2>&1); code=$?
+  want=$(printf '%s: 2 -> 1\nMIXED %s debian/12/amd64\n%s: 2 -> 1\nerror: %s: (tuple, result) set changed; refusing to write' "$ok" "$f" "$f" "$f")
   if [ "$code" -eq 1 ] && [ "$out" = "$want" ] && [ "$(cat "$f")" = "$before" ] \
-      && [ -z "$(find "$scratch" -name 'guard.json.*')" ]; then
-    pass "guard refuses a fact-losing collapse and writes nothing"
+      && [ "$(cat "$ok")" = "$before_ok" ] \
+      && [ -z "$(find "$scratch" -name 'guard*.json.*')" ]; then
+    pass "guard refuses a fact-losing collapse and writes no file"
   else
     fail "guard" "code=$code out=$out"
   fi
+fi
+
+# 13. Newest is chronological, not lexical: RFC3339Nano drops trailing zeros,
+# so within one second `53Z` < `53.5Z` < `53.85Z` though `Z` sorts last.
+f=$(fixture nanos \
+  "$(row debian 12 amd64 2026-10-18T08:15:53.85Z pass)" \
+  "$(row debian 12 amd64 2026-10-18T08:15:53Z pass)" \
+  "$(row debian 12 amd64 2026-10-18T08:15:53.5Z pass)")
+run --write "$f"
+got=$(jq -c '[.tested[].tested_at]' "$f")
+if [ "$code" -eq 0 ] && [ "$out" = "$f: 3 -> 1" ] \
+    && [ "$got" = '["2026-10-18T08:15:53.85Z"]' ]; then
+  pass "newest by time across fraction lengths"
+else
+  fail "nanos" "code=$code out=$out rows=$got"
+fi
+
+# 14. A non-UTC tested_at cannot be ordered, so it is refused, not guessed.
+f=$(fixture offset \
+  "$(row debian 12 amd64 2026-10-18T08:15:53+02:00 pass)" \
+  "$(row debian 12 amd64 2026-10-18T08:15:54Z pass)")
+before=$(cat "$f")
+run --write "$f"
+if [ "$code" -ne 0 ] \
+    && [[ "$out" == *'tested_at not a UTC RFC3339 timestamp: 2026-10-18T08:15:53+02:00'* ]] \
+    && [ "$(cat "$f")" = "$before" ] && [ -z "$(find "$scratch" -name 'offset.json.*')" ]; then
+  pass "non-UTC tested_at refused, file untouched"
+else
+  fail "offset" "code=$code out=$out"
 fi
 
 # 12. With no file args and no version files under tools/, exit 2 clearly.

@@ -38,10 +38,16 @@ fi
 dedupe='
   def tuple: [.os, .os_version, .arch];
   def outcome: [.result, (.error_class // null)];
+  # RFC3339Nano drops trailing zeros, so `...:53Z` and `...:53.5Z` do not
+  # order as strings. Sort on [seconds, fraction right-padded to 9 digits].
+  # The zone must be Z: an offset cannot be ordered this way, so fail loudly.
+  def when: capture("^(?<s>[0-9-]+T[0-9:]+)(?:\\.(?<f>[0-9]+))?Z$")
+    // error("tested_at not a UTC RFC3339 timestamp: \(.)")
+    | [.s, ((.f // "") + "000000000")[0:9]];
   (.tested // []) as $t
   | [$t | to_entries | group_by(.value | tuple)[]
       | if (map(.value | outcome) | unique | length) == 1
-        then max_by(.value.tested_at).key
+        then max_by(.value.tested_at | when).key
         else .[].key end] as $keep
   | if has("tested")
     then .tested = [$t | to_entries[] | select(.key | IN($keep[])) | .value]
@@ -59,7 +65,9 @@ triples='[(.tested // [])[] | [.os, .os_version, .arch, .result]] | unique'
 tmp=""
 trap 'rm -f "$tmp"' EXIT
 
-changed=0
+# Pass 1 computes and guards every file before pass 2 writes any, so a guard
+# refusal never leaves the catalog half rewritten.
+pending=()
 for f in "$@"; do
   rows=$(jq '(.tested // []) | length' "$f")
   out=$(jq --indent 2 "$dedupe" "$f")
@@ -70,27 +78,27 @@ for f in "$@"; do
   done < <(jq -r "$mixed" "$f")
 
   [ "$kept" -eq "$rows" ] && continue
-  changed=1
   echo "$f: $rows -> $kept"
 
   if [ "$(jq -c "$triples" "$f")" != "$(jq -c "$triples" <<<"$out")" ]; then
     echo "error: $f: (tuple, result) set changed; refusing to write" >&2
     exit 1
   fi
-
-  if [ "$mode" = write ]; then
-    # Seed the temp file with `cp -p` so it already carries the original's
-    # mode (portable, unlike `chmod --reference`), then rename it into place
-    # so an interrupted write never truncates the version file.
-    tmp=$(mktemp "$f.XXXXXX")
-    cp -p "$f" "$tmp"
-    printf '%s\n' "$out" >"$tmp"
-    # Keep the trailing blank line the version files carry.
-    if [ "$(tail -c 2 "$f" | wc -l)" -eq 2 ]; then printf '\n' >>"$tmp"; fi
-    mv "$tmp" "$f"
-    tmp=""
-  fi
+  pending+=("$f")
 done
 
-[ "$mode" = check ] && [ "$changed" -eq 1 ] && exit 1
-exit 0
+[ "${#pending[@]}" -eq 0 ] && exit 0
+[ "$mode" = check ] && exit 1
+
+for f in "${pending[@]}"; do
+  # Seed the temp file with `cp -p` so it already carries the original's
+  # mode (portable, unlike `chmod --reference`), then rename it into place
+  # so an interrupted write never truncates the version file.
+  tmp=$(mktemp "$f.XXXXXX")
+  cp -p "$f" "$tmp"
+  jq --indent 2 "$dedupe" "$f" >"$tmp"
+  # Keep the trailing blank line the version files carry.
+  if [ "$(tail -c 2 "$f" | wc -l)" -eq 2 ]; then printf '\n' >>"$tmp"; fi
+  mv "$tmp" "$f"
+  tmp=""
+done
