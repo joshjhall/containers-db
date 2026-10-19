@@ -369,6 +369,35 @@ else
   fail "divergent + uniform" "code=$code out=$out rows=$got"
 fi
 
+# 25. A tuple with mixed outcomes is reported as MIXED only, even when its
+# rows also differ in a stable field.
+f=$(fixture mixdiv \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.version_output = "a"')" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z fail | jq -c '.version_output = "b"')")
+before=$(cat "$f")
+run --write "$f"
+if [ "$code" -eq 0 ] && [ "$out" = "MIXED $f debian/12/amd64" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "mixed outcome reported as MIXED, not DIVERGENT"
+else
+  fail "mixed + divergent" "code=$code out=$out"
+fi
+
+# 26. Only a middle row diverges from the newest: the oldest agrees, yet the
+# whole tuple is kept, since collapsing would drop the middle row.
+f=$(fixture middle \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.version_output = "a"')" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.version_output = "b"')" \
+  "$(row debian 12 amd64 2026-03-01T00:00:00Z pass | jq -c '.version_output = "a"')")
+before=$(cat "$f")
+run --write "$f"
+if [ "$code" -eq 0 ] && [ "$out" = "DIVERGENT $f debian/12/amd64 version_output" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "a diverging middle row keeps the whole tuple"
+else
+  fail "middle row" "code=$code out=$out"
+fi
+
 # 12. With no file args and no version files under tools/, exit 2 clearly.
 mkdir -p "$scratch/empty/bin" "$scratch/empty/tools"
 cp "$script" "$scratch/empty/bin/dedupe-tested.sh"
