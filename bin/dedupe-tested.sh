@@ -41,7 +41,8 @@ dedupe='
   # RFC3339Nano drops trailing zeros, so `...:53Z` and `...:53.5Z` do not
   # order as strings. Sort on [seconds, fraction right-padded to 9 digits].
   # The zone must be Z: an offset cannot be ordered this way, so fail loudly.
-  def when: capture("^(?<s>[0-9-]+T[0-9:]+)(?:\\.(?<f>[0-9]+))?Z$")
+  def when: (if type == "string" then
+      capture("^(?<s>[0-9-]+T[0-9:]+)(?:\\.(?<f>[0-9]+))?Z$") else null end)
     // error("tested_at not a UTC RFC3339 timestamp: \(.)")
     | [.s, ((.f // "") + "000000000")[0:9]];
   (.tested // []) as $t

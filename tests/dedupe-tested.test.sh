@@ -223,6 +223,40 @@ else
   fail "offset" "code=$code out=$out"
 fi
 
+# 15. --write over several files rewrites every collapsible one.
+a=$(fixture multi-a \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass)")
+b=$(fixture multi-b \
+  "$(row alpine 3.22 arm64 2026-01-01T00:00:00Z pass)" \
+  "$(row alpine 3.22 arm64 2026-03-01T00:00:00Z pass)")
+run --write "$a" "$b"
+if [ "$code" -eq 0 ] && [ "$out" = "$(printf '%s: 2 -> 1\n%s: 2 -> 1' "$a" "$b")" ] \
+    && [ "$(jq -r '.tested[].tested_at' "$a")" = 2026-02-01T00:00:00Z ] \
+    && [ "$(jq -r '.tested[].tested_at' "$b")" = 2026-03-01T00:00:00Z ]; then
+  pass "multi-file --write rewrites each file"
+else
+  fail "multi-file" "code=$code out=$out"
+fi
+
+# 16. A bad stamp in a later file (or a missing one) stops the run before any
+# file is written, earlier collapsible ones included.
+a=$(fixture early \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass)")
+b=$(fixture missing \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c 'del(.tested_at)')")
+before=$(cat "$a")
+run --write "$a" "$b"
+if [ "$code" -ne 0 ] && [[ "$out" == *'tested_at not a UTC RFC3339 timestamp: null'* ]] \
+    && [ "$(cat "$a")" = "$before" ] \
+    && [ -z "$(find "$scratch" -name 'early.json.*' -o -name 'missing.json.*')" ]; then
+  pass "later bad tested_at writes no file"
+else
+  fail "later bad tested_at" "code=$code out=$out"
+fi
+
 # 12. With no file args and no version files under tools/, exit 2 clearly.
 mkdir -p "$scratch/empty/bin" "$scratch/empty/tools"
 cp "$script" "$scratch/empty/bin/dedupe-tested.sh"
