@@ -4,10 +4,14 @@
 # result and error_class, keep the newest by tested_at. A tuple whose rows
 # disagree is left as-is and printed as MIXED, so a regression is never hidden.
 #
-# Only result and error_class are compared. Every other field of a dropped
-# row is discarded, including version_output and dependencies, and the guard
-# checks only that the (tuple, result) set survives. So review the diff
-# before committing a --write.
+# A uniform tuple collapses only when the newest row subsumes every older one:
+# ignoring the volatile fields (image_digest, ci_run, tested_at,
+# duration_seconds), each field an older row sets to a non-null value must be
+# equal on the newest row. An older row's absent or null field is subsumed, so
+# a pre-dependencies row gives way to one that records them. Anything else
+# (a different version_output, or a value the newest row lacks) would drop real
+# evidence, so the tuple is left as-is and printed as DIVERGENT with the fields
+# that differ.
 #
 # This is a one-off cleanup, not a gate: ingest's append-on-new-digest policy
 # is intended, and a rebuilt image is new evidence.
@@ -42,10 +46,9 @@ if [ "$#" -eq 0 ]; then
   fi
 fi
 
-# Rows are grouped by tuple; the kept rows stay in their original order so the
-# diff is deletions only.
+# Shared by the collapse and the report.
 # shellcheck disable=SC2016  # jq program, not shell expansion
-dedupe='
+defs='
   def tuple: [.os, .os_version, .arch];
   def outcome: [.result, (.error_class // null)];
   # RFC3339Nano drops trailing zeros, so `...:53Z` and `...:53.5Z` do not
@@ -56,20 +59,40 @@ dedupe='
       else null end)
     // error("tested_at not a UTC RFC3339 timestamp: \(.)")
     | [.s, ((.f // "") + "000000000")[0:9]];
+  # Outcome is compared separately; the rest of these differ on every re-test.
+  def stable: del(.result, .error_class,
+    .image_digest, .ci_run, .tested_at, .duration_seconds);
+  # The fields this row sets that $new does not carry identically.
+  def lost($new): ($new | stable) as $n
+    | [stable | to_entries[] | select(.value != null and .value != $n[.key]) | .key];
+  # Of a uniform group of {key, value} entries: the newest entry, and every
+  # field some older row would lose to it.
+  def newest: max_by(.value.tested_at | when);
+  def divergent: newest as $new | map(.value | lost($new.value)) | add | unique;
+'
+# Rows are grouped by tuple; the kept rows stay in their original order so the
+# diff is deletions only.
+# shellcheck disable=SC2016
+dedupe="$defs"'
   (.tested // []) as $t
   | [$t | to_entries | group_by(.value | tuple)[]
       | if (map(.value | outcome) | unique | length) == 1
-        then max_by(.value.tested_at | when).key
+        then (if divergent == [] then newest.key else .[].key end)
         else .[].key end] as $keep
   | if has("tested")
     then .tested = [$t | to_entries[] | select(.key | IN($keep[])) | .value]
     else . end
 '
+# One line per tuple left as-is: "MIXED os/ver/arch" or
+# "DIVERGENT os/ver/arch field,...".
 # shellcheck disable=SC2016
-mixed='
-  [(.tested // []) | group_by([.os, .os_version, .arch])[]
-    | select((map([.result, (.error_class // null)]) | unique | length) > 1)
-    | "\(.[0].os)/\(.[0].os_version)/\(.[0].arch)"] | .[]
+report="$defs"'
+  (.tested // []) | to_entries | group_by(.value | tuple)[]
+  | (.[0].value | "\(.os)/\(.os_version)/\(.arch)") as $t
+  | if (map(.value | outcome) | unique | length) > 1 then "MIXED \($t)"
+    else divergent as $d
+      | if $d == [] then empty else "DIVERGENT \($t) \($d | join(","))" end
+    end
 '
 # The set of (tuple, result) facts must survive the collapse unchanged.
 triples='[(.tested // [])[] | [.os, .os_version, .arch, .result]] | unique'
@@ -85,9 +108,9 @@ for f in "$@"; do
   out=$(jq --indent 2 "$dedupe" "$f")
   kept=$(jq '(.tested // []) | length' <<<"$out")
 
-  while IFS= read -r t; do
-    [ -n "$t" ] && echo "MIXED $f $t"
-  done < <(jq -r "$mixed" "$f")
+  while read -r kind t; do
+    [ -n "$kind" ] && echo "$kind $f $t"
+  done < <(jq -r "$report" "$f")
 
   [ "$kept" -eq "$rows" ] && continue
   echo "$f: $rows -> $kept"
