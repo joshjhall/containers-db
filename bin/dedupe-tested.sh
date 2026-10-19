@@ -79,14 +79,16 @@ for f in "$@"; do
   fi
 
   if [ "$mode" = write ]; then
+    # Seed the temp file with `cp -p` so it already carries the original's
+    # mode (portable, unlike `chmod --reference`), then rename it into place
+    # so an interrupted write never truncates the version file.
     tmp=$(mktemp "$f.XXXXXX")
+    cp -p "$f" "$tmp"
     printf '%s\n' "$out" >"$tmp"
     # Keep the trailing blank line the version files carry.
     if [ "$(tail -c 2 "$f" | wc -l)" -eq 2 ]; then printf '\n' >>"$tmp"; fi
-    # Copy over the original rather than mv, so its mode is kept without the
-    # GNU-only `chmod --reference`.
-    cat "$tmp" >"$f"
-    rm -f "$tmp"
+    mv "$tmp" "$f"
+    tmp=""
   fi
 done
 

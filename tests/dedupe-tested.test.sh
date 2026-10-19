@@ -189,4 +189,14 @@ else
   fi
 fi
 
+# 12. With no file args and no version files under tools/, exit 2 clearly.
+mkdir -p "$scratch/empty/bin" "$scratch/empty/tools"
+cp "$script" "$scratch/empty/bin/dedupe-tested.sh"
+out=$("$scratch/empty/bin/dedupe-tested.sh" 2>&1); code=$?
+if [ "$code" -eq 2 ] && [ "$out" = "error: no version files under $scratch/empty/tools" ]; then
+  pass "no default version files exits 2"
+else
+  fail "no default files" "code=$code out=$out"
+fi
+
 [ "$fails" -eq 0 ] || { echo "$fails case(s) failed"; exit 1; }
