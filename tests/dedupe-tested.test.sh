@@ -292,6 +292,129 @@ else
   fail "misplaced flag" "code=$code out=$out"
 fi
 
+# 20. Passing rows that differ in version_output are new evidence: the tuple
+# is reported as DIVERGENT and the file is untouched.
+f=$(fixture verout \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.version_output = "t 1.0"')" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.version_output = "t 1.0.1"')")
+before=$(cat "$f")
+run --write "$f"
+if [ "$code" -eq 0 ] && [ "$out" = "DIVERGENT $f debian/12/amd64 version_output" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "differing version_output untouched and reported"
+else
+  fail "version_output" "code=$code out=$out"
+fi
+
+# 21. Rows differing only in the volatile fields still collapse to the newest.
+f=$(fixture volatile \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass \
+    | jq -c '. + {ci_run: "https://ci/1", duration_seconds: 10, version_output: "t 1", dependencies: [{name: "d", version: "2"}]}')" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass \
+    | jq -c '. + {ci_run: "https://ci/2", duration_seconds: 12, version_output: "t 1", dependencies: [{name: "d", version: "2"}]}')")
+run --write "$f"
+got=$(jq -c '[.tested[] | [.tested_at, .ci_run]]' "$f")
+if [ "$code" -eq 0 ] && [ "$out" = "$f: 2 -> 1" ] \
+    && [ "$got" = '[["2026-02-01T00:00:00Z","https://ci/2"]]' ]; then
+  pass "volatile-only differences collapse to newest"
+else
+  fail "volatile-only" "code=$code out=$out rows=$got"
+fi
+
+# 22. Null-vs-populated: an older row's null (or absent) field is subsumed by
+# the newest row's value, as with the rust 1.95.0 collapse in #452.
+f=$(fixture subsumed \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.dependencies = null')" \
+  "$(row debian 12 amd64 2026-01-15T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.dependencies = [{name: "d", version: "2"}]')")
+run --write "$f"
+got=$(jq -c '[.tested[] | [.tested_at, .dependencies]]' "$f")
+if [ "$code" -eq 0 ] && [ "$out" = "$f: 3 -> 1" ] \
+    && [ "$got" = '[["2026-02-01T00:00:00Z",[{"name":"d","version":"2"}]]]' ]; then
+  pass "older null or absent field is subsumed by newest"
+else
+  fail "subsumed" "code=$code out=$out rows=$got"
+fi
+
+# 23. The reverse is not subsumed: a value an older row records, which the
+# newest row has as null or lacks, would be lost, so the tuple is kept.
+f=$(fixture lost \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass \
+    | jq -c '. + {dependencies: [{name: "d", version: "2"}], image_ref: "img:1"}')" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.dependencies = null')")
+before=$(cat "$f")
+run --check "$f"
+if [ "$code" -eq 0 ] && [ "$out" = "DIVERGENT $f debian/12/amd64 dependencies,image_ref" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "newest null or absent field does not subsume a value"
+else
+  fail "lost" "code=$code out=$out"
+fi
+
+# 24. A divergent tuple keeps every row while a subsumed one beside it
+# collapses; the report names only the divergent tuple.
+f=$(fixture divmix \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.version_output = "a"')" \
+  "$(row alpine 3.22 arm64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.version_output = "b"')" \
+  "$(row alpine 3.22 arm64 2026-02-01T00:00:00Z pass)")
+run --write "$f"
+got=$(jq -c '[.tested[] | [.os, .tested_at]]' "$f")
+want='[["debian","2026-01-01T00:00:00Z"],["debian","2026-02-01T00:00:00Z"],["alpine","2026-02-01T00:00:00Z"]]'
+if [ "$code" -eq 0 ] \
+    && [ "$out" = "$(printf 'DIVERGENT %s debian/12/amd64 version_output\n%s: 4 -> 3' "$f" "$f")" ] \
+    && [ "$got" = "$want" ]; then
+  pass "divergent tuple kept beside a collapsed one"
+else
+  fail "divergent + uniform" "code=$code out=$out rows=$got"
+fi
+
+# 25. A tuple with mixed outcomes is reported as MIXED only, even when its
+# rows also differ in a stable field.
+f=$(fixture mixdiv \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.version_output = "a"')" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z fail | jq -c '.version_output = "b"')")
+before=$(cat "$f")
+run --write "$f"
+if [ "$code" -eq 0 ] && [ "$out" = "MIXED $f debian/12/amd64" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "mixed outcome reported as MIXED, not DIVERGENT"
+else
+  fail "mixed + divergent" "code=$code out=$out"
+fi
+
+# 26. Only a middle row diverges from the newest: the oldest agrees, yet the
+# whole tuple is kept, since collapsing would drop the middle row.
+f=$(fixture middle \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.version_output = "a"')" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.version_output = "b"')" \
+  "$(row debian 12 amd64 2026-03-01T00:00:00Z pass | jq -c '.version_output = "a"')")
+before=$(cat "$f")
+run --write "$f"
+if [ "$code" -eq 0 ] && [ "$out" = "DIVERGENT $f debian/12/amd64 version_output" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "a diverging middle row keeps the whole tuple"
+else
+  fail "middle row" "code=$code out=$out"
+fi
+
+# 27. Populated dependencies that differ are compared deeply, so the tuple is
+# divergent; under --check a collapsible tuple beside it still exits 1.
+f=$(fixture deps \
+  "$(row debian 12 amd64 2026-01-01T00:00:00Z pass | jq -c '.dependencies = [{name: "a", version: "1"}, {name: "b", version: "2"}]')" \
+  "$(row alpine 3.22 arm64 2026-01-01T00:00:00Z pass)" \
+  "$(row debian 12 amd64 2026-02-01T00:00:00Z pass | jq -c '.dependencies = [{name: "a", version: "1"}, {name: "b", version: "3"}]')" \
+  "$(row alpine 3.22 arm64 2026-02-01T00:00:00Z pass)")
+before=$(cat "$f")
+run --check "$f"
+if [ "$code" -eq 1 ] \
+    && [ "$out" = "$(printf 'DIVERGENT %s debian/12/amd64 dependencies\n%s: 4 -> 3' "$f" "$f")" ] \
+    && [ "$(cat "$f")" = "$before" ]; then
+  pass "differing dependency arrays divergent; --check still exits 1"
+else
+  fail "deps arrays" "code=$code out=$out"
+fi
+
 # 12. With no file args and no version files under tools/, exit 2 clearly.
 mkdir -p "$scratch/empty/bin" "$scratch/empty/tools"
 cp "$script" "$scratch/empty/bin/dedupe-tested.sh"
