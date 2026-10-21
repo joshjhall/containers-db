@@ -99,6 +99,22 @@ jobs:
             -s schema/version.schema.json \
             -d "tools/rust/versions/*.json"
 
+      - name: Validate go tool index against tool schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/tool.schema.json \
+            -d tools/go/index.json
+
+      - name: Validate go version files against version schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/version.schema.json \
+            -d "tools/go/versions/*.json"
+
       - name: Validate tier example fixtures against version schema
         run: |
           npx --no-install ajv validate \

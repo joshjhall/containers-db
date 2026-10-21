@@ -134,6 +134,12 @@
       "type": "string",
       "minLength": 1
     },
+    "version_args": {
+      "description": "Argument vector luggage passes to the primary binary (see `primary_binary`) for the already-installed probe and to validate a completed install; the command's output must contain the installed version string. Omit for the default `[\"--version\"]`. Set it when the tool only answers a subcommand: `go` takes `[\"version\"]`, because `go --version` exits 2.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
     "version_style": {
       "description": "How this tool's version strings should be parsed. `semver` is the implicit default when omitted; `prefix` is for tools that use a leading `v` or similar token; `calver` is for date-derived schemes; `opaque` disables comparator parsing entirely (constraints involving this tool can only check string equality).",
       "type": "string",
