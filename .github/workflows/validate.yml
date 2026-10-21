@@ -181,6 +181,35 @@ jobs:
             echo "Negative fixture $fixture correctly rejected (ajv=$ajv_rc, validate-catalog=$sem_rc)"
           done
 
+      # Tool-index counterpart of the loop above. These fixtures break a
+      # tool.schema.json rule (e.g. `version_args` minItems / item minLength)
+      # that has no semantic-validator twin, so only ajv is consulted.
+      - name: Negative test — broken tool-index fixtures must each fail validation
+        run: |
+          set -e
+          for fixture in fixtures/_negative_tool/*.json; do
+            # An unmatched glob leaves the literal pattern, which ajv would
+            # "reject" as a missing file and so pass vacuously.
+            if [ ! -f "$fixture" ]; then
+              echo "::error::No tool-index negative fixtures found at $fixture"
+              exit 1
+            fi
+            ajv_rc=0
+            set +e
+            npx --no-install ajv validate \
+              --spec=draft2020 \
+              -c ajv-formats \
+              -s schema/tool.schema.json \
+              -d "$fixture"
+            ajv_rc=$?
+            set -e
+            if [ "$ajv_rc" -eq 0 ]; then
+              echo "::error::Negative tool fixture $fixture passed ajv — tool schema is too permissive"
+              exit 1
+            fi
+            echo "Negative tool fixture $fixture correctly rejected (ajv=$ajv_rc)"
+          done
+
   # The job above floats on `stable`, which only ever moves past the declared
   # minimum. This job builds on exactly `rust-version`, so a newer-than-MSRV
   # API or a dependency raising its own MSRV fails here instead of quietly
