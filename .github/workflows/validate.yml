@@ -184,9 +184,20 @@ jobs:
       # Tool-index counterpart of the loop above. These fixtures break a
       # tool.schema.json rule (e.g. `version_args` minItems / item minLength)
       # that has no semantic-validator twin, so only ajv is consulted.
+      #
+      # A non-zero ajv exit alone proves nothing: a fixture broken for an
+      # unrelated reason would pass too. So each `<name>.json` has a
+      # `<name>.expect` sidecar:
+      #   { "instancePath": ..., "keyword": ..., "repair": { ... } }
+      # The step requires that (1) ajv rejects the fixture, (2) ajv reports an
+      # error at exactly that instancePath with that keyword, and (3) the
+      # fixture with `repair` merged in is accepted. (3) is the positive
+      # control: it proves the targeted rule is the fixture's only defect.
       - name: Negative test — broken tool-index fixtures must each fail validation
         run: |
-          set -e
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
           for fixture in fixtures/_negative_tool/*.json; do
             # An unmatched glob leaves the literal pattern, which ajv would
             # "reject" as a missing file and so pass vacuously.
@@ -194,20 +205,50 @@ jobs:
               echo "::error::No tool-index negative fixtures found at $fixture"
               exit 1
             fi
+            expect="${fixture%.json}.expect"
+            if [ ! -f "$expect" ]; then
+              echo "::error::Negative tool fixture $fixture has no $expect naming the rule it targets"
+              exit 1
+            fi
+            want_path=$(jq -er '.instancePath | strings' "$expect")
+            want_keyword=$(jq -er '.keyword | strings | select(length > 0)' "$expect")
+            jq -e '.repair | objects' "$expect" > /dev/null
+
+            # (1) + (2): rejected, and for the declared reason. ajv-cli prints
+            # "<file> invalid" then the error array (--errors=json) on stderr.
+            # --all-errors keeps the targeted error from being masked by an
+            # earlier one; extra defects are the positive control's job.
             ajv_rc=0
-            set +e
             npx --no-install ajv validate \
               --spec=draft2020 \
               -c ajv-formats \
+              --all-errors \
               -s schema/tool.schema.json \
-              -d "$fixture"
-            ajv_rc=$?
-            set -e
+              -d "$fixture" \
+              --errors=json 2> "$scratch/stderr" || ajv_rc=$?
             if [ "$ajv_rc" -eq 0 ]; then
               echo "::error::Negative tool fixture $fixture passed ajv — tool schema is too permissive"
               exit 1
             fi
-            echo "Negative tool fixture $fixture correctly rejected (ajv=$ajv_rc)"
+            if ! tail -n +2 "$scratch/stderr" \
+              | jq -e --arg p "$want_path" --arg k "$want_keyword" \
+                  'any(.[]; .instancePath == $p and .keyword == $k)' > /dev/null; then
+              echo "::error::Negative tool fixture $fixture was rejected, but not by $want_keyword at $want_path:"
+              cat "$scratch/stderr"
+              exit 1
+            fi
+
+            # (3) Positive control: the repaired fixture must validate.
+            jq --slurpfile e "$expect" '. * $e[0].repair' "$fixture" > "$scratch/repaired.json"
+            if ! npx --no-install ajv validate \
+              --spec=draft2020 \
+              -c ajv-formats \
+              -s schema/tool.schema.json \
+              -d "$scratch/repaired.json"; then
+              echo "::error::Positive control failed: $fixture with its repair applied is still invalid, so it is broken by more than $want_keyword at $want_path"
+              exit 1
+            fi
+            echo "Negative tool fixture $fixture rejected by $want_keyword at $want_path; repaired twin accepted"
           done
 
   # The job above floats on `stable`, which only ever moves past the declared
