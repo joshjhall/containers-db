@@ -1,0 +1,7 @@
+{
+  "instancePath": "/version_args/0",
+  "keyword": "minLength",
+  "repair": {
+    "version_args": ["version"]
+  }
+}
