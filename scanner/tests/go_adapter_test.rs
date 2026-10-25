@@ -192,6 +192,47 @@ async fn ninety_day_window_includes_edge_and_excludes_day_before() {
 }
 
 #[tokio::test]
+async fn ninety_day_window_is_by_date_whatever_the_scan_time() {
+    // A scan late in the UTC day must count the same releases as one at
+    // midnight: release dates carry no time, so a day-90 release dated
+    // 00:00 must not fall before an afternoon cutoff instant.
+    let server = serve(
+        json!([
+            { "version": "go1.27.1", "stable": true },
+            { "version": "go1.27.0", "stable": true }
+        ]),
+        history(&[("1.27.1", days_ago(90)), ("1.27.0", days_ago(91))]),
+    )
+    .await;
+    let late = now() + Duration::hours(23) + Duration::minutes(59);
+
+    let result = GoAdapter::with_fixed_now(server.uri(), late)
+        .fetch(&go_index())
+        .await
+        .unwrap();
+
+    assert_eq!(result.signals.releases_last_90d, Some(1));
+}
+
+#[tokio::test]
+async fn non_json_feed_is_a_decode_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/dl/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html>maintenance</html>"))
+        .mount(&server)
+        .await;
+
+    let err = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("download feed JSON decode failed"), "{err}");
+}
+
+#[tokio::test]
 async fn feed_error_names_the_url() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

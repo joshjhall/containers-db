@@ -122,8 +122,11 @@ impl Adapter for GoAdapter {
                 .map_err(|e| anyhow::anyhow!("go.dev download feed JSON decode failed: {e}"))?;
         let dates = parse_release_dates(&self.get("/doc/devel/release").await?);
 
+        // Releases are dated to the day, so the window is too: comparing a
+        // midnight `released_at` against a wall-clock instant would drop the
+        // day-90 release whenever a scan runs after 00:00 UTC.
         let now = self.now_override.unwrap_or_else(Utc::now);
-        let ninety_days_ago = now - Duration::days(90);
+        let ninety_days_ago = (now - Duration::days(90)).date_naive();
 
         let upstream_versions: Vec<UpstreamVersion> = releases
             .iter()
@@ -143,7 +146,7 @@ impl Adapter for GoAdapter {
         let releases_last_90d = u32::try_from(
             upstream_versions
                 .iter()
-                .filter(|v| v.released_at >= ninety_days_ago)
+                .filter(|v| v.released_at.date_naive() >= ninety_days_ago)
                 .count(),
         )
         .unwrap_or(u32::MAX);
