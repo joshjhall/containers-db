@@ -237,7 +237,10 @@ impl RustAdapter {
         if let Some(t) = token {
             req = req.bearer_auth(t);
         }
-        let response = req.send().await.map_err(|e| request_error(&url, e))?;
+        let response = req
+            .send()
+            .await
+            .map_err(|e| request_error(&url, "failed", e))?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -246,7 +249,7 @@ impl RustAdapter {
         response
             .json()
             .await
-            .map_err(|e| anyhow::anyhow!("GET {url} JSON decode failed: {e}"))
+            .map_err(|e| request_error(&url, "JSON decode failed", e))
     }
 }
 

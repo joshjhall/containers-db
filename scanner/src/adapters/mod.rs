@@ -38,14 +38,17 @@ fn connect_timeout_for(request_timeout: Duration) -> Duration {
     CONNECT_TIMEOUT.min(request_timeout)
 }
 
-/// Map a failed `send()` to the `GET {url} failed: …` error every adapter
-/// reports. reqwest's own message does not say a timeout fired, so one is
-/// named explicitly — a stalled upstream should read as such in the run log.
-pub(crate) fn request_error(url: &str, e: reqwest::Error) -> anyhow::Error {
+/// Map a failed request step to the `GET {url} {what}: …` error every adapter
+/// reports, where `what` names the step (`failed` for `send()`, `body read
+/// failed`, `JSON decode failed`). The client timeout spans the whole request,
+/// so it can fire in any of those steps; reqwest's own message does not say a
+/// timeout fired, so one is named explicitly — a stalled upstream should read
+/// as such in the run log whichever step it stalled in.
+pub(crate) fn request_error(url: &str, what: &str, e: reqwest::Error) -> anyhow::Error {
     if e.is_timeout() {
-        anyhow::anyhow!("GET {url} failed: timed out: {e}")
+        anyhow::anyhow!("GET {url} {what}: timed out: {e}")
     } else {
-        anyhow::anyhow!("GET {url} failed: {e}")
+        anyhow::anyhow!("GET {url} {what}: {e}")
     }
 }
 

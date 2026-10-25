@@ -227,7 +227,7 @@ impl GoAdapter {
             .get(&url)
             .send()
             .await
-            .map_err(|e| request_error(&url, e))?;
+            .map_err(|e| request_error(&url, "failed", e))?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -236,7 +236,7 @@ impl GoAdapter {
         response
             .text()
             .await
-            .map_err(|e| anyhow::anyhow!("GET {url} body read failed: {e}"))
+            .map_err(|e| request_error(&url, "body read failed", e))
     }
 }
 
