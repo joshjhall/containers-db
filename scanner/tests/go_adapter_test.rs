@@ -22,13 +22,18 @@ fn days_ago(n: i64) -> NaiveDate {
 }
 
 fn go_index() -> ToolIndex {
+    go_index_with(&["1.27.2"])
+}
+
+fn go_index_with(available: &[&str]) -> ToolIndex {
+    let available: Vec<_> = available.iter().map(|v| json!({ "version": v })).collect();
     ToolIndex {
         id: "go".to_string(),
         source_repo: Some("https://github.com/golang/go".to_string()),
         raw: json!({
             "id": "go",
             "source_repo": "https://github.com/golang/go",
-            "available": [ { "version": "1.27.2" } ]
+            "available": available
         }),
         path: std::path::PathBuf::from("/tmp/index.json"),
     }
@@ -133,13 +138,92 @@ async fn excludes_prereleases_unstable_and_non_semver_entries() {
 }
 
 #[tokio::test]
-async fn stable_version_missing_from_history_page_is_skipped() {
+async fn undated_same_day_sibling_holds_back_every_new_release() {
+    // Go ships both supported branches on one day. If the history page has
+    // dated 1.27.4 but not yet 1.26.11, emitting 1.27.4 alone would make its
+    // date the high-water mark, and the scanner's strictly-newer cutoff would
+    // reject 1.26.11 forever. Neither may be emitted until both are dated.
     let server = serve(
         json!([
             { "version": "go1.27.4", "stable": true },
+            { "version": "go1.26.11", "stable": true },
             { "version": "go1.27.3", "stable": true }
         ]),
-        history(&[("1.27.3", days_ago(6))]),
+        history(&[("1.27.4", days_ago(1)), ("1.27.3", days_ago(6))]),
+    )
+    .await;
+    let index = go_index_with(&["1.26.10", "1.27.3"]);
+
+    let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&index)
+        .await
+        .unwrap();
+
+    assert_eq!(versions(&result), vec!["1.27.3"]);
+    // The dated release is real activity even while it is held back.
+    assert_eq!(result.signals.releases_last_90d, Some(2));
+    assert_eq!(
+        result.signals.last_release_at.map(|t| t.date_naive()),
+        Some(days_ago(1))
+    );
+}
+
+#[tokio::test]
+async fn held_back_releases_land_together_once_both_are_dated() {
+    let server = serve(
+        json!([
+            { "version": "go1.27.4", "stable": true },
+            { "version": "go1.26.11", "stable": true },
+            { "version": "go1.27.3", "stable": true }
+        ]),
+        history(&[
+            ("1.27.4", days_ago(1)),
+            ("1.26.11", days_ago(1)),
+            ("1.27.3", days_ago(6)),
+        ]),
+    )
+    .await;
+    let index = go_index_with(&["1.26.10", "1.27.3"]);
+
+    let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&index)
+        .await
+        .unwrap();
+
+    assert_eq!(versions(&result), vec!["1.26.11", "1.27.3", "1.27.4"]);
+}
+
+#[tokio::test]
+async fn undated_release_below_the_catalog_floor_does_not_hold_back() {
+    // The scanner would never admit a pre-floor release anyway, so an
+    // undated one must not stall every new release indefinitely.
+    let server = serve(
+        json!([
+            { "version": "go1.27.4", "stable": true },
+            { "version": "go1.21.13", "stable": true },
+            { "version": "go1.27.3", "stable": true }
+        ]),
+        history(&[("1.27.4", days_ago(1)), ("1.27.3", days_ago(6))]),
+    )
+    .await;
+    let index = go_index_with(&["1.22.0", "1.27.3"]);
+
+    let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&index)
+        .await
+        .unwrap();
+
+    assert_eq!(versions(&result), vec!["1.27.3", "1.27.4"]);
+}
+
+#[tokio::test]
+async fn feed_entry_without_stable_flag_is_excluded() {
+    let server = serve(
+        json!([
+            { "version": "go1.27.4" },
+            { "version": "go1.27.3", "stable": true }
+        ]),
+        history(&[("1.27.4", days_ago(1)), ("1.27.3", days_ago(6))]),
     )
     .await;
 
@@ -149,11 +233,66 @@ async fn stable_version_missing_from_history_page_is_skipped() {
         .unwrap();
 
     assert_eq!(versions(&result), vec!["1.27.3"]);
-    // An undated release must not leak into the activity signals either.
-    assert_eq!(result.signals.releases_last_90d, Some(1));
+}
+
+#[tokio::test]
+async fn parses_an_excerpt_of_the_real_history_page() {
+    // Trimmed from go.dev/doc/devel/release: an `<h2>` major release, a
+    // `.minor` section header, a multi-line `<p>` minor release with links,
+    // and an unrelated `go-survey` anchor that must not disturb parsing.
+    let html = r#"
+	<p id="go-survey-2026"><a href="/s/survey">Take the Go survey</a></p>
+	<h2 id="go1.27.0">go1.27.0 (released 2026-08-19)</h2>
+	<p>
+	Go 1.27.0 is a major release of Go.
+	Read the <a href="/doc/go1.27">Go 1.27 Release Notes</a> for more information.
+	</p>
+	<h3 id="go1.27.minor">Minor revisions</h3>
+		<p id="go1.27.3">
+		go1.27.3
+		(released 2026-10-19)
+			includes
+				security
+			fixes to the <code>net/http</code> package.
+		See the <a href="https://github.com/golang/go/issues?q=milestone%3AGo1.27.3+label%3ACherryPickApproved">Go
+		1.27.3 milestone</a> on our issue tracker for details.
+		</p>
+    "#;
+    let server = serve(
+        json!([
+            { "version": "go1.27.3", "stable": true },
+            { "version": "go1.27.0", "stable": true }
+        ]),
+        html.to_string(),
+    )
+    .await;
+
+    let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&go_index_with(&["1.27.0"]))
+        .await
+        .unwrap();
+
+    let dated: Vec<(String, NaiveDate)> = {
+        let mut d: Vec<_> = result
+            .upstream_versions
+            .iter()
+            .map(|u| (u.version.clone(), u.released_at.date_naive()))
+            .collect();
+        d.sort();
+        d
+    };
     assert_eq!(
-        result.signals.last_release_at.map(|t| t.date_naive()),
-        Some(days_ago(6))
+        dated,
+        vec![
+            (
+                "1.27.0".to_string(),
+                NaiveDate::from_ymd_opt(2026, 8, 19).unwrap()
+            ),
+            (
+                "1.27.3".to_string(),
+                NaiveDate::from_ymd_opt(2026, 10, 19).unwrap()
+            ),
+        ]
     );
 }
 

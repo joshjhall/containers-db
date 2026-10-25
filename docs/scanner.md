@@ -114,10 +114,12 @@ Registered adapters:
 | `go`   | [`adapters/go.rs`](../scanner/src/adapters/go.rs)     | go.dev download feed (versions, `stable`) + release-history page (dates)       |
 | `rust` | [`adapters/rust.rs`](../scanner/src/adapters/rust.rs) | GitHub REST: repo, releases, security advisories                               |
 
-An adapter whose upstream has no release date for a version should
-skip that version rather than date it "now": the scanner treats the
-newest cataloged `released` as its high-water mark, so a guessed date
-would hide or resurface releases on later scans.
+The scanner treats the newest cataloged `released` as a strict
+high-water mark, so an adapter must never guess a missing release
+date, and must not emit one release while a same-day sibling is still
+undated: once the dated one is cataloged, the sibling's date is no
+longer newer and it is rejected on every later scan. The go adapter
+holds back all new releases until every one of them is dated.
 
 ### 3. Record HTTP fixtures with `wiremock`
 

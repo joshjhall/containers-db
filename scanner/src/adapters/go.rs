@@ -10,15 +10,15 @@
 //! releases, so the history page is the only upstream source whose dates
 //! match the catalog's `released` field (the tarball `Last-Modified` header
 //! is UTC and lands a day late for evening-Pacific releases). The scanner
-//! uses `released` as its high-water mark, so a stable version the history
-//! page does not date yet is skipped rather than guessed — the next scan
-//! picks it up.
+//! uses `released` as its high-water mark, so an undated release is never
+//! guessed: while any new one is undated, every new release is held back
+//! (see `fetch`) and they land together once the page catches up.
 //!
 //! Only `releases_last_90d` and `last_release_at` are computed; there is no
 //! repo or advisory call, so `last_commit_at` and `open_advisories` stay
 //! unset.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -27,6 +27,7 @@ use serde::Deserialize;
 use crate::activity::ActivitySignals;
 use crate::adapter::{Adapter, AdapterResult, ToolIndex, UpstreamVersion};
 use crate::adapters::rust::is_strict_semver;
+use crate::generate::version_key;
 
 const DEFAULT_BASE: &str = "https://go.dev";
 const USER_AGENT: &str = "containers-db-scanner/0.1";
@@ -116,7 +117,7 @@ struct GoRelease {
 
 #[async_trait]
 impl Adapter for GoAdapter {
-    async fn fetch(&self, _index: &ToolIndex) -> anyhow::Result<AdapterResult> {
+    async fn fetch(&self, index: &ToolIndex) -> anyhow::Result<AdapterResult> {
         let releases: Vec<GoRelease> =
             serde_json::from_str(&self.get("/dl/?mode=json&include=all").await?)
                 .map_err(|e| anyhow::anyhow!("go.dev download feed JSON decode failed: {e}"))?;
@@ -128,13 +129,17 @@ impl Adapter for GoAdapter {
         let now = self.now_override.unwrap_or_else(Utc::now);
         let ninety_days_ago = (now - Duration::days(90)).date_naive();
 
-        let upstream_versions: Vec<UpstreamVersion> = releases
+        let stable: Vec<&str> = releases
             .iter()
             .filter(|r| r.stable)
             .map(|r| strip_go_prefix(&r.version))
             .filter(|v| is_strict_semver(v))
+            .collect();
+
+        let mut upstream_versions: Vec<UpstreamVersion> = stable
+            .iter()
             .filter_map(|v| {
-                let date = dates.get(v)?;
+                let date = dates.get(*v)?;
                 Some(UpstreamVersion {
                     version: v.to_string(),
                     released_at: date.and_hms_opt(0, 0, 0)?.and_utc(),
@@ -142,6 +147,27 @@ impl Adapter for GoAdapter {
                 })
             })
             .collect();
+
+        // Go ships its two supported branches on the same day. Emitting the
+        // dated one alone would make its `released` the scanner's
+        // high-water mark, and the strictly-newer cutoff would then reject
+        // the sibling forever once it is dated. So while any uncataloged
+        // release at or above the catalog floor is still undated, hold back
+        // every uncataloged release until they can land together.
+        let cataloged: HashSet<String> = index.available_versions().into_iter().collect();
+        let floor = cataloged.iter().map(|v| version_key(Some(v))).min();
+        let pending: Vec<&str> = stable
+            .iter()
+            .copied()
+            .filter(|v| !cataloged.contains(*v) && !dates.contains_key(*v))
+            .filter(|v| floor.as_ref().is_none_or(|f| version_key(Some(v)) >= *f))
+            .collect();
+        if !pending.is_empty() {
+            eprintln!(
+                "scanner: go: holding back new versions until go.dev/doc/devel/release dates {}",
+                pending.join(", ")
+            );
+        }
 
         let releases_last_90d = u32::try_from(
             upstream_versions
@@ -151,6 +177,10 @@ impl Adapter for GoAdapter {
         )
         .unwrap_or(u32::MAX);
         let last_release_at = upstream_versions.iter().map(|v| v.released_at).max();
+
+        if !pending.is_empty() {
+            upstream_versions.retain(|v| cataloged.contains(&v.version));
+        }
 
         let signals = ActivitySignals {
             releases_last_90d: Some(releases_last_90d),
