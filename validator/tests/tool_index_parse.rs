@@ -1,12 +1,12 @@
 //! Every shipped `tools/<id>/index.json` must deserialize into the pinned
 //! `containers_common::tooldb::Tool`, which is what luggage reads.
 //!
-//! `Tool` is `#[serde(deny_unknown_fields)]`, so a catalog field the ajv
-//! schema accepts but the pinned containers-common rev does not know (e.g.
-//! `version_args` before the #811 bump) passes schema validation yet fails
-//! luggage's catalog parse. Nothing else in this repo parses indexes as
-//! `Tool` (the scanner and validator use their own lenient structs), so
-//! without this test that skew would only surface downstream.
+//! `Tool` and every struct nested in it are `#[serde(deny_unknown_fields)]`,
+//! so a catalog field the ajv schema accepts but the pinned containers-common
+//! rev does not know (e.g. `version_args` before the #811 bump) passes schema
+//! validation yet fails luggage's catalog parse. Nothing else in this repo
+//! parses indexes as `Tool` (the scanner and validator use their own lenient
+//! structs), so without this test that skew would only surface downstream.
 
 mod common;
 
@@ -48,12 +48,20 @@ fn go_index_carries_version_args() {
     assert_eq!(go.version_args, Some(vec!["version".to_owned()]));
 }
 
+/// `tools/<tool>/index.json` as a JSON value, checked to parse as `Tool`
+/// unmutated, so a rejection after mutation is the injected field.
+fn pristine_index(tool: &str) -> serde_json::Value {
+    let path = repo_root().join(format!("tools/{tool}/index.json"));
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    serde_json::from_value::<Tool>(value.clone())
+        .unwrap_or_else(|e| panic!("pristine {tool} index parses: {e}"));
+    value
+}
+
 #[test]
 fn tool_rejects_an_unknown_index_field() {
-    let text = fs::read_to_string(repo_root().join("tools/go/index.json")).unwrap();
-    let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
-    // The unmutated index parses, so the rejection below is the injected field.
-    serde_json::from_value::<Tool>(value.clone()).expect("pristine go index parses");
+    let mut value = pristine_index("go");
     value
         .as_object_mut()
         .unwrap()
@@ -62,4 +70,39 @@ fn tool_rejects_an_unknown_index_field() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("not_a_catalog_field"), "{err}");
+}
+
+#[test]
+fn tool_rejects_an_unknown_field_at_every_nested_strict_level() {
+    // Every nested `deny_unknown_fields` struct of `Tool` at the pinned rev
+    // (7118f81). No one index reaches them all: go has no alternatives or
+    // system_package, and the system-package tools have no activity signals,
+    // channels, ordering or available rows.
+    let cases = [
+        ("go", "/activity"),                              // Activity
+        ("go", "/activity/signals"),                      // ActivitySignals
+        ("go", "/validation_tiers"),                      // ValidationTiers
+        ("go", "/validation_tiers/tier3"),                // TierSummary
+        ("go", "/channels/stable"),                       // Channel
+        ("go", "/ordering"),                              // Ordering
+        ("go", "/available/0"),                           // AvailableEntry
+        ("libc_dev", "/alternatives/0"),                  // Alternative
+        ("libc_dev", "/system_package"),                  // SystemPackage
+        ("libc_dev", "/system_package/platforms/debian"), // SystemPackagePlatform
+    ];
+    for (tool, pointer) in cases {
+        let mut value = pristine_index(tool);
+        value
+            .pointer_mut(pointer)
+            .and_then(|v| v.as_object_mut())
+            .unwrap_or_else(|| panic!("{tool}: no object at {pointer:?}"))
+            .insert("not_a_catalog_field".into(), true.into());
+        let err = serde_json::from_value::<Tool>(value)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not_a_catalog_field"),
+            "{tool} {pointer:?}: {err}"
+        );
+    }
 }
