@@ -486,3 +486,103 @@ async fn history_page_error_names_the_url() {
     assert!(err.contains("/doc/devel/release"), "{err}");
     assert!(err.contains("404"), "{err}");
 }
+
+/// A stalled go.dev must fail this tool's scan, not hang `scanner due`
+/// (issue #467). The server holds the response far past the test timeout;
+/// the elapsed bound proves the adapter gave up rather than waiting it out.
+#[tokio::test]
+async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/dl/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!([]))
+                .set_delay(std::time::Duration::from_secs(5)),
+        )
+        .mount(&server)
+        .await;
+
+    let started = std::time::Instant::now();
+    let err = GoAdapter::with_timeout(server.uri(), std::time::Duration::from_millis(200))
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "took {elapsed:?}"
+    );
+    let expected = format!(
+        "GET {}/dl/?mode=json&include=all failed: timed out:",
+        server.uri()
+    );
+    assert!(err.starts_with(&expected), "{err}");
+}
+
+/// The `timed out:` tag must be reserved for timeouts: a refused connection
+/// keeps the plain `GET {url} failed:` form, so the run log does not blame a
+/// dead host on a slow one.
+#[tokio::test]
+async fn refused_connection_is_not_reported_as_a_timeout() {
+    // Bind an ephemeral port and drop the listener so nothing is accepting
+    // on it. Not a dropped MockServer: wiremock pools servers, so the port
+    // would still answer (with a 404).
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let uri = format!("http://127.0.0.1:{port}");
+
+    let err = GoAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!("GET {uri}/dl/?mode=json&include=all failed:");
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(!err.contains("timed out:"), "{err}");
+}
+
+/// Serve one connection that sends a 200's headers and a fragment of the
+/// promised body, then stalls past any test timeout. `ResponseTemplate`'s
+/// delay holds the headers back too, so it cannot reach the body-read step.
+fn serve_stalled_body() -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().unwrap();
+        let _ = conn.read(&mut [0u8; 4096]);
+        let _ = conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 1000\r\n\r\n[{\"v");
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    });
+    format!("http://{addr}")
+}
+
+/// The client timeout spans the body read, so a stall after the headers must
+/// also fail fast and be reported as a timeout, not as a body-read error of
+/// unknown cause.
+#[tokio::test]
+async fn stall_mid_body_times_out_with_an_error_naming_the_url() {
+    let uri = serve_stalled_body();
+
+    let started = std::time::Instant::now();
+    let err = GoAdapter::with_timeout(&uri, std::time::Duration::from_millis(200))
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "took {elapsed:?}"
+    );
+    let expected = format!("GET {uri}/dl/?mode=json&include=all body read failed: timed out:");
+    assert!(err.starts_with(&expected), "{err}");
+}
