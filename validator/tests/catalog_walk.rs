@@ -17,6 +17,8 @@ fn pristine() -> tempfile::TempDir {
     fs::create_dir_all(go.join("versions")).unwrap();
     fs::write(go.join("index.json"), r#"{"kind":"language"}"#).unwrap();
     fs::write(go.join("versions/1.0.0.json"), "{}").unwrap();
+    fs::create_dir_all(go.join("recipes")).unwrap();
+    fs::write(go.join("recipes/go.json"), "{}").unwrap();
     let bash = root.path().join("tools/bash");
     fs::create_dir_all(&bash).unwrap();
     fs::write(bash.join("index.json"), r#"{"kind":"system_package"}"#).unwrap();
@@ -78,13 +80,24 @@ fn directory_in_versions_panics() {
 #[test]
 fn versioned_tool_missing_versions_dir_panics() {
     let root = pristine();
+    fs::remove_dir_all(root.path().join("tools/go/versions")).unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("versions/ presence disagrees"), "{msg}");
+}
+
+#[test]
+fn versioned_tool_with_misnamed_versions_dir_panics() {
+    // The allow-list names the typo itself rather than leaving the
+    // presence guard to report a generic missing versions/.
+    let root = pristine();
     fs::rename(
         root.path().join("tools/go/versions"),
         root.path().join("tools/go/version"),
     )
     .unwrap();
     let msg = panic_message(|| walk_all(root.path()));
-    assert!(msg.contains("versions/ presence disagrees"), "{msg}");
+    assert!(msg.contains("unexpected entry in tool dir"), "{msg}");
+    assert!(msg.ends_with("go/version"), "{msg}");
 }
 
 #[test]
@@ -125,4 +138,55 @@ fn system_package_with_versions_dir_panics() {
     fs::create_dir(root.path().join("tools/bash/versions")).unwrap();
     let msg = panic_message(|| walk_all(root.path()));
     assert!(msg.contains("versions/ presence disagrees"), "{msg}");
+}
+
+#[test]
+fn misnamed_dir_in_tool_dir_panics() {
+    // On a system_package tool the versions/-presence guard has nothing to
+    // say about `vershuns/`, so only the tool-dir allow-list can catch it.
+    let root = pristine();
+    fs::create_dir(root.path().join("tools/bash/vershuns")).unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("unexpected entry in tool dir"), "{msg}");
+    assert!(msg.contains("vershuns"), "{msg}");
+}
+
+#[test]
+fn stray_file_in_tool_dir_panics() {
+    let root = pristine();
+    fs::write(root.path().join("tools/go/README.md"), "").unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("unexpected entry in tool dir"), "{msg}");
+    assert!(msg.contains("README.md"), "{msg}");
+}
+
+#[test]
+fn recipes_as_file_panics() {
+    let root = pristine();
+    fs::write(root.path().join("tools/bash/recipes"), "").unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("unexpected entry in tool dir"), "{msg}");
+    assert!(msg.contains("bash/recipes"), "{msg}");
+}
+
+#[test]
+fn versions_as_file_panics() {
+    // Fires before the versions/-presence guard, which would otherwise
+    // report a file named `versions` as a missing directory.
+    let root = pristine();
+    fs::remove_dir_all(root.path().join("tools/go/versions")).unwrap();
+    fs::write(root.path().join("tools/go/versions"), "").unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("unexpected entry in tool dir"), "{msg}");
+    assert!(msg.contains("go/versions"), "{msg}");
+}
+
+#[test]
+fn index_json_as_dir_panics() {
+    let root = pristine();
+    fs::remove_file(root.path().join("tools/bash/index.json")).unwrap();
+    fs::create_dir(root.path().join("tools/bash/index.json")).unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("unexpected entry in tool dir"), "{msg}");
+    assert!(msg.contains("bash/index.json"), "{msg}");
 }

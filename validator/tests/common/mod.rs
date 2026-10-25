@@ -45,12 +45,37 @@ pub fn tool_id(dir: &Path) -> String {
     dir.file_name().unwrap().to_string_lossy().into_owned()
 }
 
+/// The entries a `tools/<id>/` directory may hold, and whether each must be a
+/// directory. luggage reads only `index.json` and `versions/`; `recipes/` is
+/// human reference that nothing parses (rust's `recipes/rustup.json`).
+const TOOL_DIR_ENTRIES: [(&str, bool); 3] =
+    [("index.json", false), ("versions", true), ("recipes", true)];
+
+/// Panics on any entry in a tool directory outside [`TOOL_DIR_ENTRIES`], or
+/// of the wrong file/directory type, so a misnamed `version/` or a stray file
+/// cannot sit unwalked beside the entries the walks read.
+fn check_tool_dir_entries(dir: &Path) {
+    for entry in fs::read_dir(dir).expect("read tool dir") {
+        let path = entry.expect("tool dir entry").path();
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(
+            TOOL_DIR_ENTRIES
+                .iter()
+                .any(|&(allowed, is_dir)| name == allowed && path.is_dir() == is_dir),
+            "unexpected entry in tool dir: {}",
+            path.display()
+        );
+    }
+}
+
 /// `tools/<id>/index.json` for every tool directory. Panics if any directory
-/// has no index, so a skipped tool cannot pass as a smaller catalog.
+/// has no index, so a skipped tool cannot pass as a smaller catalog, or holds
+/// an entry outside [`TOOL_DIR_ENTRIES`].
 pub fn tool_indexes_in(root: &Path) -> Vec<PathBuf> {
     tool_dirs_in(root)
         .into_iter()
         .map(|dir| {
+            check_tool_dir_entries(&dir);
             let index = dir.join("index.json");
             assert!(index.is_file(), "{} has no index.json", dir.display());
             index
