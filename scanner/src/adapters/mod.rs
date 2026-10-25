@@ -52,6 +52,21 @@ pub(crate) fn request_error(url: &str, what: &str, e: reqwest::Error) -> anyhow:
     }
 }
 
+/// Map a non-2xx response to `GET {url} returned {status}: {body}`. The body
+/// read can itself fail — an upstream that sends a 503's headers and then
+/// stalls trips the client timeout mid-read — so a failed read is reported as
+/// `<body unreadable: …>` (tagged `timed out:` like [`request_error`]) rather
+/// than as an empty body that hides why the message is blank (issue #473).
+pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyhow::Error {
+    let status = response.status();
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(e) if e.is_timeout() => format!("<body unreadable: timed out: {e}>"),
+        Err(e) => format!("<body unreadable: {e}>"),
+    };
+    anyhow::anyhow!("GET {url} returned {status}: {body}")
+}
+
 /// Built-in registry shipped with the scanner. `register_all` callers
 /// can extend this map for tests or future tools.
 pub fn register_all() -> HashMap<String, Arc<dyn Adapter>> {

@@ -28,7 +28,7 @@ use serde::Deserialize;
 use crate::activity::ActivitySignals;
 use crate::adapter::{Adapter, AdapterResult, ToolIndex, UpstreamVersion};
 use crate::adapters::rust::is_strict_semver;
-use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client, request_error};
+use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client, request_error, status_error};
 use crate::generate::version_key;
 
 const DEFAULT_BASE: &str = "https://go.dev";
@@ -228,10 +228,8 @@ impl GoAdapter {
             .send()
             .await
             .map_err(|e| request_error(&url, "failed", e))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("GET {url} returned {status}: {body}");
+        if !response.status().is_success() {
+            return Err(status_error(&url, response).await);
         }
         response
             .text()

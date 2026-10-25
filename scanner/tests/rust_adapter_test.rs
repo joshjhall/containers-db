@@ -463,19 +463,18 @@ async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
     assert!(err.starts_with(&expected), "{err}");
 }
 
-/// Serve one connection that sends a 200's headers and a fragment of the
-/// promised body, then stalls past any test timeout. `ResponseTemplate`'s
-/// delay holds the headers back too, so it cannot reach the body-read step.
-fn serve_stalled_body() -> String {
+/// Serve one connection that sends `head` (a status line, headers promising
+/// more body than follows, and a body fragment), then stalls past any test
+/// timeout. `ResponseTemplate`'s delay holds the headers back too, so it
+/// cannot reach the body-read step.
+fn serve_stalled_body(head: &'static [u8]) -> String {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     std::thread::spawn(move || {
         let (mut conn, _) = listener.accept().unwrap();
         let _ = conn.read(&mut [0u8; 4096]);
-        let _ = conn.write_all(
-            b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{\"ar",
-        );
+        let _ = conn.write_all(head);
         std::thread::sleep(std::time::Duration::from_secs(5));
     });
     format!("http://{addr}")
@@ -486,7 +485,9 @@ fn serve_stalled_body() -> String {
 /// reads the body), not as a malformed response.
 #[tokio::test]
 async fn stall_mid_body_times_out_with_an_error_naming_the_url() {
-    let uri = serve_stalled_body();
+    let uri = serve_stalled_body(
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{\"ar",
+    );
 
     let started = std::time::Instant::now();
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_millis(200))
@@ -502,4 +503,56 @@ async fn stall_mid_body_times_out_with_an_error_naming_the_url() {
     );
     let expected = format!("GET {uri}/repos/rust-lang/rust JSON decode failed: timed out:");
     assert!(err.starts_with(&expected), "{err}");
+}
+
+/// A non-2xx with a readable body reports the status and the body verbatim.
+#[tokio::test]
+async fn non_2xx_error_names_the_url_status_and_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("down"))
+        .mount(&server)
+        .await;
+
+    let err = RustAdapter::with_api_base(server.uri())
+        .fetch(&rust_index(&server.uri()))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!(
+        "GET {}/repos/rust-lang/rust returned 503 Service Unavailable: down",
+        server.uri()
+    );
+    assert_eq!(err, expected);
+}
+
+/// A non-2xx whose error body stalls mid-read must keep the status and say
+/// the body could not be read — naming the timeout — rather than reporting
+/// an empty body (issue #473).
+#[tokio::test]
+async fn non_2xx_with_stalled_body_reports_unreadable_body() {
+    let uri = serve_stalled_body(
+        b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 1000\r\n\r\nupstream is",
+    );
+
+    let started = std::time::Instant::now();
+    let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_millis(200))
+        .fetch(&rust_index(&uri))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "took {elapsed:?}"
+    );
+    let expected = format!(
+        "GET {uri}/repos/rust-lang/rust returned 503 Service Unavailable: \
+         <body unreadable: timed out:"
+    );
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(err.ends_with('>'), "{err}");
 }
