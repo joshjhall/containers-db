@@ -13,15 +13,17 @@
 //! deliberately not computed — they need extra paginated calls and
 //! aren't load-bearing in the tier mapping.
 
+use std::time::Duration as StdDuration;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 
 use crate::activity::ActivitySignals;
 use crate::adapter::{Adapter, AdapterResult, ToolIndex, UpstreamVersion};
+use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client};
 
 const DEFAULT_API_BASE: &str = "https://api.github.com";
-const USER_AGENT: &str = "containers-db-scanner/0.1";
 
 pub struct RustAdapter {
     client: reqwest::Client,
@@ -47,7 +49,7 @@ impl RustAdapter {
     /// Construct an adapter pointed at a custom API base — used by
     /// `wiremock`-based integration tests.
     pub fn with_api_base(api_base: impl Into<String>) -> Self {
-        Self::build(api_base, None)
+        Self::build(api_base, None, DEFAULT_REQUEST_TIMEOUT)
     }
 
     /// Like `with_api_base`, but pins the adapter's notion of "now" to a fixed
@@ -55,16 +57,23 @@ impl RustAdapter {
     /// `now - 90 days` and assert the window cutoff to the second, rather than
     /// inferring the `>=` comparison from a ±5-minute margin (issue #56).
     pub fn with_fixed_now(api_base: impl Into<String>, now: DateTime<Utc>) -> Self {
-        Self::build(api_base, Some(now))
+        Self::build(api_base, Some(now), DEFAULT_REQUEST_TIMEOUT)
     }
 
-    fn build(api_base: impl Into<String>, now_override: Option<DateTime<Utc>>) -> Self {
-        let client = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .build()
-            .expect("reqwest client build");
+    /// Like `with_api_base`, but with a custom request timeout. Test-only:
+    /// lets a test drive a stalled upstream into the timeout path in
+    /// milliseconds instead of waiting out `DEFAULT_REQUEST_TIMEOUT`.
+    pub fn with_timeout(api_base: impl Into<String>, timeout: StdDuration) -> Self {
+        Self::build(api_base, None, timeout)
+    }
+
+    fn build(
+        api_base: impl Into<String>,
+        now_override: Option<DateTime<Utc>>,
+        timeout: StdDuration,
+    ) -> Self {
         Self {
-            client,
+            client: http_client(timeout),
             api_base: api_base.into(),
             now_override,
         }

@@ -486,3 +486,35 @@ async fn history_page_error_names_the_url() {
     assert!(err.contains("/doc/devel/release"), "{err}");
     assert!(err.contains("404"), "{err}");
 }
+
+/// A stalled go.dev must fail this tool's scan, not hang `scanner due`
+/// (issue #467). The server holds the response far past the test timeout;
+/// the elapsed bound proves the adapter gave up rather than waiting it out.
+#[tokio::test]
+async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/dl/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!([]))
+                .set_delay(std::time::Duration::from_secs(5)),
+        )
+        .mount(&server)
+        .await;
+
+    let started = std::time::Instant::now();
+    let err = GoAdapter::with_timeout(server.uri(), std::time::Duration::from_millis(200))
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "took {elapsed:?}"
+    );
+    let expected = format!("GET {}/dl/?mode=json&include=all failed:", server.uri());
+    assert!(err.starts_with(&expected), "{err}");
+}

@@ -28,10 +28,10 @@ use serde::Deserialize;
 use crate::activity::ActivitySignals;
 use crate::adapter::{Adapter, AdapterResult, ToolIndex, UpstreamVersion};
 use crate::adapters::rust::is_strict_semver;
+use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client};
 use crate::generate::version_key;
 
 const DEFAULT_BASE: &str = "https://go.dev";
-const USER_AGENT: &str = "containers-db-scanner/0.1";
 
 pub struct GoAdapter {
     client: reqwest::Client,
@@ -55,22 +55,28 @@ impl GoAdapter {
     /// Construct an adapter pointed at a custom go.dev base — used by
     /// `wiremock`-based integration tests.
     pub fn with_base(base: impl Into<String>) -> Self {
-        Self::build(base, None)
+        Self::build(base, None, DEFAULT_REQUEST_TIMEOUT)
     }
 
     /// Like `with_base`, but pins "now" so tests can place a release at
     /// exactly `now - 90 days`.
     pub fn with_fixed_now(base: impl Into<String>, now: DateTime<Utc>) -> Self {
-        Self::build(base, Some(now))
+        Self::build(base, Some(now), DEFAULT_REQUEST_TIMEOUT)
     }
 
-    fn build(base: impl Into<String>, now_override: Option<DateTime<Utc>>) -> Self {
-        let client = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .build()
-            .expect("reqwest client build");
+    /// Like `with_base`, but with a custom request timeout. Test-only (see
+    /// `RustAdapter::with_timeout`).
+    pub fn with_timeout(base: impl Into<String>, timeout: std::time::Duration) -> Self {
+        Self::build(base, None, timeout)
+    }
+
+    fn build(
+        base: impl Into<String>,
+        now_override: Option<DateTime<Utc>>,
+        timeout: std::time::Duration,
+    ) -> Self {
         Self {
-            client,
+            client: http_client(timeout),
             base: base.into(),
             now_override,
         }

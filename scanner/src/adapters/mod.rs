@@ -5,11 +5,34 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::adapter::Adapter;
 
 pub mod go;
 pub mod rust;
+
+const USER_AGENT: &str = "containers-db-scanner/0.1";
+
+/// Whole-request timeout for every adapter's HTTP client. `scanner due`
+/// scans tools one at a time, so without it a single stalled upstream would
+/// hang every tool after it instead of failing just that one (issue #467).
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// TCP/TLS connect timeout, capped at the request timeout so a short
+/// test-only request timeout also bounds the connect.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The HTTP client every adapter builds on, so each one gets the user agent
+/// and both timeouts without repeating them.
+pub(crate) fn http_client(timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(timeout)
+        .connect_timeout(CONNECT_TIMEOUT.min(timeout))
+        .build()
+        .expect("reqwest client build")
+}
 
 /// Built-in registry shipped with the scanner. `register_all` callers
 /// can extend this map for tests or future tools.
@@ -33,5 +56,11 @@ mod tests {
         let mut ids: Vec<&str> = registry.keys().map(String::as_str).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec!["go", "rust"]);
+    }
+
+    #[test]
+    fn http_client_builds_at_default_and_sub_connect_timeouts() {
+        http_client(DEFAULT_REQUEST_TIMEOUT);
+        http_client(Duration::from_millis(1));
     }
 }
