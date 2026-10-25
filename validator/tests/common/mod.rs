@@ -2,7 +2,8 @@
 //!
 //! Each walk fails loudly on a shape it does not expect instead of filtering
 //! it out: a filter that silently drops an entry shrinks the walk, and a
-//! shrunken walk still passes.
+//! shrunken walk still passes. The `*_in` forms take the catalog root so
+//! `catalog_walk.rs` can drive each guard against a tempdir tree.
 
 #![allow(dead_code)] // each test binary uses a different subset
 
@@ -16,15 +17,27 @@ pub fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Every `tools/<id>/` directory, sorted.
-pub fn tool_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = fs::read_dir(repo_root().join("tools"))
+/// Every `<root>/tools/<id>/` directory, sorted. Panics on any non-directory
+/// entry directly under `tools/`.
+pub fn tool_dirs_in(root: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fs::read_dir(root.join("tools"))
         .expect("read tools/")
-        .map(|e| e.expect("tools/ entry").path())
-        .filter(|p| p.is_dir())
+        .map(|e| {
+            let path = e.expect("tools/ entry").path();
+            assert!(
+                path.is_dir(),
+                "unexpected entry in tools/: {}",
+                path.display()
+            );
+            path
+        })
         .collect();
     dirs.sort();
     dirs
+}
+
+pub fn tool_dirs() -> Vec<PathBuf> {
+    tool_dirs_in(&repo_root())
 }
 
 /// The tool id of a `tools/<id>/...` path's `<id>` component.
@@ -34,8 +47,8 @@ pub fn tool_id(dir: &Path) -> String {
 
 /// `tools/<id>/index.json` for every tool directory. Panics if any directory
 /// has no index, so a skipped tool cannot pass as a smaller catalog.
-pub fn tool_indexes() -> Vec<PathBuf> {
-    tool_dirs()
+pub fn tool_indexes_in(root: &Path) -> Vec<PathBuf> {
+    tool_dirs_in(root)
         .into_iter()
         .map(|dir| {
             let index = dir.join("index.json");
@@ -45,13 +58,36 @@ pub fn tool_indexes() -> Vec<PathBuf> {
         .collect()
 }
 
+pub fn tool_indexes() -> Vec<PathBuf> {
+    tool_indexes_in(&repo_root())
+}
+
+/// Whether a tool ships per-version files. A `system_package` tool is
+/// resolved through the distro and has none; every other kind must have a
+/// `versions/` directory, so a missing or misnamed one fails the walk
+/// instead of silently contributing zero files.
+fn expects_versions(index: &Path) -> bool {
+    let text = fs::read_to_string(index).unwrap_or_else(|e| panic!("{}: {e}", index.display()));
+    let value: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", index.display()));
+    value["kind"] != "system_package"
+}
+
 /// Every `tools/<id>/versions/*.json`, sorted. Panics on any non-`.json`
-/// entry in a `versions/` directory rather than skipping it.
-pub fn version_files() -> Vec<PathBuf> {
+/// entry in a `versions/` directory, and on a `versions/` directory that is
+/// missing where the tool's kind requires one (or present where it does not).
+pub fn version_files_in(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    for dir in tool_dirs() {
+    for index in tool_indexes_in(root) {
+        let dir = index.parent().unwrap();
         let versions = dir.join("versions");
-        if !versions.exists() {
+        assert_eq!(
+            versions.is_dir(),
+            expects_versions(&index),
+            "{}: versions/ presence disagrees with the index's kind",
+            dir.display()
+        );
+        if !versions.is_dir() {
             continue;
         }
         for entry in fs::read_dir(&versions).expect("read versions/") {
@@ -66,6 +102,10 @@ pub fn version_files() -> Vec<PathBuf> {
     }
     files.sort();
     files
+}
+
+pub fn version_files() -> Vec<PathBuf> {
+    version_files_in(&repo_root())
 }
 
 /// The tool id owning a `tools/<id>/versions/<v>.json` path.

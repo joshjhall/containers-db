@@ -25,9 +25,8 @@ fn parse(path: &Path) -> Result<Tool, String> {
 #[test]
 fn every_tool_index_deserializes_as_tool() {
     let paths = tool_indexes();
-    // One index per tool directory (tool_indexes panics on a missing one),
-    // and the walk is rooted where the catalog actually is.
-    assert_eq!(paths.len(), tool_dirs().len());
+    // tool_indexes panics on a tool dir with no index (catalog_walk.rs pins
+    // that); this guards a wrong root — a walk of some other directory.
     let ids: Vec<String> = tool_dirs().iter().map(|d| tool_id(d)).collect();
     for known in ["go", "rust"] {
         assert!(

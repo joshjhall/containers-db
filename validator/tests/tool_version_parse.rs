@@ -82,18 +82,17 @@ fn tool_version_rejects_an_unknown_top_level_field() {
 
 #[test]
 fn tool_version_rejects_an_unknown_install_method_field() {
+    // Nested structs are strict too, which is what catches the live skew:
     // `build_steps` is in the schema (#461) but not in the pinned
-    // `InstallMethod`; this pins that the walk above would catch its first use.
+    // `InstallMethod`. A permanently-invalid name keeps this test true after
+    // the pin moves past #809.
     let mut value = first_go_version();
     value["install_methods"][0]
         .as_object_mut()
         .expect("go version has an install method")
-        .insert(
-            "build_steps".into(),
-            serde_json::json!([{ "command": "make" }]),
-        );
+        .insert("not_a_catalog_field".into(), true.into());
     let err = serde_json::from_value::<ToolVersion>(value)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("build_steps"), "{err}");
+    assert!(err.contains("not_a_catalog_field"), "{err}");
 }
