@@ -93,6 +93,48 @@ fn tool_mismatch_flags_a_foreign_tool_id() {
     );
 }
 
+/// `None` when `v.version` is the `versions/<v>.json` file stem; otherwise
+/// the mismatch, so an unparseable file is reported rather than skipped.
+fn version_mismatch(path: &Path, v: Result<ToolVersion, String>) -> Option<String> {
+    match v {
+        Ok(v) if path.file_stem().is_some_and(|s| s == v.version.as_str()) => None,
+        Ok(v) => Some(format!("{}: version = {:?}", path.display(), v.version)),
+        Err(e) => Some(e),
+    }
+}
+
+#[test]
+fn version_file_version_field_matches_its_filename() {
+    let mismatched: Vec<String> = version_files()
+        .iter()
+        .filter_map(|p| version_mismatch(p, parse(p)))
+        .collect();
+    assert!(mismatched.is_empty(), "{}", mismatched.join("\n"));
+}
+
+#[test]
+fn version_mismatch_flags_a_version_that_differs_from_the_filename() {
+    let path = version_files()
+        .into_iter()
+        .find(|p| version_file_tool(p) == "go")
+        .expect("a go version file");
+    let mut value = first_go_version();
+    assert_eq!(
+        version_mismatch(&path, Ok(serde_json::from_value(value.clone()).unwrap())),
+        None
+    );
+    // A suffix no stem carries, so the mutation can never land on a real file name.
+    let mutated = format!("{}-mutated", value["version"].as_str().unwrap());
+    value["version"] = mutated.clone().into();
+    let msg = version_mismatch(&path, Ok(serde_json::from_value(value).unwrap())).unwrap();
+    assert!(msg.contains(&format!("version = {mutated:?}")), "{msg}");
+    assert!(msg.contains(&path.display().to_string()), "{msg}");
+    assert_eq!(
+        version_mismatch(&path, Err("unparseable".into())),
+        Some("unparseable".to_owned())
+    );
+}
+
 /// The first shipped version file carrying every strict nested struct
 /// (`install_methods`, `support_matrix`, and `tested` rows), so one fixture
 /// reaches each `deny_unknown_fields` level the module doc names.
