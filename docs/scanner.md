@@ -15,6 +15,7 @@ manually with `workflow_dispatch`.
 ```bash
 # Dry-run a single tool — no files written, no PR opened.
 cargo run --release -p scanner -- tool rust --dry-run
+cargo run --release -p scanner -- tool go --dry-run
 
 # Real run (will branch, commit, push, and `gh pr create`).
 GITHUB_TOKEN=$(gh auth token) \
@@ -105,6 +106,18 @@ pub fn register_all() -> HashMap<String, Arc<dyn Adapter>> {
 A tool with no registered adapter is silently skipped — adding a tool
 to `tools/<id>/index.json` doesn't crash the scanner before its adapter
 lands.
+
+Registered adapters:
+
+| Tool   | Adapter                                               | Upstream                                                                       |
+| ------ | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `go`   | [`adapters/go.rs`](../scanner/src/adapters/go.rs)     | go.dev download feed (versions, `stable`) + release-history page (dates)       |
+| `rust` | [`adapters/rust.rs`](../scanner/src/adapters/rust.rs) | GitHub REST: repo, releases, security advisories                               |
+
+An adapter whose upstream has no release date for a version should
+skip that version rather than date it "now": the scanner treats the
+newest cataloged `released` as its high-water mark, so a guessed date
+would hide or resurface releases on later scans.
 
 ### 3. Record HTTP fixtures with `wiremock`
 
