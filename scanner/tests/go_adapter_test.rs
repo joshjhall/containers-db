@@ -242,6 +242,30 @@ async fn undated_new_minor_holds_back_its_patch_sibling() {
 }
 
 #[tokio::test]
+async fn malformed_cataloged_version_is_ignored_not_a_panic() {
+    // A hand-edited or legacy catalog entry that is not three-part semver
+    // must not crash the branch map; it is skipped, and the real entries
+    // still decide what is pending.
+    let server = serve(
+        json!([
+            { "version": "go1.27.4", "stable": true },
+            { "version": "go1.26.4", "stable": true },
+            { "version": "go1.27.3", "stable": true }
+        ]),
+        history(&[("1.27.4", days_ago(1)), ("1.27.3", days_ago(6))]),
+    )
+    .await;
+    let index = go_index_with(&["1", "1.27", "garbage", "1.26.10", "1.27.3"]);
+
+    let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&index)
+        .await
+        .unwrap();
+
+    assert_eq!(versions(&result), vec!["1.27.3", "1.27.4"]);
+}
+
+#[tokio::test]
 async fn undated_release_with_empty_catalog_holds_back() {
     // With nothing cataloged, no branch has a newest patch, so any undated
     // release counts as pending.
