@@ -217,6 +217,27 @@ async fn undated_release_below_the_catalog_floor_does_not_hold_back() {
 }
 
 #[tokio::test]
+async fn undated_release_with_no_catalog_floor_holds_back() {
+    // An empty catalog has no floor, so the scanner applies no cutoff and
+    // any undated release counts as pending.
+    let server = serve(
+        json!([
+            { "version": "go1.27.4", "stable": true },
+            { "version": "go1.21.13", "stable": true }
+        ]),
+        history(&[("1.27.4", days_ago(1))]),
+    )
+    .await;
+
+    let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&go_index_with(&[]))
+        .await
+        .unwrap();
+
+    assert_eq!(versions(&result), Vec::<&str>::new());
+}
+
+#[tokio::test]
 async fn feed_entry_without_stable_flag_is_excluded() {
     let server = serve(
         json!([
