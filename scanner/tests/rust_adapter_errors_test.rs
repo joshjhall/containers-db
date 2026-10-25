@@ -43,7 +43,7 @@ async fn missing_source_repo_returns_error() {
         path: std::path::PathBuf::from("/tmp/index.json"),
     };
     let err = adapter.fetch(&index).await.unwrap_err();
-    assert!(err.to_string().contains("no source_repo"));
+    assert_eq!(err.to_string(), "tool `rust` has no source_repo");
 }
 
 #[tokio::test]
@@ -57,7 +57,11 @@ async fn non_github_source_repo_returns_error() {
         path: std::path::PathBuf::from("/tmp/index.json"),
     };
     let err = adapter.fetch(&index).await.unwrap_err();
-    assert!(err.to_string().contains("not a GitHub URL"));
+    assert_eq!(
+        err.to_string(),
+        "tool `rust` source_repo `https://gitlab.com/rust-lang/rust` is not a GitHub URL \
+         the rust adapter understands"
+    );
 }
 
 /// A stalled api.github.com must fail this tool's scan, not hang

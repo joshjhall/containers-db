@@ -45,7 +45,10 @@ async fn non_json_feed_is_a_decode_error() {
         .unwrap_err()
         .to_string();
 
-    assert!(err.contains("download feed JSON decode failed"), "{err}");
+    assert!(
+        err.starts_with("go.dev download feed JSON decode failed: "),
+        "{err}"
+    );
 }
 
 #[tokio::test]
