@@ -515,6 +515,9 @@ async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
         elapsed < std::time::Duration::from_secs(3),
         "took {elapsed:?}"
     );
-    let expected = format!("GET {}/dl/?mode=json&include=all failed:", server.uri());
+    let expected = format!(
+        "GET {}/dl/?mode=json&include=all failed: timed out:",
+        server.uri()
+    );
     assert!(err.starts_with(&expected), "{err}");
 }

@@ -29,9 +29,24 @@ pub(crate) fn http_client(timeout: Duration) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(timeout)
-        .connect_timeout(CONNECT_TIMEOUT.min(timeout))
+        .connect_timeout(connect_timeout_for(timeout))
         .build()
         .expect("reqwest client build")
+}
+
+fn connect_timeout_for(request_timeout: Duration) -> Duration {
+    CONNECT_TIMEOUT.min(request_timeout)
+}
+
+/// Map a failed `send()` to the `GET {url} failed: …` error every adapter
+/// reports. reqwest's own message does not say a timeout fired, so one is
+/// named explicitly — a stalled upstream should read as such in the run log.
+pub(crate) fn request_error(url: &str, e: reqwest::Error) -> anyhow::Error {
+    if e.is_timeout() {
+        anyhow::anyhow!("GET {url} failed: timed out: {e}")
+    } else {
+        anyhow::anyhow!("GET {url} failed: {e}")
+    }
 }
 
 /// Built-in registry shipped with the scanner. `register_all` callers
@@ -59,8 +74,12 @@ mod tests {
     }
 
     #[test]
-    fn http_client_builds_at_default_and_sub_connect_timeouts() {
-        http_client(DEFAULT_REQUEST_TIMEOUT);
-        http_client(Duration::from_millis(1));
+    fn connect_timeout_is_capped_at_the_request_timeout() {
+        assert_eq!(
+            connect_timeout_for(DEFAULT_REQUEST_TIMEOUT),
+            CONNECT_TIMEOUT
+        );
+        let short = Duration::from_millis(200);
+        assert_eq!(connect_timeout_for(short), short);
     }
 }
