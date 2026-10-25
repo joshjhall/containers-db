@@ -66,6 +66,16 @@ fn non_json_entry_in_versions_panics() {
 }
 
 #[test]
+fn directory_in_versions_panics() {
+    // A `.json`-named directory isolates the is_file() half of the guard
+    // from the extension half that non_json_entry_in_versions_panics drives.
+    let root = pristine();
+    fs::create_dir(root.path().join("tools/go/versions/nested.json")).unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("unexpected entry in versions/"), "{msg}");
+}
+
+#[test]
 fn versioned_tool_missing_versions_dir_panics() {
     let root = pristine();
     fs::rename(

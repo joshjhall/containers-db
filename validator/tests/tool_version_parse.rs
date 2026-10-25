@@ -93,32 +93,42 @@ fn tool_mismatch_flags_a_foreign_tool_id() {
     );
 }
 
-#[test]
-fn tool_version_rejects_an_unknown_top_level_field() {
-    let mut value = first_go_version();
+/// The first shipped version file carrying every strict nested struct
+/// (`install_methods`, `support_matrix`, and `tested` rows), so one fixture
+/// reaches each `deny_unknown_fields` level the module doc names.
+fn fully_populated_version() -> serde_json::Value {
+    let value = version_files()
+        .into_iter()
+        .map(|p| {
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(p).unwrap()).unwrap()
+        })
+        .find(|v| {
+            ["install_methods", "support_matrix", "tested"]
+                .iter()
+                .all(|k| v[k].as_array().is_some_and(|a| !a.is_empty()))
+        })
+        .expect("a version file with install_methods, support_matrix and tested rows");
+    // The unmutated file parses, so a rejection after mutation is the injected field.
+    serde_json::from_value::<ToolVersion>(value.clone()).expect("pristine version parses");
     value
-        .as_object_mut()
-        .unwrap()
-        .insert("not_a_catalog_field".into(), true.into());
-    let err = serde_json::from_value::<ToolVersion>(value)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("not_a_catalog_field"), "{err}");
 }
 
 #[test]
-fn tool_version_rejects_an_unknown_install_method_field() {
-    // Nested structs are strict too, which is what catches the live skew:
-    // `build_steps` is in the schema (#461) but not in the pinned
-    // `InstallMethod`. A permanently-invalid name keeps this test true after
-    // the pin moves past #809.
-    let mut value = first_go_version();
-    value["install_methods"][0]
-        .as_object_mut()
-        .expect("go version has an install method")
-        .insert("not_a_catalog_field".into(), true.into());
-    let err = serde_json::from_value::<ToolVersion>(value)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("not_a_catalog_field"), "{err}");
+fn tool_version_rejects_an_unknown_field_at_every_strict_level() {
+    // `""` is ToolVersion itself; the rest are InstallMethod, SupportEntry and
+    // TestEntry. InstallMethod is what catches the live skew — `build_steps`
+    // is in the schema (#461) but not the pinned struct — but a
+    // permanently-invalid name keeps this true after the pin moves past #809.
+    for pointer in ["", "/install_methods/0", "/support_matrix/0", "/tested/0"] {
+        let mut value = fully_populated_version();
+        value
+            .pointer_mut(pointer)
+            .and_then(|v| v.as_object_mut())
+            .unwrap_or_else(|| panic!("no object at {pointer:?}"))
+            .insert("not_a_catalog_field".into(), true.into());
+        let err = serde_json::from_value::<ToolVersion>(value)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not_a_catalog_field"), "{pointer:?}: {err}");
+    }
 }
