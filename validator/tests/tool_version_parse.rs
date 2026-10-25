@@ -54,17 +54,40 @@ fn every_version_file_deserializes_as_tool_version() {
     );
 }
 
+/// `None` when `v.tool` names the directory `path` lives in; otherwise the
+/// mismatch, so an unparseable file is reported rather than skipped.
+fn tool_mismatch(path: &Path, v: Result<ToolVersion, String>) -> Option<String> {
+    match v {
+        Ok(v) if v.tool == version_file_tool(path) => None,
+        Ok(v) => Some(format!("{}: tool = {:?}", path.display(), v.tool)),
+        Err(e) => Some(e),
+    }
+}
+
 #[test]
 fn version_file_tool_field_matches_its_directory() {
     let mismatched: Vec<String> = version_files()
         .iter()
-        .filter_map(|p| {
-            let v = parse(p).ok()?;
-            let dir = version_file_tool(p);
-            (v.tool != dir).then(|| format!("{}: tool = {:?}", p.display(), v.tool))
-        })
+        .filter_map(|p| tool_mismatch(p, parse(p)))
         .collect();
     assert!(mismatched.is_empty(), "{}", mismatched.join("\n"));
+}
+
+#[test]
+fn tool_mismatch_flags_a_foreign_tool_id() {
+    let path = version_files()
+        .into_iter()
+        .find(|p| version_file_tool(p) == "go")
+        .expect("a go version file");
+    let mut value = first_go_version();
+    assert_eq!(
+        tool_mismatch(&path, Ok(serde_json::from_value(value.clone()).unwrap())),
+        None
+    );
+    value["tool"] = "rust".into();
+    let msg = tool_mismatch(&path, Ok(serde_json::from_value(value).unwrap())).unwrap();
+    assert!(msg.contains("tool = \"rust\""), "{msg}");
+    assert!(tool_mismatch(&path, Err("unparseable".into())).is_some());
 }
 
 #[test]

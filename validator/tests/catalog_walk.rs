@@ -78,6 +78,22 @@ fn versioned_tool_missing_versions_dir_panics() {
 }
 
 #[test]
+fn versioned_tool_with_empty_versions_dir_panics() {
+    let root = pristine();
+    fs::remove_file(root.path().join("tools/go/versions/1.0.0.json")).unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("versions/ is empty"), "{msg}");
+}
+
+#[test]
+fn index_without_kind_panics() {
+    let root = pristine();
+    fs::write(root.path().join("tools/bash/index.json"), "{}").unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("index has no string `kind`"), "{msg}");
+}
+
+#[test]
 fn system_package_with_versions_dir_panics() {
     let root = pristine();
     fs::create_dir(root.path().join("tools/bash/versions")).unwrap();

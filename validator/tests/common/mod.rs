@@ -70,12 +70,16 @@ fn expects_versions(index: &Path) -> bool {
     let text = fs::read_to_string(index).unwrap_or_else(|e| panic!("{}: {e}", index.display()));
     let value: serde_json::Value =
         serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", index.display()));
-    value["kind"] != "system_package"
+    let kind = value["kind"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{}: index has no string `kind`", index.display()));
+    kind != "system_package"
 }
 
 /// Every `tools/<id>/versions/*.json`, sorted. Panics on any non-`.json`
-/// entry in a `versions/` directory, and on a `versions/` directory that is
-/// missing where the tool's kind requires one (or present where it does not).
+/// entry in a `versions/` directory, on an empty one, and on a `versions/`
+/// directory that is missing where the tool's kind requires one (or present
+/// where it does not).
 pub fn version_files_in(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for index in tool_indexes_in(root) {
@@ -90,6 +94,7 @@ pub fn version_files_in(root: &Path) -> Vec<PathBuf> {
         if !versions.is_dir() {
             continue;
         }
+        let before = files.len();
         for entry in fs::read_dir(&versions).expect("read versions/") {
             let path = entry.expect("versions/ entry").path();
             assert!(
@@ -99,6 +104,11 @@ pub fn version_files_in(root: &Path) -> Vec<PathBuf> {
             );
             files.push(path);
         }
+        assert!(
+            files.len() > before,
+            "{}: versions/ is empty",
+            dir.display()
+        );
     }
     files.sort();
     files
