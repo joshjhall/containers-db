@@ -3,7 +3,10 @@
 //! covers version selection. No live network — `wiremock` or a raw loopback
 //! socket stands in for go.dev.
 
+mod common;
+
 use chrono::{DateTime, TimeZone, Utc};
+use common::{serve_partial_body, serve_stalled_body};
 use scanner::adapter::{Adapter, ToolIndex};
 use scanner::adapters::go::GoAdapter;
 use serde_json::json;
@@ -156,29 +159,6 @@ async fn refused_connection_is_not_reported_as_a_timeout() {
     let expected = format!("GET {uri}/dl/?mode=json&include=all failed:");
     assert!(err.starts_with(&expected), "{err}");
     assert!(!err.contains("timed out:"), "{err}");
-}
-
-/// Serve one connection that sends `head` (a status line, headers promising
-/// more body than follows, and a body fragment), then stalls past any test
-/// timeout. `ResponseTemplate`'s delay holds the headers back too, so it
-/// cannot reach the body-read step.
-fn serve_stalled_body(head: &'static [u8]) -> String {
-    serve_partial_body(head, std::time::Duration::from_secs(5))
-}
-
-/// Serve one connection that sends `head`, holds the socket open for `hold`,
-/// then closes it short of the promised body.
-fn serve_partial_body(head: &'static [u8], hold: std::time::Duration) -> String {
-    use std::io::{Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    std::thread::spawn(move || {
-        let (mut conn, _) = listener.accept().unwrap();
-        let _ = conn.read(&mut [0u8; 4096]);
-        let _ = conn.write_all(head);
-        std::thread::sleep(hold);
-    });
-    format!("http://{addr}")
 }
 
 /// The client timeout spans the body read, so a stall after the headers must
