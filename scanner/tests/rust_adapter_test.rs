@@ -468,6 +468,12 @@ async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
 /// timeout. `ResponseTemplate`'s delay holds the headers back too, so it
 /// cannot reach the body-read step.
 fn serve_stalled_body(head: &'static [u8]) -> String {
+    serve_partial_body(head, std::time::Duration::from_secs(5))
+}
+
+/// Serve one connection that sends `head`, holds the socket open for `hold`,
+/// then closes it short of the promised body.
+fn serve_partial_body(head: &'static [u8], hold: std::time::Duration) -> String {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -475,7 +481,7 @@ fn serve_stalled_body(head: &'static [u8]) -> String {
         let (mut conn, _) = listener.accept().unwrap();
         let _ = conn.read(&mut [0u8; 4096]);
         let _ = conn.write_all(head);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::sleep(hold);
     });
     format!("http://{addr}")
 }
@@ -554,5 +560,29 @@ async fn non_2xx_with_stalled_body_reports_unreadable_body() {
          <body unreadable: timed out:"
     );
     assert!(err.starts_with(&expected), "{err}");
+    assert!(err.ends_with('>'), "{err}");
+}
+
+/// A non-2xx whose error body is cut off by the connection closing (not a
+/// stall) still reports the body as unreadable — and without the `timed out:`
+/// tag, which is reserved for timeouts.
+#[tokio::test]
+async fn non_2xx_with_truncated_body_is_unreadable_not_timed_out() {
+    let uri = serve_partial_body(
+        b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 1000\r\n\r\nupstream is",
+        std::time::Duration::ZERO,
+    );
+
+    let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .fetch(&rust_index(&uri))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!(
+        "GET {uri}/repos/rust-lang/rust returned 503 Service Unavailable: <body unreadable: "
+    );
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(!err.contains("timed out:"), "{err}");
     assert!(err.ends_with('>'), "{err}");
 }
