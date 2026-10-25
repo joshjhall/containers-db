@@ -94,6 +94,22 @@ fn index_without_kind_panics() {
 }
 
 #[test]
+fn index_with_non_string_kind_panics() {
+    let root = pristine();
+    fs::write(root.path().join("tools/bash/index.json"), r#"{"kind":1}"#).unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("index has no string `kind`"), "{msg}");
+}
+
+#[test]
+fn malformed_index_panics_naming_it() {
+    let root = pristine();
+    fs::write(root.path().join("tools/bash/index.json"), "not json").unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("bash/index.json: expected"), "{msg}");
+}
+
+#[test]
 fn system_package_with_versions_dir_panics() {
     let root = pristine();
     fs::create_dir(root.path().join("tools/bash/versions")).unwrap();

@@ -87,7 +87,10 @@ fn tool_mismatch_flags_a_foreign_tool_id() {
     value["tool"] = "rust".into();
     let msg = tool_mismatch(&path, Ok(serde_json::from_value(value).unwrap())).unwrap();
     assert!(msg.contains("tool = \"rust\""), "{msg}");
-    assert!(tool_mismatch(&path, Err("unparseable".into())).is_some());
+    assert_eq!(
+        tool_mismatch(&path, Err("unparseable".into())),
+        Some("unparseable".to_owned())
+    );
 }
 
 #[test]
