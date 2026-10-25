@@ -8,27 +8,14 @@
 //! `Tool` (the scanner and validator use their own lenient structs), so
 //! without this test that skew would only surface downstream.
 
+mod common;
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use containers_common::tooldb::Tool;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_path_buf()
-}
-
-fn tool_indexes() -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = fs::read_dir(repo_root().join("tools"))
-        .expect("read tools/")
-        .map(|e| e.expect("tools/ entry").path().join("index.json"))
-        .filter(|p| p.is_file())
-        .collect();
-    paths.sort();
-    paths
-}
+use common::{repo_root, tool_dirs, tool_id, tool_indexes};
 
 fn parse(path: &Path) -> Result<Tool, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -38,11 +25,16 @@ fn parse(path: &Path) -> Result<Tool, String> {
 #[test]
 fn every_tool_index_deserializes_as_tool() {
     let paths = tool_indexes();
-    // Guard against a silently empty walk (wrong root) passing vacuously.
-    assert!(
-        paths.len() >= 2,
-        "expected the shipped tool indexes, found {paths:?}"
-    );
+    // One index per tool directory (tool_indexes panics on a missing one),
+    // and the walk is rooted where the catalog actually is.
+    assert_eq!(paths.len(), tool_dirs().len());
+    let ids: Vec<String> = tool_dirs().iter().map(|d| tool_id(d)).collect();
+    for known in ["go", "rust"] {
+        assert!(
+            ids.iter().any(|id| id == known),
+            "walk missed tools/{known}/: {ids:?}"
+        );
+    }
     let failures: Vec<String> = paths.iter().filter_map(|p| parse(p).err()).collect();
     assert!(
         failures.is_empty(),
@@ -55,4 +47,20 @@ fn every_tool_index_deserializes_as_tool() {
 fn go_index_carries_version_args() {
     let go = parse(&repo_root().join("tools/go/index.json")).unwrap();
     assert_eq!(go.version_args, Some(vec!["version".to_owned()]));
+}
+
+#[test]
+fn tool_rejects_an_unknown_index_field() {
+    let text = fs::read_to_string(repo_root().join("tools/go/index.json")).unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    // The unmutated index parses, so the rejection below is the injected field.
+    serde_json::from_value::<Tool>(value.clone()).expect("pristine go index parses");
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("not_a_catalog_field".into(), true.into());
+    let err = serde_json::from_value::<Tool>(value)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not_a_catalog_field"), "{err}");
 }
