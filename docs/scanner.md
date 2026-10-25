@@ -119,7 +119,9 @@ high-water mark, so an adapter must never guess a missing release
 date, and must not emit one release while a same-day sibling is still
 undated: once the dated one is cataloged, the sibling's date is no
 longer newer and it is rejected on every later scan. The go adapter
-holds back all new releases until every one of them is dated.
+holds back all new releases while any release newer than its branch's
+newest cataloged patch is undated; an undated gap further back in a
+branch's history never blocks.
 
 ### 3. Record HTTP fixtures with `wiremock`
 

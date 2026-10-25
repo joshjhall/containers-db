@@ -194,19 +194,21 @@ async fn held_back_releases_land_together_once_both_are_dated() {
 }
 
 #[tokio::test]
-async fn undated_release_below_the_catalog_floor_does_not_hold_back() {
-    // The scanner would never admit a pre-floor release anyway, so an
-    // undated one must not stall every new release indefinitely.
+async fn permanently_undated_historical_gap_does_not_hold_back() {
+    // 1.26.4 is older than the newest cataloged 1.26.x, so it is a gap in
+    // history the cutoff would never admit, not a sibling still arriving.
+    // If the history page never dates it, it must not stall new releases
+    // for good.
     let server = serve(
         json!([
             { "version": "go1.27.4", "stable": true },
-            { "version": "go1.21.13", "stable": true },
+            { "version": "go1.26.4", "stable": true },
             { "version": "go1.27.3", "stable": true }
         ]),
         history(&[("1.27.4", days_ago(1)), ("1.27.3", days_ago(6))]),
     )
     .await;
-    let index = go_index_with(&["1.22.0", "1.27.3"]);
+    let index = go_index_with(&["1.26.10", "1.27.3"]);
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
         .fetch(&index)
@@ -217,9 +219,32 @@ async fn undated_release_below_the_catalog_floor_does_not_hold_back() {
 }
 
 #[tokio::test]
-async fn undated_release_with_no_catalog_floor_holds_back() {
-    // An empty catalog has no floor, so the scanner applies no cutoff and
-    // any undated release counts as pending.
+async fn undated_new_minor_holds_back_its_patch_sibling() {
+    // A new minor ships alongside a patch of the previous one. No 1.28.x is
+    // cataloged yet, so an undated 1.28.0 is a sibling still arriving.
+    let server = serve(
+        json!([
+            { "version": "go1.28.0", "stable": true },
+            { "version": "go1.27.4", "stable": true },
+            { "version": "go1.27.3", "stable": true }
+        ]),
+        history(&[("1.27.4", days_ago(1)), ("1.27.3", days_ago(6))]),
+    )
+    .await;
+    let index = go_index_with(&["1.27.3"]);
+
+    let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&index)
+        .await
+        .unwrap();
+
+    assert_eq!(versions(&result), vec!["1.27.3"]);
+}
+
+#[tokio::test]
+async fn undated_release_with_empty_catalog_holds_back() {
+    // With nothing cataloged, no branch has a newest patch, so any undated
+    // release counts as pending.
     let server = serve(
         json!([
             { "version": "go1.27.4", "stable": true },

@@ -11,8 +11,9 @@
 //! match the catalog's `released` field (the tarball `Last-Modified` header
 //! is UTC and lands a day late for evening-Pacific releases). The scanner
 //! uses `released` as its high-water mark, so an undated release is never
-//! guessed: while any new one is undated, every new release is held back
-//! (see `fetch`) and they land together once the page catches up.
+//! guessed: while any release newer than its branch's cataloged patches is
+//! undated, every new release is held back (see `fetch`) and they land
+//! together once the page catches up.
 //!
 //! Only `releases_last_90d` and `last_release_at` are computed; there is no
 //! repo or advisory call, so `last_commit_at` and `open_advisories` stay
@@ -151,16 +152,32 @@ impl Adapter for GoAdapter {
         // Go ships its two supported branches on the same day. Emitting the
         // dated one alone would make its `released` the scanner's
         // high-water mark, and the strictly-newer cutoff would then reject
-        // the sibling forever once it is dated. So while any uncataloged
-        // release at or above the catalog floor is still undated, hold back
+        // the sibling forever once it is dated. So while any undated release
+        // is newer than everything cataloged on its own branch, hold back
         // every uncataloged release until they can land together.
+        //
+        // Only a release past its branch's newest cataloged patch can be a
+        // sibling still arriving; an undated gap below that is history the
+        // cutoff would never admit, and must not stall new releases for good.
         let cataloged: HashSet<String> = index.available_versions().into_iter().collect();
-        let floor = cataloged.iter().map(|v| version_key(Some(v))).min();
+        let mut newest_on_branch: HashMap<Vec<u64>, Vec<u64>> = HashMap::new();
+        for v in cataloged.iter().filter(|v| is_strict_semver(v)) {
+            let key = version_key(Some(v));
+            let entry = newest_on_branch.entry(key[..2].to_vec()).or_default();
+            if key > *entry {
+                *entry = key;
+            }
+        }
         let pending: Vec<&str> = stable
             .iter()
             .copied()
             .filter(|v| !cataloged.contains(*v) && !dates.contains_key(*v))
-            .filter(|v| floor.as_ref().is_none_or(|f| version_key(Some(v)) >= *f))
+            .filter(|v| {
+                let key = version_key(Some(v));
+                newest_on_branch
+                    .get(&key[..2])
+                    .is_none_or(|newest| key > *newest)
+            })
             .collect();
         if !pending.is_empty() {
             eprintln!(
