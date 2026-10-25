@@ -53,15 +53,20 @@ const TOOL_DIR_ENTRIES: [(&str, bool); 3] =
 
 /// Panics on any entry in a tool directory outside [`TOOL_DIR_ENTRIES`], or
 /// of the wrong file/directory type, so a misnamed `version/` or a stray file
-/// cannot sit unwalked beside the entries the walks read.
+/// cannot sit unwalked beside the entries the walks read. The type comes from
+/// the entry itself, not its target, so a symlink matches neither kind.
 fn check_tool_dir_entries(dir: &Path) {
     for entry in fs::read_dir(dir).expect("read tool dir") {
-        let path = entry.expect("tool dir entry").path();
+        let entry = entry.expect("tool dir entry");
+        let path = entry.path();
+        let kind = entry.file_type().expect("tool dir entry type");
+        let (is_dir, is_file) = (kind.is_dir(), kind.is_file());
         let name = path.file_name().unwrap().to_string_lossy();
         assert!(
             TOOL_DIR_ENTRIES
                 .iter()
-                .any(|&(allowed, is_dir)| name == allowed && path.is_dir() == is_dir),
+                .any(|&(allowed, want_dir)| name == allowed
+                    && (is_dir, is_file) == (want_dir, !want_dir)),
             "unexpected entry in tool dir: {}",
             path.display()
         );

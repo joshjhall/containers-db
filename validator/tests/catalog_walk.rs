@@ -181,6 +181,22 @@ fn versions_as_file_panics() {
     assert!(msg.contains("go/versions"), "{msg}");
 }
 
+#[cfg(unix)]
+#[test]
+fn symlinked_recipes_dir_panics() {
+    // A symlink to a directory is not a directory entry of the tool dir,
+    // so it cannot pass the allow-list's type check by following its target.
+    let root = pristine();
+    std::os::unix::fs::symlink(
+        root.path().join("tools/go/recipes"),
+        root.path().join("tools/bash/recipes"),
+    )
+    .unwrap();
+    let msg = panic_message(|| walk_all(root.path()));
+    assert!(msg.contains("unexpected entry in tool dir"), "{msg}");
+    assert!(msg.contains("bash/recipes"), "{msg}");
+}
+
 #[test]
 fn index_json_as_dir_panics() {
     let root = pristine();
