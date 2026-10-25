@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_source",
+  "version": "3.13.1",
+  "released": "2026-10-01",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "source-build",
+      "method_kind": "source-build",
+      "platform": {
+        "os": ["debian", "ubuntu"],
+        "arch": ["amd64", "arm64"]
+      },
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "source_url_template": "https://example.invalid/sample-source/{version}/Sample-{version}.tgz",
+      "strip_components": 1,
+      "build_steps": [
+        {
+          "command": "./configure",
+          "args": ["--prefix=/usr/local", "--enable-shared", "LDFLAGS=-Wl,-rpath /usr/local/lib"]
+        },
+        { "command": "make", "args": ["-j{nproc}"] },
+        { "command": "make", "args": ["install"] }
+      ],
+      "binaries": ["sample3"],
+      "bin_source_dir": "bin"
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-10-25T00:00:00Z",
+    "updated_at": "2026-10-25T00:00:00Z",
+    "schema_version": 1
+  }
+}

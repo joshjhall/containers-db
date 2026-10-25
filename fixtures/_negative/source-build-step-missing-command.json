@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_bad",
+  "version": "1.0.0",
+  "install_methods": [
+    {
+      "name": "source-build",
+      "method_kind": "source-build",
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "source_url_template": "https://example.invalid/sample/1.0.0.tgz",
+      "build_steps": [{ "args": ["install"] }]
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-10-25T00:00:00Z",
+    "schema_version": 1
+  }
+}
