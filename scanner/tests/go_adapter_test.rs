@@ -521,3 +521,29 @@ async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
     );
     assert!(err.starts_with(&expected), "{err}");
 }
+
+/// The `timed out:` tag must be reserved for timeouts: a refused connection
+/// keeps the plain `GET {url} failed:` form, so the run log does not blame a
+/// dead host on a slow one.
+#[tokio::test]
+async fn refused_connection_is_not_reported_as_a_timeout() {
+    // Bind an ephemeral port and drop the listener so nothing is accepting
+    // on it. Not a dropped MockServer: wiremock pools servers, so the port
+    // would still answer (with a 404).
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let uri = format!("http://127.0.0.1:{port}");
+
+    let err = GoAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!("GET {uri}/dl/?mode=json&include=all failed:");
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(!err.contains("timed out:"), "{err}");
+}
