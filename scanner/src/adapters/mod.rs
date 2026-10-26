@@ -25,6 +25,13 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The HTTP client every adapter builds on, so each one gets the user agent
 /// and both timeouts without repeating them.
+///
+/// The `.connect_timeout(..)` wiring is deliberately not pinned by a test:
+/// only [`connect_timeout_for`] is. Observing it needs a TCP connect that
+/// stalls rather than fails, and nothing hermetic produces one portably — a
+/// non-routable address fails fast or hangs depending on the host's routing,
+/// and a full listen backlog stalls a connect only on some kernels. A loopback
+/// refusal fails immediately either way, so it cannot tell the call apart.
 pub(crate) fn http_client(timeout: Duration) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)

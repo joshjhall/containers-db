@@ -125,6 +125,56 @@ async fn stall_mid_body_times_out_with_an_error_naming_the_url() {
     assert!(err.starts_with(&expected), "{err}");
 }
 
+/// A 200 with a malformed body is a plain decode failure: the `timed out:`
+/// tag is reserved for timeouts.
+#[tokio::test]
+async fn malformed_json_is_a_decode_error_not_a_timeout() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{not json"))
+        .mount(&server)
+        .await;
+
+    let err = RustAdapter::with_api_base(server.uri())
+        .fetch(&rust_index(&server.uri()))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!(
+        "GET {}/repos/rust-lang/rust JSON decode failed:",
+        server.uri()
+    );
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(!err.contains("timed out:"), "{err}");
+}
+
+/// A refused connection keeps the plain `GET {url} failed:` form, so the run
+/// log does not blame a dead host on a slow one.
+#[tokio::test]
+async fn refused_connection_is_not_reported_as_a_timeout() {
+    // Bind an ephemeral port and drop the listener so nothing is accepting
+    // on it. Not a dropped MockServer: wiremock pools servers, so the port
+    // would still answer (with a 404).
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let uri = format!("http://127.0.0.1:{port}");
+
+    let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .fetch(&rust_index(&uri))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!("GET {uri}/repos/rust-lang/rust failed:");
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(!err.contains("timed out:"), "{err}");
+}
+
 /// A non-2xx with a readable body reports the status and the body verbatim.
 #[tokio::test]
 async fn non_2xx_error_names_the_url_status_and_body() {

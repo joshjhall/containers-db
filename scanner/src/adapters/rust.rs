@@ -33,6 +33,11 @@ pub struct RustAdapter {
     /// `with_fixed_now` sets it, so tests can pin the window edge to the
     /// second instead of straddling it with a clock-drift margin.
     now_override: Option<DateTime<Utc>>,
+    /// The request timeout `client` was built with. reqwest does not expose
+    /// it, so this copy is what lets a unit test pin that every production
+    /// constructor passes `DEFAULT_REQUEST_TIMEOUT` (issue #472).
+    #[cfg(test)]
+    timeout: StdDuration,
 }
 
 impl Default for RustAdapter {
@@ -76,6 +81,8 @@ impl RustAdapter {
             client: http_client(timeout),
             api_base: api_base.into(),
             now_override,
+            #[cfg(test)]
+            timeout,
         }
     }
 }
@@ -258,6 +265,25 @@ fn strip_v(tag: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every timeout test goes through `with_timeout`, so without this a
+    /// production constructor could drop `DEFAULT_REQUEST_TIMEOUT` — and bring
+    /// back the #467 hang — with every test green.
+    #[test]
+    fn production_constructors_use_the_default_request_timeout() {
+        let now = Utc::now();
+        for (name, adapter) in [
+            ("new", RustAdapter::new()),
+            ("default", RustAdapter::default()),
+            ("with_api_base", RustAdapter::with_api_base("http://x")),
+            (
+                "with_fixed_now",
+                RustAdapter::with_fixed_now("http://x", now),
+            ),
+        ] {
+            assert_eq!(adapter.timeout, DEFAULT_REQUEST_TIMEOUT, "{name}");
+        }
+    }
 
     #[test]
     fn parses_https_github_url() {
