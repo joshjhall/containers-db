@@ -8,8 +8,8 @@ worked example (`tools/go/versions/*.json`, #482).
 
 - Upstream publishes a `linux-{arch}` tarball that does not link against the
   host libc, either fully static or with no libc-version-specific symbols. Go's
-  release toolchain is built with `CGO_ENABLED=0`, so the same tarball runs on
-  musl.
+  release binaries are statically linked, so the same tarball is expected to
+  run on musl; the evidence run is what confirms it (see Evidence below).
 - If upstream's tarball is glibc-linked (Node.js is), it will not run on
   alpine. Keep the glibc method and give alpine a different install shape
   (source-build or a distro package) in its own method, per the node alpine
