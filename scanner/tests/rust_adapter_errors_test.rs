@@ -166,13 +166,64 @@ async fn oversized_error_body_is_capped_and_escaped() {
         .unwrap_err()
         .to_string();
 
-    // 609 source bytes (U+2028 and U+202E are 3 each): the first 512 are kept,
-    // the other 97 are dropped.
+    // 609 body bytes (U+2028 and U+202E are 3 each): the first 512 are kept.
     let expected = format!(
         "GET {}/repos/rust-lang/rust returned 503 Service Unavailable: \
-         a\\u{{2028}}b\\u{{202e}}c{} … (97 bytes truncated)",
+         a\\u{{2028}}b\\u{{202e}}c{} … (truncated: body over 512 bytes)",
         server.uri(),
         "z".repeat(503)
+    );
+    assert_eq!(err, expected);
+}
+
+/// A body far over the cap that then stalls is not read to the end: the
+/// error returns as soon as the cap is reached, not at the client timeout
+/// (issue #477).
+#[tokio::test]
+async fn oversized_error_body_is_not_read_to_the_end() {
+    let mut head = b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 100000\r\n\r\n".to_vec();
+    head.extend_from_slice(&[b'q'; 600]);
+    let uri = serve_stalled_body(head);
+
+    let started = std::time::Instant::now();
+    let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(10))
+        .fetch(&rust_index(&uri))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "took {elapsed:?}"
+    );
+    let expected = format!(
+        "GET {uri}/repos/rust-lang/rust returned 503 Service Unavailable: \
+         {} … (truncated: body over 512 bytes)",
+        "q".repeat(512)
+    );
+    assert_eq!(err, expected);
+}
+
+/// Invalid UTF-8 in the body is replaced, as `text()` did, not rejected.
+#[tokio::test]
+async fn invalid_utf8_error_body_is_replaced() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust"))
+        .respond_with(ResponseTemplate::new(503).set_body_bytes(b"bad\xffbyte".to_vec()))
+        .mount(&server)
+        .await;
+
+    let err = RustAdapter::with_api_base(server.uri())
+        .fetch(&rust_index(&server.uri()))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!(
+        "GET {}/repos/rust-lang/rust returned 503 Service Unavailable: bad\u{FFFD}byte",
+        server.uri()
     );
     assert_eq!(err, expected);
 }
