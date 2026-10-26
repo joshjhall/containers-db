@@ -59,6 +59,7 @@ pub(crate) fn request_error(url: &str, what: &str, e: reqwest::Error) -> anyhow:
 /// than as an empty body that hides why the message is blank (issue #473).
 /// A readable body is passed through [`sanitize_error_body`] so an oversized
 /// or hostile upstream body cannot bloat or split the log line (issue #475).
+/// The body is still read whole first, bounded only by the client timeout.
 pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let body = match response.text().await {
@@ -74,14 +75,15 @@ pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyh
 const MAX_ERROR_BODY_BYTES: usize = 512;
 
 /// Cap `body` at [`MAX_ERROR_BODY_BYTES`] (cut on a char boundary, with a
-/// `… (N bytes truncated)` marker) and escape its control characters so it
-/// stays on one log line. Only control characters are escaped — quotes and
-/// backslashes pass through, so a short JSON error body reads as sent.
+/// `… (N bytes truncated)` marker) and escape the characters that could break
+/// or spoof the log line ([`breaks_log_line`]). Everything else — including
+/// quotes and backslashes — passes through, so a short JSON error body reads
+/// as sent.
 fn sanitize_error_body(body: &str) -> String {
     let cut = body.floor_char_boundary(MAX_ERROR_BODY_BYTES);
     let mut out = String::with_capacity(cut);
     for c in body[..cut].chars() {
-        if c.is_control() {
+        if breaks_log_line(c) {
             out.extend(c.escape_default());
         } else {
             out.push(c);
@@ -91,6 +93,22 @@ fn sanitize_error_body(body: &str) -> String {
         out.push_str(&format!(" … ({} bytes truncated)", body.len() - cut));
     }
     out
+}
+
+/// Control characters (Cc, incl. NEL), the Unicode line/paragraph separators
+/// that many viewers render as a line break, and the bidi/zero-width format
+/// characters that can visually reorder the rest of the line.
+fn breaks_log_line(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
 }
 
 /// Built-in registry shipped with the scanner. `register_all` callers
@@ -140,6 +158,16 @@ mod tests {
             sanitize_error_body("a\nb\r\tc\x1bd\0"),
             r"a\nb\r\tc\u{1b}d\u{0}"
         );
+    }
+
+    #[test]
+    fn unicode_line_breaks_and_bidi_controls_are_escaped() {
+        assert_eq!(
+            sanitize_error_body("a\u{85}b\u{2028}c\u{2029}d\u{202e}e\u{200b}f\u{2066}g\u{feff}h"),
+            r"a\u{85}b\u{2028}c\u{2029}d\u{202e}e\u{200b}f\u{2066}g\u{feff}h"
+        );
+        // Ordinary non-ASCII text is not touched.
+        assert_eq!(sanitize_error_body("café — ü"), "café — ü");
     }
 
     #[test]
