@@ -150,6 +150,27 @@ async fn malformed_json_is_a_decode_error_not_a_timeout() {
     assert!(!err.contains("timed out:"), "{err}");
 }
 
+/// A 200 whose body is cut off by the connection closing (not a stall) fails
+/// in the same JSON decode step, still without the `timed out:` tag — the
+/// transport-error counterpart of the malformed-body case above.
+#[tokio::test]
+async fn truncated_body_is_a_decode_error_not_a_timeout() {
+    let uri = serve_partial_body(
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{\"ar",
+        std::time::Duration::ZERO,
+    );
+
+    let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .fetch(&rust_index(&uri))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!("GET {uri}/repos/rust-lang/rust JSON decode failed:");
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(!err.contains("timed out:"), "{err}");
+}
+
 /// A refused connection keeps the plain `GET {url} failed:` form, so the run
 /// log does not blame a dead host on a slow one.
 #[tokio::test]
