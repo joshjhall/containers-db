@@ -191,8 +191,9 @@ mod tests {
         assert_eq!(sanitize_error_body("café — ü"), "café — ü");
     }
 
-    /// Both ends of every escaped range, and the neighbours just outside each
-    /// one, so a range that shrinks or widens by one fails here.
+    /// Both ends of every escaped range, and the code point just outside each
+    /// end, so any range or singleton that shrinks or widens by one fails here.
+    /// Generated from Unicode 15.1 Cf/Zl/Zp; no neighbour is itself Cc/Cf/Zl/Zp.
     #[test]
     fn escape_ranges_are_pinned_at_both_ends() {
         let escaped = [
@@ -239,6 +240,16 @@ mod tests {
             '\u{00AE}',
             '\u{05FF}',
             '\u{0606}',
+            '\u{061B}',
+            '\u{061D}',
+            '\u{06DC}',
+            '\u{06DE}',
+            '\u{070E}',
+            '\u{0710}',
+            '\u{088F}',
+            '\u{0892}',
+            '\u{08E1}',
+            '\u{08E3}',
             '\u{180D}',
             '\u{180F}',
             '\u{200A}',
@@ -252,6 +263,16 @@ mod tests {
             '\u{FF00}',
             '\u{FFF8}',
             '\u{FFFC}',
+            '\u{110BC}',
+            '\u{110BE}',
+            '\u{110CC}',
+            '\u{110CE}',
+            '\u{1342F}',
+            '\u{13440}',
+            '\u{1BC9F}',
+            '\u{1BCA4}',
+            '\u{1D172}',
+            '\u{1D17B}',
             '\u{E0000}',
             '\u{E0002}',
             '\u{E001F}',
