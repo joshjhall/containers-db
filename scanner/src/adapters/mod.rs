@@ -57,14 +57,40 @@ pub(crate) fn request_error(url: &str, what: &str, e: reqwest::Error) -> anyhow:
 /// stalls trips the client timeout mid-read — so a failed read is reported as
 /// `<body unreadable: …>` (tagged `timed out:` like [`request_error`]) rather
 /// than as an empty body that hides why the message is blank (issue #473).
+/// A readable body is passed through [`sanitize_error_body`] so an oversized
+/// or hostile upstream body cannot bloat or split the log line (issue #475).
 pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let body = match response.text().await {
-        Ok(body) => body,
+        Ok(body) => sanitize_error_body(&body),
         Err(e) if e.is_timeout() => format!("<body unreadable: timed out: {e}>"),
         Err(e) => format!("<body unreadable: {e}>"),
     };
     anyhow::anyhow!("GET {url} returned {status}: {body}")
+}
+
+/// Longest upstream error body, in source bytes, embedded in a
+/// [`status_error`] message.
+const MAX_ERROR_BODY_BYTES: usize = 512;
+
+/// Cap `body` at [`MAX_ERROR_BODY_BYTES`] (cut on a char boundary, with a
+/// `… (N bytes truncated)` marker) and escape its control characters so it
+/// stays on one log line. Only control characters are escaped — quotes and
+/// backslashes pass through, so a short JSON error body reads as sent.
+fn sanitize_error_body(body: &str) -> String {
+    let cut = body.floor_char_boundary(MAX_ERROR_BODY_BYTES);
+    let mut out = String::with_capacity(cut);
+    for c in body[..cut].chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    if cut < body.len() {
+        out.push_str(&format!(" … ({} bytes truncated)", body.len() - cut));
+    }
+    out
 }
 
 /// Built-in registry shipped with the scanner. `register_all` callers
@@ -99,5 +125,59 @@ mod tests {
         );
         let short = Duration::from_millis(200);
         assert_eq!(connect_timeout_for(short), short);
+    }
+
+    #[test]
+    fn short_error_body_passes_through_unchanged() {
+        let body = r#"{"message":"API rate limit exceeded","path":"C:\\x"}"#;
+        assert_eq!(sanitize_error_body(body), body);
+        assert_eq!(sanitize_error_body(""), "");
+    }
+
+    #[test]
+    fn control_characters_in_error_body_are_escaped() {
+        assert_eq!(
+            sanitize_error_body("a\nb\r\tc\x1bd\0"),
+            r"a\nb\r\tc\u{1b}d\u{0}"
+        );
+    }
+
+    #[test]
+    fn error_body_at_the_cap_is_not_truncated() {
+        let body = "x".repeat(MAX_ERROR_BODY_BYTES);
+        assert_eq!(sanitize_error_body(&body), body);
+    }
+
+    #[test]
+    fn error_body_over_the_cap_is_truncated_with_a_marker() {
+        let body = "x".repeat(MAX_ERROR_BODY_BYTES + 88);
+        let expected = format!(
+            "{} … (88 bytes truncated)",
+            "x".repeat(MAX_ERROR_BODY_BYTES)
+        );
+        assert_eq!(sanitize_error_body(&body), expected);
+    }
+
+    #[test]
+    fn truncation_cuts_on_a_char_boundary() {
+        // "é" is 2 bytes; it straddles the cap, so the cut lands before it.
+        let body = format!("{}é{}", "x".repeat(MAX_ERROR_BODY_BYTES - 1), "y".repeat(9));
+        let expected = format!(
+            "{} … (11 bytes truncated)",
+            "x".repeat(MAX_ERROR_BODY_BYTES - 1)
+        );
+        assert_eq!(sanitize_error_body(&body), expected);
+    }
+
+    #[test]
+    fn escaping_applies_after_truncation() {
+        // The cap bounds source bytes, so an escaped newline before the cut
+        // does not push real bytes past it.
+        let body = format!("\n{}", "x".repeat(MAX_ERROR_BODY_BYTES));
+        let expected = format!(
+            r"\n{} … (1 bytes truncated)",
+            "x".repeat(MAX_ERROR_BODY_BYTES - 1)
+        );
+        assert_eq!(sanitize_error_body(&body), expected);
     }
 }

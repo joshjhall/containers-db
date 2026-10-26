@@ -73,6 +73,34 @@ async fn feed_error_names_the_url() {
     assert_eq!(err, expected);
 }
 
+/// An oversized body with an embedded newline is capped and escaped, so the
+/// error stays one bounded log line (issue #475).
+#[tokio::test]
+async fn oversized_error_body_is_capped_and_escaped() {
+    let server = MockServer::start().await;
+    let body = format!("line1\nline2{}", "z".repeat(600));
+    Mock::given(method("GET"))
+        .and(path("/dl/"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(body))
+        .mount(&server)
+        .await;
+
+    let err = GoAdapter::with_fixed_now(server.uri(), now())
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    // 611 source bytes: the first 512 are kept, the other 99 are dropped.
+    let expected = format!(
+        "GET {}/dl/?mode=json&include=all returned 503 Service Unavailable: \
+         line1\\nline2{} … (99 bytes truncated)",
+        server.uri(),
+        "z".repeat(501)
+    );
+    assert_eq!(err, expected);
+}
+
 #[tokio::test]
 async fn history_page_error_names_the_url() {
     let server = MockServer::start().await;
