@@ -300,6 +300,26 @@ async fn refused_connection_is_not_reported_as_a_timeout() {
     assert!(!err.contains("timed out:"), "{err}");
 }
 
+/// A 200 whose body is cut off by the connection closing (not a stall) is a
+/// plain body-read failure: the `timed out:` tag is reserved for timeouts.
+#[tokio::test]
+async fn truncated_body_is_a_body_read_error_not_a_timeout() {
+    let uri = serve_partial_body(
+        b"HTTP/1.1 200 OK\r\ncontent-length: 1000\r\n\r\n[{\"v",
+        std::time::Duration::ZERO,
+    );
+
+    let err = GoAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .fetch(&go_index())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!("GET {uri}/dl/?mode=json&include=all body read failed:");
+    assert!(err.starts_with(&expected), "{err}");
+    assert!(!err.contains("timed out:"), "{err}");
+}
+
 /// The client timeout spans the body read, so a stall after the headers must
 /// also fail fast and be reported as a timeout, not as a body-read error of
 /// unknown cause.

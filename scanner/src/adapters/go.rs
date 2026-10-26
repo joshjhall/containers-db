@@ -39,6 +39,10 @@ pub struct GoAdapter {
     /// Fixed "now" for the trailing-90-day window, or `None` to sample the
     /// wall clock. Only `with_fixed_now` sets it (see `RustAdapter`).
     now_override: Option<DateTime<Utc>>,
+    /// The request timeout `client` was built with, for the constructor test
+    /// (see `RustAdapter`).
+    #[cfg(test)]
+    timeout: std::time::Duration,
 }
 
 impl Default for GoAdapter {
@@ -79,6 +83,8 @@ impl GoAdapter {
             client: http_client(timeout),
             base: base.into(),
             now_override,
+            #[cfg(test)]
+            timeout,
         }
     }
 }
@@ -244,6 +250,22 @@ mod tests {
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    /// Every timeout test goes through `with_timeout`, so without this a
+    /// production constructor could drop `DEFAULT_REQUEST_TIMEOUT` — and bring
+    /// back the #467 hang — with every test green.
+    #[test]
+    fn production_constructors_use_the_default_request_timeout() {
+        let now = Utc::now();
+        for (name, adapter) in [
+            ("new", GoAdapter::new()),
+            ("default", GoAdapter::default()),
+            ("with_base", GoAdapter::with_base("http://x")),
+            ("with_fixed_now", GoAdapter::with_fixed_now("http://x", now)),
+        ] {
+            assert_eq!(adapter.timeout, DEFAULT_REQUEST_TIMEOUT, "{name}");
+        }
     }
 
     #[test]
