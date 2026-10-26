@@ -155,8 +155,12 @@ async fn malformed_json_is_a_decode_error_not_a_timeout() {
 /// transport-error counterpart of the malformed-body case above.
 #[tokio::test]
 async fn truncated_body_is_a_decode_error_not_a_timeout() {
+    // `{}` is a complete, valid repo body, so a parse failure is impossible:
+    // the only way this fails is the close short of `content-length`. Both
+    // causes render the same reqwest message, so the body is what tells them
+    // apart.
     let uri = serve_partial_body(
-        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{\"ar",
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{}",
         std::time::Duration::ZERO,
     );
 
