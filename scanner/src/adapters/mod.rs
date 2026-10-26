@@ -58,8 +58,9 @@ pub(crate) fn request_error(url: &str, what: &str, e: reqwest::Error) -> anyhow:
 /// `<body unreadable: …>` (tagged `timed out:` like [`request_error`]) rather
 /// than as an empty body that hides why the message is blank (issue #473).
 /// A readable body is passed through [`sanitize_error_body`] so an oversized
-/// or hostile upstream body cannot bloat or split the log line (issue #475).
-/// The body is still read whole first, bounded only by the client timeout.
+/// or hostile upstream body cannot split the log line or grow it without
+/// bound (issue #475). The body is still read whole first, bounded only by the
+/// client timeout.
 pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let body = match response.text().await {
@@ -71,7 +72,8 @@ pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyh
 }
 
 /// Longest upstream error body, in source bytes, embedded in a
-/// [`status_error`] message.
+/// [`status_error`] message. The cap applies before escaping, so a body of
+/// escaped characters can render several times longer — still bounded.
 const MAX_ERROR_BODY_BYTES: usize = 512;
 
 /// Cap `body` at [`MAX_ERROR_BODY_BYTES`] (cut on a char boundary, with a
@@ -95,19 +97,38 @@ fn sanitize_error_body(body: &str) -> String {
     out
 }
 
-/// Control characters (Cc, incl. NEL), the Unicode line/paragraph separators
-/// that many viewers render as a line break, and the bidi/zero-width format
-/// characters that can visually reorder the rest of the line.
+/// Characters that can break a log line or hide/reorder what follows it:
+/// controls (Cc, incl. NEL), the line/paragraph separators (Zl, Zp) that many
+/// viewers render as a break, and every format character (Cf — bidi
+/// overrides, zero-width and invisible characters, tags). The Cf ranges are
+/// the complete category as of Unicode 15.1; std exposes no category lookup.
 fn breaks_log_line(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
             '\u{2028}'
                 | '\u{2029}'
+                | '\u{00AD}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061C}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{180E}'
                 | '\u{200B}'..='\u{200F}'
                 | '\u{202A}'..='\u{202E}'
-                | '\u{2066}'..='\u{2069}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206F}'
                 | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+                | '\u{1D173}'..='\u{1D17A}'
+                | '\u{E0001}'
+                | '\u{E0020}'..='\u{E007F}'
         )
 }
 
@@ -168,6 +189,81 @@ mod tests {
         );
         // Ordinary non-ASCII text is not touched.
         assert_eq!(sanitize_error_body("café — ü"), "café — ü");
+    }
+
+    /// Both ends of every escaped range, and the neighbours just outside each
+    /// one, so a range that shrinks or widens by one fails here.
+    #[test]
+    fn escape_ranges_are_pinned_at_both_ends() {
+        let escaped = [
+            '\u{00AD}',
+            '\u{0600}',
+            '\u{0605}',
+            '\u{061C}',
+            '\u{06DD}',
+            '\u{070F}',
+            '\u{0890}',
+            '\u{0891}',
+            '\u{08E2}',
+            '\u{180E}',
+            '\u{200B}',
+            '\u{200F}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202A}',
+            '\u{202E}',
+            '\u{2060}',
+            '\u{2064}',
+            '\u{2066}',
+            '\u{206F}',
+            '\u{FEFF}',
+            '\u{FFF9}',
+            '\u{FFFB}',
+            '\u{110BD}',
+            '\u{110CD}',
+            '\u{13430}',
+            '\u{1343F}',
+            '\u{1BCA0}',
+            '\u{1BCA3}',
+            '\u{1D173}',
+            '\u{1D17A}',
+            '\u{E0001}',
+            '\u{E0020}',
+            '\u{E007F}',
+        ];
+        for c in escaped {
+            assert!(breaks_log_line(c), "U+{:04X} should be escaped", c as u32);
+        }
+        let kept = [
+            '\u{00AC}',
+            '\u{00AE}',
+            '\u{05FF}',
+            '\u{0606}',
+            '\u{180D}',
+            '\u{180F}',
+            '\u{200A}',
+            '\u{2010}',
+            '\u{2027}',
+            '\u{202F}',
+            '\u{205F}',
+            '\u{2065}',
+            '\u{2070}',
+            '\u{FEFE}',
+            '\u{FF00}',
+            '\u{FFF8}',
+            '\u{FFFC}',
+            '\u{E0000}',
+            '\u{E0002}',
+            '\u{E001F}',
+            '\u{E0080}',
+        ];
+        for c in kept {
+            assert!(
+                !breaks_log_line(c),
+                "U+{:04X} should pass through",
+                c as u32
+            );
+        }
     }
 
     #[test]

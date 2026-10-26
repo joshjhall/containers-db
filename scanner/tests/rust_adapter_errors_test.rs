@@ -148,6 +148,35 @@ async fn non_2xx_error_names_the_url_status_and_body() {
     assert_eq!(err, expected);
 }
 
+/// An oversized body with a line break and a bidi override is capped and
+/// escaped, so the error stays one bounded log line (issue #475).
+#[tokio::test]
+async fn oversized_error_body_is_capped_and_escaped() {
+    let server = MockServer::start().await;
+    let body = format!("a\u{2028}b\u{202e}c{}", "z".repeat(600));
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(body))
+        .mount(&server)
+        .await;
+
+    let err = RustAdapter::with_api_base(server.uri())
+        .fetch(&rust_index(&server.uri()))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    // 609 source bytes (U+2028 and U+202E are 3 each): the first 512 are kept,
+    // the other 97 are dropped.
+    let expected = format!(
+        "GET {}/repos/rust-lang/rust returned 503 Service Unavailable: \
+         a\\u{{2028}}b\\u{{202e}}c{} … (97 bytes truncated)",
+        server.uri(),
+        "z".repeat(503)
+    );
+    assert_eq!(err, expected);
+}
+
 /// A non-2xx on a later request (after `/repos` succeeds) names that
 /// request's own URL, not an earlier step's.
 #[tokio::test]
