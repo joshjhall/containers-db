@@ -57,14 +57,14 @@ pub(crate) fn request_error(url: &str, what: &str, e: reqwest::Error) -> anyhow:
 /// stalls trips the client timeout mid-read — so a failed read is reported as
 /// `<body unreadable: …>` (tagged `timed out:` like [`request_error`]) rather
 /// than as an empty body that hides why the message is blank (issue #473).
-/// A readable body is passed through [`sanitize_error_body`] so an oversized
-/// or hostile upstream body cannot split the log line or grow it without
-/// bound (issue #475). The body is still read whole first, bounded only by the
-/// client timeout.
-pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyhow::Error {
+/// Only a bounded prefix of the body is read ([`read_error_body_prefix`]) and
+/// it is rendered through [`render_error_body`], so an oversized or hostile
+/// upstream body can neither split the log line nor be buffered whole
+/// (issues #475, #477).
+pub(crate) async fn status_error(url: &str, mut response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
-    let body = match response.text().await {
-        Ok(body) => sanitize_error_body(&body),
+    let body = match read_error_body_prefix(&mut response).await {
+        Ok((prefix, ended)) => render_error_body(&prefix, ended),
         Err(e) if e.is_timeout() => format!("<body unreadable: timed out: {e}>"),
         Err(e) => format!("<body unreadable: {e}>"),
     };
@@ -72,31 +72,79 @@ pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyh
 }
 
 /// Longest upstream error body embedded in a [`status_error`] message, in
-/// bytes of the decoded UTF-8 text — `text()` decodes lossily, so for a
-/// non-UTF-8 body this (and the truncated count) is not the wire size. The cap
+/// body bytes after content decoding (gzip), so it bounds memory too. The cap
 /// applies before escaping, so a body of escaped characters can render
 /// several times longer — still bounded.
 const MAX_ERROR_BODY_BYTES: usize = 512;
 
-/// Cap `body` at [`MAX_ERROR_BODY_BYTES`] (cut on a char boundary, with a
-/// `… (N bytes truncated)` marker) and escape the characters that could break
-/// or spoof the log line ([`breaks_log_line`]). Everything else — including
-/// quotes and backslashes — passes through, so a short JSON error body reads
-/// as sent.
-fn sanitize_error_body(body: &str) -> String {
-    let cut = body.floor_char_boundary(MAX_ERROR_BODY_BYTES);
-    let mut out = String::with_capacity(cut);
-    for c in body[..cut].chars() {
+/// Bytes read past the cap: room for the UTF-8 sequence straddling it, plus
+/// one byte so a body that ends exactly at the cap is told apart from one
+/// that continues.
+const ERROR_BODY_SLACK: usize = 4;
+
+/// Read at most [`MAX_ERROR_BODY_BYTES`] + [`ERROR_BODY_SLACK`] bytes of the
+/// body, returning them and whether the body ended within that. Once over the
+/// cap it stops pulling chunks, so a huge or never-ending body costs one
+/// bounded buffer rather than everything sent before the client timeout.
+async fn read_error_body_prefix(
+    response: &mut reqwest::Response,
+) -> Result<(Vec<u8>, bool), reqwest::Error> {
+    let limit = MAX_ERROR_BODY_BYTES + ERROR_BODY_SLACK;
+    let mut prefix = Vec::new();
+    while prefix.len() < limit {
+        match response.chunk().await? {
+            Some(chunk) => {
+                let take = chunk.len().min(limit - prefix.len());
+                prefix.extend_from_slice(&chunk[..take]);
+            }
+            None => return Ok((prefix, true)),
+        }
+    }
+    Ok((prefix, false))
+}
+
+/// Render a body prefix for the log line: decode lossily (as `text()` did —
+/// invalid UTF-8 becomes U+FFFD), escape the characters that could break or
+/// spoof the line ([`breaks_log_line`]), and pass everything else — quotes
+/// and backslashes included — through, so a short JSON error body reads as
+/// sent. A body over the cap is cut on a char boundary of the raw bytes and
+/// marked; its full size is unknown, since the rest was never read.
+fn render_error_body(prefix: &[u8], ended: bool) -> String {
+    let truncated = !ended || prefix.len() > MAX_ERROR_BODY_BYTES;
+    let kept = if truncated {
+        utf8_floor(prefix, MAX_ERROR_BODY_BYTES)
+    } else {
+        prefix
+    };
+    let mut out = String::with_capacity(kept.len());
+    for c in String::from_utf8_lossy(kept).chars() {
         if breaks_log_line(c) {
             out.extend(c.escape_default());
         } else {
             out.push(c);
         }
     }
-    if cut < body.len() {
-        out.push_str(&format!(" … ({} bytes truncated)", body.len() - cut));
+    if truncated {
+        out.push_str(&format!(
+            " … (truncated: body over {MAX_ERROR_BODY_BYTES} bytes)"
+        ));
     }
     out
+}
+
+/// `bytes[..max]`, backed off so it does not end inside a UTF-8 sequence.
+/// A continuation byte (`0b10xx_xxxx`) at `max` means the cut would split a
+/// char; at most 3 can follow a lead byte, so the back-off is bounded and
+/// invalid input still yields a non-empty prefix.
+fn utf8_floor(bytes: &[u8], max: usize) -> &[u8] {
+    if bytes.len() <= max {
+        return bytes;
+    }
+    let mut cut = max;
+    while cut > max.saturating_sub(3) && bytes[cut] & 0b1100_0000 == 0b1000_0000 {
+        cut -= 1;
+    }
+    &bytes[..cut]
 }
 
 /// Characters that can break a log line or hide/reorder what follows it:
@@ -146,6 +194,14 @@ pub fn register_all() -> HashMap<String, Arc<dyn Adapter>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MARKER: &str = " … (truncated: body over 512 bytes)";
+
+    /// Render a whole UTF-8 body the way `status_error` does once it has been
+    /// read to the end.
+    fn sanitize_error_body(body: &str) -> String {
+        render_error_body(body.as_bytes(), true)
+    }
 
     /// `scanner due` silently skips any tool missing from this map, so an
     /// accidentally dropped registration would only show up as a tool that
@@ -297,23 +353,51 @@ mod tests {
 
     #[test]
     fn error_body_over_the_cap_is_truncated_with_a_marker() {
-        let body = "x".repeat(MAX_ERROR_BODY_BYTES + 88);
-        let expected = format!(
-            "{} … (88 bytes truncated)",
-            "x".repeat(MAX_ERROR_BODY_BYTES)
-        );
+        let body = "x".repeat(MAX_ERROR_BODY_BYTES + 1);
+        let expected = format!("{}{MARKER}", "x".repeat(MAX_ERROR_BODY_BYTES));
         assert_eq!(sanitize_error_body(&body), expected);
+    }
+
+    /// A read that stopped early is truncated even if the bytes held happen
+    /// to fit — the body continued past them.
+    #[test]
+    fn unfinished_read_is_marked_truncated() {
+        assert_eq!(
+            render_error_body(b"partial", false),
+            format!("partial{MARKER}")
+        );
     }
 
     #[test]
     fn truncation_cuts_on_a_char_boundary() {
         // "é" is 2 bytes; it straddles the cap, so the cut lands before it.
         let body = format!("{}é{}", "x".repeat(MAX_ERROR_BODY_BYTES - 1), "y".repeat(9));
-        let expected = format!(
-            "{} … (11 bytes truncated)",
-            "x".repeat(MAX_ERROR_BODY_BYTES - 1)
-        );
+        let expected = format!("{}{MARKER}", "x".repeat(MAX_ERROR_BODY_BYTES - 1));
         assert_eq!(sanitize_error_body(&body), expected);
+    }
+
+    #[test]
+    fn utf8_floor_backs_off_at_most_three_bytes() {
+        // A 4-byte char straddling the cap at each offset: the cut lands on
+        // its lead byte, never inside it.
+        for before in 1..=3 {
+            let mut bytes = vec![b'x'; 8 - before];
+            bytes.extend_from_slice("😀".as_bytes());
+            assert_eq!(
+                utf8_floor(&bytes, 8),
+                &bytes[..8 - before],
+                "before={before}"
+            );
+        }
+        // Invalid input (all continuation bytes) still yields a bounded cut.
+        assert_eq!(utf8_floor(&[0x80; 10], 8).len(), 5);
+        assert_eq!(utf8_floor(b"short", 8), b"short");
+    }
+
+    #[test]
+    fn invalid_utf8_is_replaced_not_escaped() {
+        // U+FFFD is So, not Cf/Cc, so it passes through like `text()` gave it.
+        assert_eq!(render_error_body(b"ok\xff\xfe", true), "ok\u{FFFD}\u{FFFD}");
     }
 
     #[test]
@@ -321,10 +405,7 @@ mod tests {
         // The cap bounds unescaped bytes, so an escaped newline before the cut
         // does not push real bytes past it.
         let body = format!("\n{}", "x".repeat(MAX_ERROR_BODY_BYTES));
-        let expected = format!(
-            r"\n{} … (1 bytes truncated)",
-            "x".repeat(MAX_ERROR_BODY_BYTES - 1)
-        );
+        let expected = format!(r"\n{}{MARKER}", "x".repeat(MAX_ERROR_BODY_BYTES - 1));
         assert_eq!(sanitize_error_body(&body), expected);
     }
 }

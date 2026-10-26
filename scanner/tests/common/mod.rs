@@ -9,7 +9,7 @@ use std::time::Duration;
 /// more body than follows, and a body fragment), then stalls past any test
 /// timeout. `ResponseTemplate`'s delay holds the headers back too, so it
 /// cannot reach the body-read step.
-pub fn serve_stalled_body(head: &'static [u8]) -> String {
+pub fn serve_stalled_body(head: impl AsRef<[u8]>) -> String {
     serve_partial_body(head, Duration::from_secs(5))
 }
 
@@ -20,14 +20,35 @@ pub fn serve_stalled_body(head: &'static [u8]) -> String {
 /// bytes in its receive buffer sends RST rather than FIN, and an RST can
 /// discard the response the client has not yet read — so a zero `hold` would
 /// intermittently surface as a failed `send()` instead of a truncated body.
-pub fn serve_partial_body(head: &'static [u8], hold: Duration) -> String {
+pub fn serve_partial_body(head: impl AsRef<[u8]>, hold: Duration) -> String {
+    let head = head.as_ref().to_vec();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().unwrap();
+        drain_request(&mut conn);
+        let _ = conn.write_all(&head);
+        std::thread::sleep(hold);
+    });
+    format!("http://{addr}")
+}
+
+/// Serve one connection that sends `head`, then `body` in `piece`-byte writes
+/// with a short pause between each, so the client sees several chunks rather
+/// than one — and then stalls past any test timeout.
+pub fn serve_chunked_body(head: &'static [u8], body: Vec<u8>, piece: usize) -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     std::thread::spawn(move || {
         let (mut conn, _) = listener.accept().unwrap();
         drain_request(&mut conn);
         let _ = conn.write_all(head);
-        std::thread::sleep(hold);
+        for part in body.chunks(piece) {
+            let _ = conn.write_all(part);
+            let _ = conn.flush();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_secs(5));
     });
     format!("http://{addr}")
 }
