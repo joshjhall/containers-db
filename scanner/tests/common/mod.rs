@@ -33,6 +33,26 @@ pub fn serve_partial_body(head: impl AsRef<[u8]>, hold: Duration) -> String {
     format!("http://{addr}")
 }
 
+/// Serve one connection that sends `head`, then `body` in `piece`-byte writes
+/// with a short pause between each, so the client sees several chunks rather
+/// than one — and then stalls past any test timeout.
+pub fn serve_chunked_body(head: &'static [u8], body: Vec<u8>, piece: usize) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().unwrap();
+        drain_request(&mut conn);
+        let _ = conn.write_all(head);
+        for part in body.chunks(piece) {
+            let _ = conn.write_all(part);
+            let _ = conn.flush();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_secs(5));
+    });
+    format!("http://{addr}")
+}
+
 /// Read until the blank line that ends the request headers (the adapters
 /// only send bodiless GETs) or the client stops sending.
 fn drain_request(conn: &mut std::net::TcpStream) {

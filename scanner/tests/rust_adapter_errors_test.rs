@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{serve_partial_body, serve_stalled_body};
+use common::{serve_chunked_body, serve_partial_body, serve_stalled_body};
 use scanner::adapter::{Adapter, ToolIndex};
 use scanner::adapters::rust::RustAdapter;
 use serde_json::json;
@@ -201,6 +201,62 @@ async fn oversized_error_body_is_not_read_to_the_end() {
         "GET {uri}/repos/rust-lang/rust returned 503 Service Unavailable: \
          {} … (truncated: body over 512 bytes)",
         "q".repeat(512)
+    );
+    assert_eq!(err, expected);
+}
+
+/// The prefix is accumulated across many small chunks, kept in order, and
+/// still cut at exactly the cap (issue #477).
+#[tokio::test]
+async fn error_body_sent_in_small_chunks_is_accumulated_then_capped() {
+    let body: Vec<u8> = (0..700).map(|i| b'a' + (i % 26) as u8).collect();
+    let kept = String::from_utf8(body[..512].to_vec()).unwrap();
+    let uri = serve_chunked_body(
+        b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 100000\r\n\r\n",
+        body,
+        100,
+    );
+
+    let started = std::time::Instant::now();
+    let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(10))
+        .fetch(&rust_index(&uri))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "took {elapsed:?}"
+    );
+    let expected = format!(
+        "GET {uri}/repos/rust-lang/rust returned 503 Service Unavailable: \
+         {kept} … (truncated: body over 512 bytes)"
+    );
+    assert_eq!(err, expected);
+}
+
+/// A body of exactly the cap that ends there is shown whole: the slack byte
+/// is what tells it apart from one that continues.
+#[tokio::test]
+async fn error_body_of_exactly_the_cap_is_not_marked_truncated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("e".repeat(512)))
+        .mount(&server)
+        .await;
+
+    let err = RustAdapter::with_api_base(server.uri())
+        .fetch(&rust_index(&server.uri()))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!(
+        "GET {}/repos/rust-lang/rust returned 503 Service Unavailable: {}",
+        server.uri(),
+        "e".repeat(512)
     );
     assert_eq!(err, expected);
 }
