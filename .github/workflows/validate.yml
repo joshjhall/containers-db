@@ -115,6 +115,22 @@ jobs:
             -s schema/version.schema.json \
             -d "tools/go/versions/*.json"
 
+      - name: Validate node tool index against tool schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/tool.schema.json \
+            -d tools/node/index.json
+
+      - name: Validate node version files against version schema
+        run: |
+          npx --no-install ajv validate \
+            --spec=draft2020 \
+            -c ajv-formats \
+            -s schema/version.schema.json \
+            -d "tools/node/versions/*.json"
+
       - name: Validate tier example fixtures against version schema
         run: |
           npx --no-install ajv validate \
