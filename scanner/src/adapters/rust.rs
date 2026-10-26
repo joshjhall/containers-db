@@ -21,7 +21,7 @@ use serde::Deserialize;
 
 use crate::activity::ActivitySignals;
 use crate::adapter::{Adapter, AdapterResult, ToolIndex, UpstreamVersion};
-use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client, request_error};
+use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client, request_error, status_error};
 
 const DEFAULT_API_BASE: &str = "https://api.github.com";
 
@@ -241,10 +241,8 @@ impl RustAdapter {
             .send()
             .await
             .map_err(|e| request_error(&url, "failed", e))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("GET {url} returned {status}: {body}");
+        if !response.status().is_success() {
+            return Err(status_error(&url, response).await);
         }
         response
             .json()
