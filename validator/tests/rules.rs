@@ -359,3 +359,62 @@ fn platform_selector_with_release_on_undeclared_distro_fails() {
         "message should name the selector and its distro: {msg}"
     );
 }
+
+/// Write cli_a@1.0.0 with the per-arch method pair node uses (#481): an
+/// amd64 method with no runtime dep, and an arm64 method whose `platform.arch`
+/// scopes a runtime dependency on `gcc` (standing in for libatomic) narrowed
+/// to `platforms`.
+fn arm64_scoped_dep(root: &Path, platforms: &str) {
+    write(
+        &root.join("tools/cli_a/versions/1.0.0.json"),
+        &format!(
+            r#"{{
+            "schemaVersion": 1, "tool": "cli_a", "version": "1.0.0",
+            "install_methods": [
+                {{ "name": "tarball-amd64",
+                  "platform": {{ "os": ["debian"], "arch": ["amd64"] }},
+                  "verification": {{ "tier": 4, "algorithm": "sha256", "tofu": true }},
+                  "source_url_template": "https://x/{{version}}/amd64" }},
+                {{ "name": "tarball-arm64",
+                  "platform": {{ "os": ["debian"], "arch": ["arm64"] }},
+                  "verification": {{ "tier": 4, "algorithm": "sha256", "tofu": true }},
+                  "source_url_template": "https://x/{{version}}/arm64",
+                  "dependencies": [
+                    {{ "tool": "gcc", "purpose": "runtime", "platforms": {platforms} }}
+                  ] }}
+            ]
+        }}"#
+        ),
+    );
+}
+
+#[test]
+fn arm64_scoped_runtime_dependency_passes() {
+    // The arch scope is the enclosing method's `platform.arch`; the
+    // Dependency itself carries no arch field and needs none.
+    let tmp = fixture_repo();
+    let root = tmp.path();
+    arm64_scoped_dep(root, r#"["debian", "alpine"]"#);
+    let cat = catalog::load(root).unwrap();
+    let diags = rules::check_all(root, &cat, None).unwrap();
+    assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+}
+
+#[test]
+fn arm64_scoped_dependency_is_checked_on_its_own_method() {
+    // The dep lives only on the second (arm64) method. A bad narrowing there
+    // must be reported at that method's pointer, proving per-method deps are
+    // walked rather than only the first method's.
+    let tmp = fixture_repo();
+    let root = tmp.path();
+    arm64_scoped_dep(root, r#"["rhel"]"#);
+    let cat = catalog::load(root).unwrap();
+    let diags = rules::check_all(root, &cat, None).unwrap();
+    assert_eq!(diags.len(), 1, "expected one diagnostic, got: {diags:?}");
+    assert_eq!(diags[0].pointer, "/install_methods/1/dependencies/0");
+    assert!(
+        diags[0].message.contains("distro `rhel`"),
+        "message should name the undeclared distro: {}",
+        diags[0].message
+    );
+}
