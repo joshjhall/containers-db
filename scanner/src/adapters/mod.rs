@@ -57,14 +57,81 @@ pub(crate) fn request_error(url: &str, what: &str, e: reqwest::Error) -> anyhow:
 /// stalls trips the client timeout mid-read — so a failed read is reported as
 /// `<body unreadable: …>` (tagged `timed out:` like [`request_error`]) rather
 /// than as an empty body that hides why the message is blank (issue #473).
+/// A readable body is passed through [`sanitize_error_body`] so an oversized
+/// or hostile upstream body cannot split the log line or grow it without
+/// bound (issue #475). The body is still read whole first, bounded only by the
+/// client timeout.
 pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
     let body = match response.text().await {
-        Ok(body) => body,
+        Ok(body) => sanitize_error_body(&body),
         Err(e) if e.is_timeout() => format!("<body unreadable: timed out: {e}>"),
         Err(e) => format!("<body unreadable: {e}>"),
     };
     anyhow::anyhow!("GET {url} returned {status}: {body}")
+}
+
+/// Longest upstream error body embedded in a [`status_error`] message, in
+/// bytes of the decoded UTF-8 text — `text()` decodes lossily, so for a
+/// non-UTF-8 body this (and the truncated count) is not the wire size. The cap
+/// applies before escaping, so a body of escaped characters can render
+/// several times longer — still bounded.
+const MAX_ERROR_BODY_BYTES: usize = 512;
+
+/// Cap `body` at [`MAX_ERROR_BODY_BYTES`] (cut on a char boundary, with a
+/// `… (N bytes truncated)` marker) and escape the characters that could break
+/// or spoof the log line ([`breaks_log_line`]). Everything else — including
+/// quotes and backslashes — passes through, so a short JSON error body reads
+/// as sent.
+fn sanitize_error_body(body: &str) -> String {
+    let cut = body.floor_char_boundary(MAX_ERROR_BODY_BYTES);
+    let mut out = String::with_capacity(cut);
+    for c in body[..cut].chars() {
+        if breaks_log_line(c) {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    if cut < body.len() {
+        out.push_str(&format!(" … ({} bytes truncated)", body.len() - cut));
+    }
+    out
+}
+
+/// Characters that can break a log line or hide/reorder what follows it:
+/// controls (Cc, incl. NEL), the line/paragraph separators (Zl, Zp) that many
+/// viewers render as a break, and every format character (Cf — bidi
+/// overrides, zero-width and invisible characters, tags). The Cf ranges are
+/// the complete category as of Unicode 15.1; std exposes no category lookup.
+fn breaks_log_line(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{00AD}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061C}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+                | '\u{1D173}'..='\u{1D17A}'
+                | '\u{E0001}'
+                | '\u{E0020}'..='\u{E007F}'
+        )
 }
 
 /// Built-in registry shipped with the scanner. `register_all` callers
@@ -99,5 +166,165 @@ mod tests {
         );
         let short = Duration::from_millis(200);
         assert_eq!(connect_timeout_for(short), short);
+    }
+
+    #[test]
+    fn short_error_body_passes_through_unchanged() {
+        let body = r#"{"message":"API rate limit exceeded","path":"C:\\x"}"#;
+        assert_eq!(sanitize_error_body(body), body);
+        assert_eq!(sanitize_error_body(""), "");
+    }
+
+    #[test]
+    fn control_characters_in_error_body_are_escaped() {
+        assert_eq!(
+            sanitize_error_body("a\nb\r\tc\x1bd\0"),
+            r"a\nb\r\tc\u{1b}d\u{0}"
+        );
+    }
+
+    #[test]
+    fn unicode_line_breaks_and_bidi_controls_are_escaped() {
+        assert_eq!(
+            sanitize_error_body("a\u{85}b\u{2028}c\u{2029}d\u{202e}e\u{200b}f\u{2066}g\u{feff}h"),
+            r"a\u{85}b\u{2028}c\u{2029}d\u{202e}e\u{200b}f\u{2066}g\u{feff}h"
+        );
+        // Ordinary non-ASCII text is not touched.
+        assert_eq!(sanitize_error_body("café — ü"), "café — ü");
+    }
+
+    /// Both ends of every escaped range, and the code point just outside each
+    /// end, so any range or singleton that shrinks or widens by one fails here.
+    /// Generated from Unicode 15.1 Cf/Zl/Zp; no neighbour is itself Cc/Cf/Zl/Zp.
+    #[test]
+    fn escape_ranges_are_pinned_at_both_ends() {
+        let escaped = [
+            '\u{00AD}',
+            '\u{0600}',
+            '\u{0605}',
+            '\u{061C}',
+            '\u{06DD}',
+            '\u{070F}',
+            '\u{0890}',
+            '\u{0891}',
+            '\u{08E2}',
+            '\u{180E}',
+            '\u{200B}',
+            '\u{200F}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202A}',
+            '\u{202E}',
+            '\u{2060}',
+            '\u{2064}',
+            '\u{2066}',
+            '\u{206F}',
+            '\u{FEFF}',
+            '\u{FFF9}',
+            '\u{FFFB}',
+            '\u{110BD}',
+            '\u{110CD}',
+            '\u{13430}',
+            '\u{1343F}',
+            '\u{1BCA0}',
+            '\u{1BCA3}',
+            '\u{1D173}',
+            '\u{1D17A}',
+            '\u{E0001}',
+            '\u{E0020}',
+            '\u{E007F}',
+        ];
+        for c in escaped {
+            assert!(breaks_log_line(c), "U+{:04X} should be escaped", c as u32);
+        }
+        let kept = [
+            '\u{00AC}',
+            '\u{00AE}',
+            '\u{05FF}',
+            '\u{0606}',
+            '\u{061B}',
+            '\u{061D}',
+            '\u{06DC}',
+            '\u{06DE}',
+            '\u{070E}',
+            '\u{0710}',
+            '\u{088F}',
+            '\u{0892}',
+            '\u{08E1}',
+            '\u{08E3}',
+            '\u{180D}',
+            '\u{180F}',
+            '\u{200A}',
+            '\u{2010}',
+            '\u{2027}',
+            '\u{202F}',
+            '\u{205F}',
+            '\u{2065}',
+            '\u{2070}',
+            '\u{FEFE}',
+            '\u{FF00}',
+            '\u{FFF8}',
+            '\u{FFFC}',
+            '\u{110BC}',
+            '\u{110BE}',
+            '\u{110CC}',
+            '\u{110CE}',
+            '\u{1342F}',
+            '\u{13440}',
+            '\u{1BC9F}',
+            '\u{1BCA4}',
+            '\u{1D172}',
+            '\u{1D17B}',
+            '\u{E0000}',
+            '\u{E0002}',
+            '\u{E001F}',
+            '\u{E0080}',
+        ];
+        for c in kept {
+            assert!(
+                !breaks_log_line(c),
+                "U+{:04X} should pass through",
+                c as u32
+            );
+        }
+    }
+
+    #[test]
+    fn error_body_at_the_cap_is_not_truncated() {
+        let body = "x".repeat(MAX_ERROR_BODY_BYTES);
+        assert_eq!(sanitize_error_body(&body), body);
+    }
+
+    #[test]
+    fn error_body_over_the_cap_is_truncated_with_a_marker() {
+        let body = "x".repeat(MAX_ERROR_BODY_BYTES + 88);
+        let expected = format!(
+            "{} … (88 bytes truncated)",
+            "x".repeat(MAX_ERROR_BODY_BYTES)
+        );
+        assert_eq!(sanitize_error_body(&body), expected);
+    }
+
+    #[test]
+    fn truncation_cuts_on_a_char_boundary() {
+        // "é" is 2 bytes; it straddles the cap, so the cut lands before it.
+        let body = format!("{}é{}", "x".repeat(MAX_ERROR_BODY_BYTES - 1), "y".repeat(9));
+        let expected = format!(
+            "{} … (11 bytes truncated)",
+            "x".repeat(MAX_ERROR_BODY_BYTES - 1)
+        );
+        assert_eq!(sanitize_error_body(&body), expected);
+    }
+
+    #[test]
+    fn escaping_applies_after_truncation() {
+        // The cap bounds unescaped bytes, so an escaped newline before the cut
+        // does not push real bytes past it.
+        let body = format!("\n{}", "x".repeat(MAX_ERROR_BODY_BYTES));
+        let expected = format!(
+            r"\n{} … (1 bytes truncated)",
+            "x".repeat(MAX_ERROR_BODY_BYTES - 1)
+        );
+        assert_eq!(sanitize_error_body(&body), expected);
     }
 }
