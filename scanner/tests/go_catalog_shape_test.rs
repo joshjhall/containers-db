@@ -94,6 +94,28 @@ fn assert_go_shape(doc: &Value, label: &str) {
         vec![glibc, BTreeSet::from(["alpine".to_string()])],
         "{label}: install_methods must be [glibc, alpine]"
     );
+
+    // Both sides of the split are the same tarball install: no C toolchain
+    // (cgo is out, see docs/binary-tarball-glibc-musl.md) and both arches.
+    for method in doc["install_methods"].as_array().unwrap() {
+        let name = method_os(method).into_iter().collect::<Vec<_>>().join("+");
+        assert_eq!(
+            method["method_kind"], "binary-tarball",
+            "{label}: {name} method_kind"
+        );
+        let deps: Vec<&str> = method["dependencies"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{label}: {name} has no dependencies"))
+            .iter()
+            .map(|d| d["tool"].as_str().unwrap())
+            .collect();
+        assert_eq!(deps, ["ca_certificates"], "{label}: {name} dependencies");
+        assert_eq!(
+            method["platform"]["arch"],
+            serde_json::json!(["amd64", "arm64"]),
+            "{label}: {name} arch"
+        );
+    }
 }
 
 #[test]
