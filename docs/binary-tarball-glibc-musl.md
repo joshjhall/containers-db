@@ -21,8 +21,10 @@ Two install methods, even when both download the same tarball:
 
 ```json
 "install_methods": [
-  { "name": "go-tarball", "platform": { "os": ["debian", "ubuntu", "rhel"], ... }, ... },
-  { "name": "go-tarball", "platform": { "os": "alpine", ... }, ... }
+  { "name": "go-tarball",
+    "platform": { "os": ["debian", "ubuntu", "rhel"], ... }, ... },
+  { "name": "go-tarball",
+    "platform": { "os": "alpine", ... }, ... }
 ]
 ```
 
