@@ -71,9 +71,11 @@ pub(crate) async fn status_error(url: &str, response: reqwest::Response) -> anyh
     anyhow::anyhow!("GET {url} returned {status}: {body}")
 }
 
-/// Longest upstream error body, in source bytes, embedded in a
-/// [`status_error`] message. The cap applies before escaping, so a body of
-/// escaped characters can render several times longer — still bounded.
+/// Longest upstream error body embedded in a [`status_error`] message, in
+/// bytes of the decoded UTF-8 text — `text()` decodes lossily, so for a
+/// non-UTF-8 body this (and the truncated count) is not the wire size. The cap
+/// applies before escaping, so a body of escaped characters can render
+/// several times longer — still bounded.
 const MAX_ERROR_BODY_BYTES: usize = 512;
 
 /// Cap `body` at [`MAX_ERROR_BODY_BYTES`] (cut on a char boundary, with a
@@ -316,7 +318,7 @@ mod tests {
 
     #[test]
     fn escaping_applies_after_truncation() {
-        // The cap bounds source bytes, so an escaped newline before the cut
+        // The cap bounds unescaped bytes, so an escaped newline before the cut
         // does not push real bytes past it.
         let body = format!("\n{}", "x".repeat(MAX_ERROR_BODY_BYTES));
         let expected = format!(
