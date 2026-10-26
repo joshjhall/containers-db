@@ -148,6 +148,39 @@ async fn non_2xx_error_names_the_url_status_and_body() {
     assert_eq!(err, expected);
 }
 
+/// A non-2xx on a later request (after `/repos` succeeds) names that
+/// request's own URL, not an earlier step's.
+#[tokio::test]
+async fn non_2xx_on_releases_names_the_releases_url() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "archived": false,
+            "disabled": false,
+            "pushed_at": "2026-10-01T00:00:00Z"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rust-lang/rust/releases"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("down"))
+        .mount(&server)
+        .await;
+
+    let err = RustAdapter::with_api_base(server.uri())
+        .fetch(&rust_index(&server.uri()))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let expected = format!(
+        "GET {}/repos/rust-lang/rust/releases?per_page=100 returned 503 Service Unavailable: down",
+        server.uri()
+    );
+    assert_eq!(err, expected);
+}
+
 /// A non-2xx whose error body stalls mid-read must keep the status and say
 /// the body could not be read — naming the timeout — rather than reporting
 /// an empty body (issue #473).
