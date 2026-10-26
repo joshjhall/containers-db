@@ -156,7 +156,10 @@ The scanner generates new `versions/<v>.json` files by deep-cloning the
 most recent existing version of the same tool and swapping the version
 literals. If your tool needs anything else (Tier 2 pinned checksums, a
 new `support_matrix` row, etc.), submit it as a manual PR; the scanner
-will then carry that change forward to subsequent versions.
+will then carry that change forward to subsequent versions. For a tool
+whose matrix spans glibc and musl, see
+[binary-tarball-glibc-musl.md](binary-tarball-glibc-musl.md), which also
+covers pinning the shape with a test.
 
 ## Duplicate-PR guard
 
