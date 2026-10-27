@@ -115,6 +115,18 @@ fn assert_go_shape(doc: &Value, label: &str) {
             serde_json::json!(["amd64", "arm64"]),
             "{label}: {name} arch"
         );
+        // Tier 1: the detached .asc against the pinned keyring. The old
+        // .sha256 checksum_url_template must not survive alongside it.
+        assert_eq!(
+            method["verification"],
+            serde_json::json!({
+                "algorithm": "gpg",
+                "gpg_keyring": "keyrings/golang.asc",
+                "signature_url_template": "https://dl.google.com/go/go{version}.linux-{arch}.tar.gz.asc",
+                "tier": 1
+            }),
+            "{label}: {name} verification"
+        );
     }
 }
 

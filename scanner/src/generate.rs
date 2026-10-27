@@ -251,6 +251,28 @@ mod tests {
     }
 
     #[test]
+    fn render_version_carries_tier1_verification_forward_unchanged() {
+        let mut t = template();
+        let verification = json!({
+            "algorithm": "gpg",
+            "gpg_keyring": "keyrings/golang.asc",
+            "signature_url_template": "https://dl.google.com/go/go{version}.linux-{arch}.tar.gz.asc",
+            "tier": 1
+        });
+        t["install_methods"][0]["verification"] = verification.clone();
+        let upstream = UpstreamVersion {
+            version: "1.96.0".into(),
+            released_at: at(2026, 5, 28),
+            channel: "stable".into(),
+        };
+        let out = render_version(&t, "1.95.0", &upstream, at(2026, 5, 28));
+        assert_eq!(
+            out["install_methods"][0]["verification"], verification,
+            "a tier-1 block is version-agnostic and must not be rewritten"
+        );
+    }
+
+    #[test]
     fn update_index_appends_new_versions_without_duplicates() {
         let mut index = ToolIndex {
             id: "rust".to_string(),
