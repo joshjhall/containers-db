@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "tool": "sample_signed",
+  "version": "1.0.0",
+  "released": "2026-04-01",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "tarball",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": ["debian", "ubuntu"],
+        "arch": ["amd64", "arm64"]
+      },
+      "verification": {
+        "tier": 1,
+        "algorithm": "sigstore",
+        "signature_url_template": "https://example.invalid/sample-signed/{version}/sample-{version}-linux-{arch}.tar.gz.sigstore.json",
+        "sigstore_identity": "https://github.com/example/sample-signed/.github/workflows/release.yml@refs/tags/v{version}",
+        "sigstore_issuer": "https://token.actions.githubusercontent.com"
+      },
+      "source_url_template": "https://example.invalid/sample-signed/{version}/sample-{version}-linux-{arch}.tar.gz",
+      "dependencies": [
+        { "tool": "ca_certificates" }
+      ]
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-10-27T00:00:00Z",
+    "updated_at": "2026-10-27T00:00:00Z",
+    "schema_version": 1
+  }
+}

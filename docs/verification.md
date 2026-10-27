@@ -26,6 +26,26 @@ GPG (detached `.asc` plus the publisher's public key) or sigstore
 Use Tier 1 whenever the publisher offers it. Network MITM and registry
 compromise both fail to produce a passing verification.
 
+For GPG, prefer a **pinned keyring** (`gpg_keyring`): an ASCII-armored
+public keyring committed under [`keyrings/`](../keyrings/README.md) and
+changed only through code review. `gpg_key_url` fetches the key from the
+publisher at install time, so it is only as trustworthy as the publisher's
+infrastructure — a compromised origin can serve its own key alongside its
+own signature. Consumers MAY refuse entries that carry only `gpg_key_url`.
+When an entry carries both, `gpg_keyring` wins: consumers MUST verify
+against the pinned keyring only and never fetch or fall back to the URL.
+
+GPG also has a **signed-manifest mode** for publishers that sign a checksum
+manifest instead of each artifact (Node signs `SHASUMS256.txt`). Set
+`checksum_url_template` + `checksum_manifest: true` alongside the signature:
+the signature verifies the manifest, then the artifact's digest is selected
+from it by filename, exactly as Tier 3's manifest rule describes. Sigstore
+entries may not use this mode. Because a Tier 1 `algorithm` names the
+signature scheme (`gpg`) rather than a digest, the manifest's digests
+**must be SHA-256**: consumers hash the artifact with sha256 and compare it
+to the selected line. A publisher that signs only a SHA-512 manifest cannot
+use this mode.
+
 ### Tier 2 — Pinned checksum (high)
 
 A hex-encoded checksum baked directly into the tooldb version file.
@@ -61,15 +81,31 @@ read this paragraph.
 
 | Tier | Required                                                           | Forbidden                            | Algorithm enum         |
 | ---- | ------------------------------------------------------------------ | ------------------------------------ | ---------------------- |
-| 1    | `algorithm` ∈ {`gpg`, `sigstore`} + matching key/identity pair     | tier 2/3/4 carriers                  | `gpg`, `sigstore`      |
+| 1    | `algorithm` ∈ {`gpg`, `sigstore`} + matching key/identity pair; GPG optional signed-manifest pair | tier 2/4 carriers; tier 3 carriers except GPG signed-manifest | `gpg`, `sigstore`      |
 | 2    | `algorithm` ∈ {`sha256`, `sha512`}, `pinned_checksum`              | tier 1/3/4 carriers                  | `sha256`, `sha512`     |
 | 3    | `algorithm` ∈ {`sha256`, `sha512`}, `checksum_url_template`; optional `checksum_manifest` | tier 1/2/4 carriers                  | `sha256`, `sha512`     |
 | 4    | `tofu: true`                                                       | tier 1/2/3 carriers                  | optional, hash only    |
 
 The "matching key/identity pair" for Tier 1 is one of:
 
-- GPG: `gpg_key_url` **and** `signature_url_template`
-- sigstore: `sigstore_identity` **and** `sigstore_issuer`
+- GPG: `signature_url_template` **and** a key source — `gpg_keyring`
+  (preferred) or `gpg_key_url`. Optionally signed-manifest mode:
+  `checksum_url_template` **and** `checksum_manifest: true`, both or neither.
+- sigstore: `sigstore_identity` **and** `sigstore_issuer`; no
+  `checksum_url_template` / `checksum_manifest`.
+
+The key sources are exclusive: a GPG entry may not carry the sigstore pair,
+and a sigstore entry may not carry `gpg_keyring` or `gpg_key_url`. A
+consumer therefore never has to guess which verifier an entry meant.
+`signature_url_template` is shared: GPG requires it, and a sigstore entry
+may use it to locate its signature or bundle. (This exclusion is the one
+deliberate tightening in the tier-1 rules: a mixed GPG/sigstore entry was
+schema-valid before but never meaningful, and no catalog entry used one.)
+
+`gpg_keyring` is forbidden on Tiers 2–4, like every other Tier 1 carrier.
+It is a catalog-root-relative path that must start with `keyrings/` and end
+in `.asc` (`keyrings/<name>.asc`; subdirectories such as
+`keyrings/<vendor>/<name>.asc` are allowed), with no `.` or `..` segment.
 
 `source_url_template`, `invoke`, `post_install`, `system_packages`, and
 `platform` are orthogonal to the verification block and may appear with
@@ -77,7 +113,31 @@ any tier.
 
 ## Examples
 
-Tier 1 (GPG):
+Tier 1 (GPG, pinned keyring — go's shape):
+
+```json
+{
+  "tier": 1,
+  "algorithm": "gpg",
+  "gpg_keyring": "keyrings/golang.asc",
+  "signature_url_template": "https://dl.google.com/go/go{version}.linux-{arch}.tar.gz.asc"
+}
+```
+
+Tier 1 (GPG, signed manifest — node's shape):
+
+```json
+{
+  "tier": 1,
+  "algorithm": "gpg",
+  "checksum_manifest": true,
+  "checksum_url_template": "https://nodejs.org/dist/v{version}/SHASUMS256.txt",
+  "gpg_keyring": "keyrings/nodejs.asc",
+  "signature_url_template": "https://nodejs.org/dist/v{version}/SHASUMS256.txt.sig"
+}
+```
+
+Tier 1 (GPG, remote key — weaker; consumers may refuse):
 
 ```json
 {

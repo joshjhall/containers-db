@@ -233,6 +233,12 @@
           "type": "array",
           "items": { "$ref": "#/$defs/VerificationWarning" }
         },
+        "verification_tier": {
+          "description": "Tier the install was actually verified at, as reported by luggage. Records what the run established rather than what the catalog entry declares, so a row can show that a tier-1 method was verified at tier 1 (and not silently downgraded). Optional; absent on rows produced before luggage reported it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
         "notes": {
           "description": "Free-form notes (e.g., flake reason for `fail`, why `skip`).",
           "type": "string"
@@ -448,21 +454,26 @@
               "minLength": 32
             },
             "checksum_url_template": {
-              "description": "Tier 3: URL template the publisher serves the checksum at. Accepts the same placeholder vocabulary as `source_url_template` — see that field's description for the full reserved list and resolution rules.",
+              "description": "Tier 3 (and Tier 1 signed-manifest mode): URL template the publisher serves the checksum at. Accepts the same placeholder vocabulary as `source_url_template` — see that field's description for the full reserved list and resolution rules.",
               "type": "string",
               "minLength": 1
             },
             "checksum_manifest": {
-              "description": "Tier 3: set to `true` when `checksum_url_template` serves a MULTI-ENTRY manifest — one `<digest>  <filename>` line per artifact in the release, as in Node's `SHASUMS256.txt` — rather than a single checksum for a single artifact (rust's `rustup-init.sha256`). Consumers MUST select the line whose filename matches the resolved artifact, and MUST fail verification when no line matches or a line is malformed; selecting by position would verify a different architecture's binary and pass. Omit (or `false`) for the single-checksum shape.",
+              "description": "Tier 3 (and Tier 1 signed-manifest mode): set to `true` when `checksum_url_template` serves a MULTI-ENTRY manifest — one `<digest>  <filename>` line per artifact in the release, as in Node's `SHASUMS256.txt` — rather than a single checksum for a single artifact (rust's `rustup-init.sha256`). Consumers MUST select the line whose filename matches the resolved artifact, and MUST fail verification when no line matches or a line is malformed; selecting by position would verify a different architecture's binary and pass. Omit (or `false`) for the single-checksum shape.",
               "type": "boolean"
             },
             "gpg_key_url": {
-              "description": "Tier 1 (GPG): URL of the publisher's public key.",
+              "description": "Tier 1 (GPG): URL of the publisher's public key. Weaker than `gpg_keyring`: a key fetched at install time is only as trustworthy as the publisher's infrastructure. Consumers MAY refuse entries that carry only this field. When `gpg_keyring` is also present, consumers MUST verify against `gpg_keyring` only and MUST NOT fetch or fall back to this key.",
               "type": "string",
               "format": "uri"
             },
+            "gpg_keyring": {
+              "description": "Tier 1 (GPG): path, relative to the catalog root, of an ASCII-armored public keyring committed to this repository (e.g. `keyrings/nodejs.asc`). The signature must verify against a key in this file. Pinned through code review, so a compromised publisher origin cannot substitute its own key. Must live under `keyrings/` and must not contain a `.` or `..` segment. Takes precedence over `gpg_key_url`: when both are present, consumers MUST verify against this keyring only and never fall back to the remote key.",
+              "type": "string",
+              "pattern": "^keyrings/(?![.]{1,2}/)(?!.*/[.]{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\\.asc$"
+            },
             "signature_url_template": {
-              "description": "Tier 1 (GPG): URL template for the detached signature corresponding to the downloaded artifact.",
+              "description": "Tier 1: URL template for the detached signature. Required for GPG, where it may be binary or ASCII-armored; optional for sigstore, where it locates the signature or bundle. For GPG it covers the downloaded artifact itself, or — in signed-manifest mode (`checksum_url_template` + `checksum_manifest: true`) — the checksum manifest, whose line for the resolved artifact then supplies the digest.",
               "type": "string",
               "minLength": 1
             },
@@ -488,7 +499,7 @@
                 "required": ["tier"]
               },
               "then": {
-                "description": "Tier 1: cryptographic signature. Requires `algorithm` ∈ {gpg, sigstore} plus the matching key/identity fields. Forbids tier 2/3/4 carriers.",
+                "description": "Tier 1: cryptographic signature. Requires `algorithm` ∈ {gpg, sigstore} plus the matching key/identity fields. GPG needs `signature_url_template` and a key source (`gpg_keyring` preferred, or `gpg_key_url`). GPG may additionally run in signed-manifest mode: `checksum_url_template` + `checksum_manifest: true`, where the signature covers the manifest and the artifact's digest is then selected from it by filename (Node's signed `SHASUMS256.txt`). `algorithm` names the signature scheme here, not a digest, so the manifest's digests MUST be SHA-256: consumers compute sha256 over the artifact and compare it to the selected line. A publisher whose signed manifest uses another digest cannot use this mode. Forbids tier 2/4 carriers.",
                 "required": ["algorithm"],
                 "properties": {
                   "algorithm": { "enum": ["gpg", "sigstore"] }
@@ -496,17 +507,37 @@
                 "oneOf": [
                   {
                     "properties": { "algorithm": { "const": "gpg" } },
-                    "required": ["gpg_key_url", "signature_url_template"]
+                    "required": ["signature_url_template"],
+                    "anyOf": [
+                      { "required": ["gpg_keyring"] },
+                      { "required": ["gpg_key_url"] }
+                    ],
+                    "dependentRequired": {
+                      "checksum_url_template": ["checksum_manifest"],
+                      "checksum_manifest": ["checksum_url_template"]
+                    },
+                    "if": { "required": ["checksum_manifest"] },
+                    "then": {
+                      "properties": { "checksum_manifest": { "const": true } }
+                    },
+                    "allOf": [
+                      { "not": { "required": ["sigstore_identity"] } },
+                      { "not": { "required": ["sigstore_issuer"] } }
+                    ]
                   },
                   {
                     "properties": { "algorithm": { "const": "sigstore" } },
-                    "required": ["sigstore_identity", "sigstore_issuer"]
+                    "required": ["sigstore_identity", "sigstore_issuer"],
+                    "allOf": [
+                      { "not": { "required": ["checksum_url_template"] } },
+                      { "not": { "required": ["checksum_manifest"] } },
+                      { "not": { "required": ["gpg_keyring"] } },
+                      { "not": { "required": ["gpg_key_url"] } }
+                    ]
                   }
                 ],
                 "allOf": [
                   { "not": { "required": ["pinned_checksum"] } },
-                  { "not": { "required": ["checksum_url_template"] } },
-                  { "not": { "required": ["checksum_manifest"] } },
                   { "not": { "required": ["tofu"] } }
                 ]
               }
@@ -526,6 +557,7 @@
                   { "not": { "required": ["checksum_url_template"] } },
                   { "not": { "required": ["checksum_manifest"] } },
                   { "not": { "required": ["gpg_key_url"] } },
+                  { "not": { "required": ["gpg_keyring"] } },
                   { "not": { "required": ["signature_url_template"] } },
                   { "not": { "required": ["sigstore_identity"] } },
                   { "not": { "required": ["sigstore_issuer"] } },
@@ -547,6 +579,7 @@
                 "allOf": [
                   { "not": { "required": ["pinned_checksum"] } },
                   { "not": { "required": ["gpg_key_url"] } },
+                  { "not": { "required": ["gpg_keyring"] } },
                   { "not": { "required": ["signature_url_template"] } },
                   { "not": { "required": ["sigstore_identity"] } },
                   { "not": { "required": ["sigstore_issuer"] } },
@@ -571,6 +604,7 @@
                   { "not": { "required": ["checksum_url_template"] } },
                   { "not": { "required": ["checksum_manifest"] } },
                   { "not": { "required": ["gpg_key_url"] } },
+                  { "not": { "required": ["gpg_keyring"] } },
                   { "not": { "required": ["signature_url_template"] } },
                   { "not": { "required": ["sigstore_identity"] } },
                   { "not": { "required": ["sigstore_issuer"] } }
