@@ -119,6 +119,61 @@ fn symlink_within_keyrings_passes() {
     assert_eq!(keyring_diagnostics(root, None), Vec::<String>::new());
 }
 
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_in_keyrings_does_not_exist() {
+    let tmp = repo_with_keyring("keyrings/dangling.asc");
+    let root = tmp.path();
+    std::os::unix::fs::symlink("missing.asc", root.join("keyrings/dangling.asc")).unwrap();
+
+    let diags = keyring_diagnostics(root, None);
+    assert_eq!(
+        diags,
+        vec![
+            "tools/cli_a/versions/1.0.0.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"keyrings/dangling.asc\" does not exist (resolved against the catalog root)"
+                .to_string()
+        ]
+    );
+}
+
+#[test]
+fn pointer_names_the_offending_method_and_skips_keyringless_ones() {
+    // Method 0 has no verification, method 1 a checksum one without
+    // gpg_keyring; only method 2's bad keyring may be reported, at index 2.
+    let tmp = repo_with_keyring("keyrings/real.asc");
+    let root = tmp.path();
+    write(
+        &root.join("tools/cli_a/versions/1.0.0.json"),
+        r#"{
+            "schemaVersion": 1, "tool": "cli_a", "version": "1.0.0",
+            "install_methods": [
+                { "name": "plain", "source_url_template": "https://x/{version}" },
+                { "name": "checked",
+                  "verification": { "tier": 2, "algorithm": "sha256" },
+                  "source_url_template": "https://x/{version}" },
+                { "name": "signed",
+                  "verification": {
+                      "tier": 1, "algorithm": "gpg",
+                      "gpg_keyring": "keyrings/typo.asc",
+                      "signature_url_template": "https://x/{version}.asc"
+                  },
+                  "source_url_template": "https://x/{version}" }
+            ]
+        }"#,
+    );
+
+    let diags = keyring_diagnostics(root, None);
+    assert_eq!(
+        diags,
+        vec![
+            "tools/cli_a/versions/1.0.0.json:/install_methods/2/verification/gpg_keyring: \
+             gpg_keyring \"keyrings/typo.asc\" does not exist (resolved against the catalog root)"
+                .to_string()
+        ]
+    );
+}
+
 #[test]
 fn directory_is_not_a_regular_file() {
     let tmp = repo_with_keyring("keyrings/dir.asc");
