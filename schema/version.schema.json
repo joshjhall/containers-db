@@ -473,7 +473,7 @@
               "pattern": "^keyrings/(?![.]{1,2}/)(?!.*/[.]{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\\.asc$"
             },
             "signature_url_template": {
-              "description": "Tier 1 (GPG): URL template for the detached signature (binary or ASCII-armored). Covers the downloaded artifact itself, or — in signed-manifest mode (`checksum_url_template` + `checksum_manifest: true`) — the checksum manifest, whose line for the resolved artifact then supplies the digest.",
+              "description": "Tier 1: URL template for the detached signature. Required for GPG, where it may be binary or ASCII-armored; optional for sigstore, where it locates the signature or bundle. For GPG it covers the downloaded artifact itself, or — in signed-manifest mode (`checksum_url_template` + `checksum_manifest: true`) — the checksum manifest, whose line for the resolved artifact then supplies the digest.",
               "type": "string",
               "minLength": 1
             },
@@ -532,8 +532,7 @@
                       { "not": { "required": ["checksum_url_template"] } },
                       { "not": { "required": ["checksum_manifest"] } },
                       { "not": { "required": ["gpg_keyring"] } },
-                      { "not": { "required": ["gpg_key_url"] } },
-                      { "not": { "required": ["signature_url_template"] } }
+                      { "not": { "required": ["gpg_key_url"] } }
                     ]
                   }
                 ],

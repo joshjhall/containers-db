@@ -90,10 +90,11 @@ The "matching key/identity pair" for Tier 1 is one of:
 - sigstore: `sigstore_identity` **and** `sigstore_issuer`; no
   `checksum_url_template` / `checksum_manifest`.
 
-The two are exclusive: a GPG entry may not carry the sigstore pair, and a
-sigstore entry may not carry `gpg_keyring`, `gpg_key_url`, or
-`signature_url_template`. A consumer therefore never has to guess which
-verifier an entry meant.
+The key sources are exclusive: a GPG entry may not carry the sigstore pair,
+and a sigstore entry may not carry `gpg_keyring` or `gpg_key_url`. A
+consumer therefore never has to guess which verifier an entry meant.
+`signature_url_template` is shared: GPG requires it, and a sigstore entry
+may use it to locate its signature or bundle.
 
 `gpg_keyring` is forbidden on Tiers 2–4, like every other Tier 1 carrier.
 It is a catalog-root-relative path that must start with `keyrings/` and end
