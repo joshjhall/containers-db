@@ -10,12 +10,15 @@
 //! in the rustup invocation, without forcing those callsites to use a
 //! template placeholder.
 //!
-//! Why we don't fetch checksums: every install_method in tools/rust/
-//! today uses Tier 3 (`checksum_url_template`), which means the actual
-//! sha256 lives at the publisher and is fetched at install time. Tier 2
-//! (pinned checksum stored in-file) is not yet exercised by any tool;
-//! when it lands, this module gains a checksum-fetch step gated on
-//! `verification.tier == 2`.
+//! Why we don't fetch checksums: no install_method stores a checksum
+//! in-file. tools/rust/ uses Tier 3 (`checksum_url_template`), where the
+//! sha256 lives at the publisher and is fetched at install time. tools/node/
+//! and tools/go/ use Tier 1 (`algorithm: "gpg"` + `gpg_keyring` +
+//! `signature_url_template`); the keyring path and URL templates are
+//! version-agnostic, so those blocks carry forward unchanged through the
+//! template clone. Tier 2 (pinned checksum stored in-file) is not yet
+//! exercised by any tool; when it lands, this module gains a checksum-fetch
+//! step gated on `verification.tier == 2`.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};

@@ -2,8 +2,8 @@
 //! pinned `containers_common::tooldb::ToolVersion`, which is what luggage's
 //! `Catalog::load` reads.
 //!
-//! `ToolVersion`, `InstallMethod`, `SupportEntry` and `TestEntry` are all
-//! `#[serde(deny_unknown_fields)]`. A field the ajv schema accepts but the
+//! `ToolVersion`, `InstallMethod`, `Verification`, `SupportEntry` and
+//! `TestEntry` are all `#[serde(deny_unknown_fields)]`. A field the ajv schema accepts but the
 //! pinned rev does not know (e.g. `install_methods[].build_steps` before the
 //! pin moves past #809) passes schema validation yet fails luggage's catalog
 //! parse; this is the version-file sibling of `tool_index_parse.rs`.
@@ -136,8 +136,9 @@ fn version_mismatch_flags_a_version_that_differs_from_the_filename() {
 }
 
 /// The first shipped version file carrying every strict nested struct
-/// (`install_methods`, `support_matrix`, and `tested` rows), so one fixture
-/// reaches each `deny_unknown_fields` level the module doc names.
+/// (`install_methods` with a `verification` object on the first, plus
+/// `support_matrix` and `tested` rows), so one fixture reaches each
+/// `deny_unknown_fields` level the module doc names.
 fn fully_populated_version() -> serde_json::Value {
     let value = version_files()
         .into_iter()
@@ -148,8 +149,9 @@ fn fully_populated_version() -> serde_json::Value {
             ["install_methods", "support_matrix", "tested"]
                 .iter()
                 .all(|k| v[k].as_array().is_some_and(|a| !a.is_empty()))
+                && v["install_methods"][0]["verification"].is_object()
         })
-        .expect("a version file with install_methods, support_matrix and tested rows");
+        .expect("a version file with install_methods (verified), support_matrix and tested rows");
     // The unmutated file parses, so a rejection after mutation is the injected field.
     serde_json::from_value::<ToolVersion>(value.clone()).expect("pristine version parses");
     value
@@ -157,11 +159,19 @@ fn fully_populated_version() -> serde_json::Value {
 
 #[test]
 fn tool_version_rejects_an_unknown_field_at_every_strict_level() {
-    // `""` is ToolVersion itself; the rest are InstallMethod, SupportEntry and
-    // TestEntry. InstallMethod is what catches the live skew — `build_steps`
-    // is in the schema (#461) but not the pinned struct — but a
+    // `""` is ToolVersion itself; the rest are InstallMethod, Verification,
+    // SupportEntry and TestEntry. InstallMethod is what catches the live skew —
+    // `build_steps` is in the schema (#461) but not the pinned struct — but a
     // permanently-invalid name keeps this true after the pin moves past #809.
-    for pointer in ["", "/install_methods/0", "/support_matrix/0", "/tested/0"] {
+    // Verification is where the tier-1 keys (`gpg_keyring`,
+    // `signature_url_template`) live, so a misspelled one must not parse.
+    for pointer in [
+        "",
+        "/install_methods/0",
+        "/install_methods/0/verification",
+        "/support_matrix/0",
+        "/tested/0",
+    ] {
         let mut value = fully_populated_version();
         value
             .pointer_mut(pointer)

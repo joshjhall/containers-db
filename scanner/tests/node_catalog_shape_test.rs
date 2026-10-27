@@ -169,6 +169,25 @@ fn assert_node_shape(doc: &Value, label: &str, stale_versions: &[&str]) {
         source["verification"], methods[0]["verification"],
         "{name} must verify exactly as the glibc tarball does"
     );
+    // Tier 1: SHASUMS256.txt is checked against its detached signature with
+    // the pinned keyring, then the artifact against the manifest. Pinning
+    // methods[0] pins all three through the equalities above and below.
+    assert_eq!(
+        methods[0]["verification"],
+        json!({
+            "algorithm": "gpg",
+            "checksum_manifest": true,
+            "checksum_url_template": "https://nodejs.org/dist/v{version}/SHASUMS256.txt",
+            "gpg_keyring": "keyrings/nodejs.asc",
+            "signature_url_template": "https://nodejs.org/dist/v{version}/SHASUMS256.txt.sig",
+            "tier": 1
+        }),
+        "{label}: verification"
+    );
+    assert_eq!(
+        methods[1]["verification"], methods[0]["verification"],
+        "{label}: both tarballs verify the same way"
+    );
     assert!(
         source["build_steps"]
             .as_array()
