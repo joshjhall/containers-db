@@ -2,8 +2,8 @@
 //! pinned `containers_common::tooldb::ToolVersion`, which is what luggage's
 //! `Catalog::load` reads.
 //!
-//! `ToolVersion`, `InstallMethod`, `SupportEntry` and `TestEntry` are all
-//! `#[serde(deny_unknown_fields)]`. A field the ajv schema accepts but the
+//! `ToolVersion`, `InstallMethod`, `Verification`, `SupportEntry` and
+//! `TestEntry` are all `#[serde(deny_unknown_fields)]`. A field the ajv schema accepts but the
 //! pinned rev does not know (e.g. `install_methods[].build_steps` before the
 //! pin moves past #809) passes schema validation yet fails luggage's catalog
 //! parse; this is the version-file sibling of `tool_index_parse.rs`.
@@ -136,8 +136,9 @@ fn version_mismatch_flags_a_version_that_differs_from_the_filename() {
 }
 
 /// The first shipped version file carrying every strict nested struct
-/// (`install_methods`, `support_matrix`, and `tested` rows), so one fixture
-/// reaches each `deny_unknown_fields` level the module doc names.
+/// (`install_methods` with a `verification` object on the first, plus
+/// `support_matrix` and `tested` rows), so one fixture reaches each
+/// `deny_unknown_fields` level the module doc names.
 fn fully_populated_version() -> serde_json::Value {
     let value = version_files()
         .into_iter()
