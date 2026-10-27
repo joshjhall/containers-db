@@ -7,7 +7,8 @@ review, a compromised publisher origin cannot substitute its own key — unlike
 `gpg_key_url`, which fetches the key from the publisher at install time.
 
 Consumers resolve `gpg_keyring` relative to the catalog root, so the paths in
-version files are `keyrings/<file>.asc`.
+version files are `keyrings/<file>.asc` (subdirectories are allowed, but the
+files here are flat).
 
 ## Files
 

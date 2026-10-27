@@ -499,7 +499,7 @@
                 "required": ["tier"]
               },
               "then": {
-                "description": "Tier 1: cryptographic signature. Requires `algorithm` ∈ {gpg, sigstore} plus the matching key/identity fields. GPG needs `signature_url_template` and a key source (`gpg_keyring` preferred, or `gpg_key_url`). GPG may additionally run in signed-manifest mode: `checksum_url_template` + `checksum_manifest: true`, where the signature covers the manifest and the artifact's digest is then selected from it by filename (Node's signed `SHASUMS256.txt`). Forbids tier 2/4 carriers.",
+                "description": "Tier 1: cryptographic signature. Requires `algorithm` ∈ {gpg, sigstore} plus the matching key/identity fields. GPG needs `signature_url_template` and a key source (`gpg_keyring` preferred, or `gpg_key_url`). GPG may additionally run in signed-manifest mode: `checksum_url_template` + `checksum_manifest: true`, where the signature covers the manifest and the artifact's digest is then selected from it by filename (Node's signed `SHASUMS256.txt`). `algorithm` names the signature scheme here, not a digest, so the manifest's digests MUST be SHA-256: consumers compute sha256 over the artifact and compare it to the selected line. A publisher whose signed manifest uses another digest cannot use this mode. Forbids tier 2/4 carriers.",
                 "required": ["algorithm"],
                 "properties": {
                   "algorithm": { "enum": ["gpg", "sigstore"] }

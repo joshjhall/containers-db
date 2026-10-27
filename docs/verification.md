@@ -40,7 +40,11 @@ manifest instead of each artifact (Node signs `SHASUMS256.txt`). Set
 `checksum_url_template` + `checksum_manifest: true` alongside the signature:
 the signature verifies the manifest, then the artifact's digest is selected
 from it by filename, exactly as Tier 3's manifest rule describes. Sigstore
-entries may not use this mode.
+entries may not use this mode. Because a Tier 1 `algorithm` names the
+signature scheme (`gpg`) rather than a digest, the manifest's digests
+**must be SHA-256**: consumers hash the artifact with sha256 and compare it
+to the selected line. A publisher that signs only a SHA-512 manifest cannot
+use this mode.
 
 ### Tier 2 — Pinned checksum (high)
 
@@ -100,7 +104,8 @@ schema-valid before but never meaningful, and no catalog entry used one.)
 
 `gpg_keyring` is forbidden on Tiers 2–4, like every other Tier 1 carrier.
 It is a catalog-root-relative path that must start with `keyrings/` and end
-in `.asc` (`keyrings/<name>.asc`), with no `.` or `..` segment.
+in `.asc` (`keyrings/<name>.asc`; subdirectories such as
+`keyrings/<vendor>/<name>.asc` are allowed), with no `.` or `..` segment.
 
 `source_url_template`, `invoke`, `post_install`, `system_packages`, and
 `platform` are orthogonal to the verification block and may appear with
