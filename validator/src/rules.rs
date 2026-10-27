@@ -21,6 +21,12 @@
 //!      collectively intersect to a non-empty constraint. If two
 //!      consumers ask for disjoint ranges, the catalog has no
 //!      satisfiable starting state.
+//!   7. Every `verification.gpg_keyring` names a regular file that
+//!      canonicalizes to somewhere under `keyrings/`. The schema pattern
+//!      only checks the path's shape; this catches a typo (a missing
+//!      file) and a symlink that escapes `keyrings/`. Files under
+//!      `fixtures/` resolve against `fixtures/` (its `keyrings/` holds
+//!      stubs); everything else resolves against the repo root.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -142,6 +148,14 @@ pub fn check_all(
                 let pointer = format!("/install_methods/{mi}/dependencies/{di}");
                 check_dep(dep, &pointer, &label, catalog, &mut diagnostics);
             }
+            if let Some(keyring) = method
+                .verification
+                .as_ref()
+                .and_then(|v| v.gpg_keyring.as_deref())
+            {
+                let pointer = format!("/install_methods/{mi}/verification/gpg_keyring");
+                check_gpg_keyring(keyring, repo_root, file, &pointer, &label, &mut diagnostics);
+            }
         }
     }
 
@@ -207,6 +221,14 @@ struct VersionDoc {
 struct RawInstallMethod {
     #[serde(default)]
     dependencies: Vec<RawDependency>,
+    #[serde(default)]
+    verification: Option<RawVerification>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawVerification {
+    #[serde(default)]
+    gpg_keyring: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -377,6 +399,61 @@ fn check_requires_intersection(
                 }
             }
         }
+    }
+}
+
+/// Rule 7. `file` is the version file carrying the reference; it picks
+/// the keyring root (`fixtures/` for fixture files, else the repo root).
+fn check_gpg_keyring(
+    keyring: &str,
+    repo_root: &Path,
+    file: &Path,
+    pointer: &str,
+    label: &str,
+    out: &mut Vec<Diagnostic>,
+) {
+    let fixtures = repo_root.join("fixtures");
+    let (root, root_label) = if file.starts_with(&fixtures) {
+        (fixtures, "fixtures/")
+    } else {
+        (repo_root.to_path_buf(), "the catalog root")
+    };
+    let mut push = |message: String| {
+        out.push(Diagnostic {
+            origin: label.to_string(),
+            pointer: pointer.to_string(),
+            message,
+        })
+    };
+
+    let target = match root.join(keyring).canonicalize() {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            push(format!(
+                "gpg_keyring \"{keyring}\" does not exist (resolved against {root_label})"
+            ));
+            return;
+        }
+        Err(e) => {
+            push(format!(
+                "gpg_keyring \"{keyring}\" could not be resolved against {root_label}: {e}"
+            ));
+            return;
+        }
+    };
+    // A missing keyrings/ dir means nothing can resolve under it; the
+    // target existing at all then implies it lives elsewhere.
+    let inside = root
+        .join("keyrings")
+        .canonicalize()
+        .is_ok_and(|base| target.starts_with(base));
+    if !inside {
+        push(format!(
+            "gpg_keyring \"{keyring}\" resolves outside keyrings/ (to {})",
+            target.display()
+        ));
+    } else if !target.is_file() {
+        push(format!("gpg_keyring \"{keyring}\" is not a regular file"));
     }
 }
 
