@@ -519,14 +519,21 @@
                     "if": { "required": ["checksum_manifest"] },
                     "then": {
                       "properties": { "checksum_manifest": { "const": true } }
-                    }
+                    },
+                    "allOf": [
+                      { "not": { "required": ["sigstore_identity"] } },
+                      { "not": { "required": ["sigstore_issuer"] } }
+                    ]
                   },
                   {
                     "properties": { "algorithm": { "const": "sigstore" } },
                     "required": ["sigstore_identity", "sigstore_issuer"],
                     "allOf": [
                       { "not": { "required": ["checksum_url_template"] } },
-                      { "not": { "required": ["checksum_manifest"] } }
+                      { "not": { "required": ["checksum_manifest"] } },
+                      { "not": { "required": ["gpg_keyring"] } },
+                      { "not": { "required": ["gpg_key_url"] } },
+                      { "not": { "required": ["signature_url_template"] } }
                     ]
                   }
                 ],
