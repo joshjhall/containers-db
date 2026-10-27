@@ -51,20 +51,28 @@ fn repo_with_keyring(keyring: &str) -> TempDir {
     tmp
 }
 
-fn keyring_diagnostics(root: &Path, only: Option<&Path>) -> Vec<String> {
+fn all_diagnostics(root: &Path, only: Option<&Path>) -> Vec<String> {
     let cat = catalog::load(root).unwrap();
     rules::check_all(root, &cat, only)
         .unwrap()
         .into_iter()
         .map(|d| d.to_string())
+        .collect()
+}
+
+fn keyring_diagnostics(root: &Path, only: Option<&Path>) -> Vec<String> {
+    all_diagnostics(root, only)
+        .into_iter()
         .filter(|d| d.contains("gpg_keyring"))
         .collect()
 }
 
 #[test]
 fn existing_keyring_passes() {
+    // Unfiltered: a doc that failed to parse or never reached rule 7
+    // would surface some other diagnostic here instead of passing.
     let tmp = repo_with_keyring("keyrings/real.asc");
-    assert_eq!(keyring_diagnostics(tmp.path(), None), Vec::<String>::new());
+    assert_eq!(all_diagnostics(tmp.path(), None), Vec::<String>::new());
 }
 
 #[test]
@@ -116,7 +124,24 @@ fn symlink_within_keyrings_passes() {
     let tmp = repo_with_keyring("keyrings/alias.asc");
     let root = tmp.path();
     std::os::unix::fs::symlink("real.asc", root.join("keyrings/alias.asc")).unwrap();
-    assert_eq!(keyring_diagnostics(root, None), Vec::<String>::new());
+    assert_eq!(all_diagnostics(root, None), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_loop_is_not_reported_as_missing() {
+    let tmp = repo_with_keyring("keyrings/loop.asc");
+    let root = tmp.path();
+    std::os::unix::fs::symlink("loop.asc", root.join("keyrings/loop.asc")).unwrap();
+
+    let diags = keyring_diagnostics(root, None);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert!(
+        diags[0].contains(
+            "gpg_keyring \"keyrings/loop.asc\" could not be resolved against the catalog root: "
+        ) && !diags[0].contains("does not exist"),
+        "{diags:?}"
+    );
 }
 
 #[cfg(unix)]

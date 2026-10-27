@@ -428,9 +428,15 @@ fn check_gpg_keyring(
 
     let target = match root.join(keyring).canonicalize() {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             push(format!(
                 "gpg_keyring \"{keyring}\" does not exist (resolved against {root_label})"
+            ));
+            return;
+        }
+        Err(e) => {
+            push(format!(
+                "gpg_keyring \"{keyring}\" could not be resolved against {root_label}: {e}"
             ));
             return;
         }
