@@ -11,9 +11,9 @@ worked example (`tools/go/versions/*.json`, #482).
   release binaries are statically linked, so the same tarball is expected to
   run on musl; the evidence run is what confirms it (see Evidence below).
 - If upstream's tarball is glibc-linked (Node.js is), it will not run on
-  alpine. Keep the glibc method and give alpine a different install shape
-  (source-build or a distro package) in its own method, per the node alpine
-  work.
+  alpine. Keep the glibc method and give alpine a source build in its own
+  method: see [source-build-musl.md](source-build-musl.md), with node as the
+  worked example.
 
 ## Shape
 

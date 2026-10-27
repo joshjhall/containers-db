@@ -10,7 +10,7 @@ publish = false
 
 [workspace.dependencies]
 db-validator = { path = "validator" }
-containers-common = { git = "https://github.com/joshjhall/containers", rev = "7118f813b356958bc77f79e5d1ec5efea6ba1204" }
+containers-common = { git = "https://github.com/joshjhall/containers", rev = "6d59c2c2301c8415fc9b1cf53660dc181a814f97" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

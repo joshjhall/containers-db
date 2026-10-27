@@ -159,7 +159,8 @@ new `support_matrix` row, etc.), submit it as a manual PR; the scanner
 will then carry that change forward to subsequent versions. For a tool
 whose matrix spans glibc and musl, see
 [binary-tarball-glibc-musl.md](binary-tarball-glibc-musl.md), which also
-covers pinning the shape with a test.
+covers pinning the shape with a test. When upstream ships no musl binary,
+see [source-build-musl.md](source-build-musl.md).
 
 ## Duplicate-PR guard
 
