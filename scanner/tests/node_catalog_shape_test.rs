@@ -72,7 +72,9 @@ fn owned(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-fn assert_node_shape(doc: &Value, label: &str) {
+/// `stale_versions` are version strings no unsupported reason may contain:
+/// the document's own version, plus (for a rendered release) the template's.
+fn assert_node_shape(doc: &Value, label: &str, stale_versions: &[&str]) {
     let rows = doc["support_matrix"]
         .as_array()
         .unwrap_or_else(|| panic!("{label}: no support_matrix"));
@@ -94,10 +96,12 @@ fn assert_node_shape(doc: &Value, label: &str) {
                     // render_version rewrites only whole-string version
                     // matches, so a version inside the reason would survive
                     // the clone and name the wrong release.
-                    assert!(
-                        !reason.contains(doc["version"].as_str().unwrap()),
-                        "{label}: reason embeds the version and would go stale on render: {r}"
-                    );
+                    for v in stale_versions {
+                        assert!(
+                            !reason.contains(v),
+                            "{label}: reason embeds {v} and would go stale on render: {r}"
+                        );
+                    }
                 }
                 other => panic!("{label}: {os} row has status {other}: {r}"),
             }
@@ -125,13 +129,20 @@ fn assert_node_shape(doc: &Value, label: &str) {
     );
 
     // glibc: the official tarball, one method per arch. libatomic only on
-    // arm64, where node 26+ links libatomic.so.1 (#481).
+    // arm64 from node 25.0.0, the first release whose arm64 tarball links
+    // libatomic.so.1 (readelf NEEDED: every cataloged 25.x/26.x links it,
+    // sampled 18-24 do not). Earlier releases must not pull it in.
+    let major: u64 = doc["version"]
+        .as_str()
+        .and_then(|v| v.split('.').next())
+        .and_then(|m| m.parse().ok())
+        .unwrap_or_else(|| panic!("{label}: unparsable version"));
     for (method, arch) in methods[..2].iter().zip(["amd64", "arm64"]) {
         let name = format!("{label}: {}", method["name"]);
         assert_eq!(method["method_kind"], "binary-tarball", "{name}");
         assert_eq!(method["platform"]["os"], json!(GLIBC_OS), "{name} os");
         assert_eq!(method["platform"]["arch"], json!([arch]), "{name} arch");
-        let want: &[(&str, &str)] = if arch == "arm64" {
+        let want: &[(&str, &str)] = if arch == "arm64" && major >= 25 {
             &[("ca_certificates", "both"), ("libatomic", "runtime")]
         } else {
             &[("ca_certificates", "both")]
@@ -188,7 +199,9 @@ fn every_cataloged_node_version_has_the_full_matrix() {
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            assert_node_shape(&read_json(&path), &path.display().to_string());
+            let doc = read_json(&path);
+            let own = doc["version"].as_str().unwrap().to_string();
+            assert_node_shape(&doc, &path.display().to_string(), &[&own]);
             seen += 1;
         }
     }
@@ -215,5 +228,11 @@ fn a_newly_generated_node_version_keeps_the_full_matrix() {
     let rendered = render_version(&template, &template_version, &new, Utc::now());
 
     assert_eq!(rendered["version"], "99.0.0");
-    assert_node_shape(&rendered, "rendered node 99.0.0");
+    // A reason carrying the TEMPLATE's version is exactly what a whole-string
+    // rewrite leaves behind, so forbid it alongside the rendered version.
+    assert_node_shape(
+        &rendered,
+        "rendered node 99.0.0",
+        &["99.0.0", template_version.as_str()],
+    );
 }

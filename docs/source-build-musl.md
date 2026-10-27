@@ -75,8 +75,11 @@ build listed exactly these libraries, and each binary ran `node` and `npm` in a
 fresh alpine that had only the runtime packages installed.
 
 `libatomic` is **not** a dependency of the musl build. The official glibc arm64
-tarball for node 26+ links `libatomic.so.1` (#481), so `node-tarball-arm64`
-declares it, but the musl binary built from source does not link it.
+tarball links `libatomic.so.1` from node **25.0.0** on, so `node-tarball-arm64`
+declares it for 25.0.0 and later only. The musl binary built from source does
+not link it. The boundary was measured with `readelf -d` NEEDED: every
+cataloged 25.x/26.x tarball links it, and 15 sampled 18.x–24.x tarballs,
+including each major's edges, do not. #481 said "26+"; 25.x links it too.
 
 **Luggage gap.** Luggage does not read `purpose` yet: every dependency is
 installed by its system-package stage and stays in the final image, including

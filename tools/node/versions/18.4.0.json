@@ -33,10 +33,6 @@
       "dependencies": [
         {
           "tool": "ca_certificates"
-        },
-        {
-          "tool": "libatomic",
-          "purpose": "runtime"
         }
       ],
       "method_kind": "binary-tarball",
