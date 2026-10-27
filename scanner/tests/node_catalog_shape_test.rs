@@ -85,10 +85,20 @@ fn assert_node_shape(doc: &Value, label: &str) {
             // the reason in its UnsupportedPlatform error.
             match r["status"].as_str().unwrap() {
                 "supported" => {}
-                "unsupported" if os == "alpine" => assert!(
-                    r["reason"].as_str().is_some_and(|s| !s.is_empty()),
-                    "{label}: unsupported alpine row has no reason: {r}"
-                ),
+                "unsupported" if os == "alpine" => {
+                    let reason = r["reason"].as_str().unwrap_or_default();
+                    assert!(
+                        !reason.is_empty(),
+                        "{label}: unsupported alpine row has no reason: {r}"
+                    );
+                    // render_version rewrites only whole-string version
+                    // matches, so a version inside the reason would survive
+                    // the clone and name the wrong release.
+                    assert!(
+                        !reason.contains(doc["version"].as_str().unwrap()),
+                        "{label}: reason embeds the version and would go stale on render: {r}"
+                    );
+                }
                 other => panic!("{label}: {os} row has status {other}: {r}"),
             }
             (

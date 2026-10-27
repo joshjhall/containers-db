@@ -113,6 +113,12 @@ version, because older releases will likely drop to `unsupported` for that
 cell. `scanner/tests/node_catalog_shape_test.rs` requires every unsupported
 alpine row to carry a reason. It does not re-derive the gate.
 
+Keep the reason text version-free ("this release's ./configure …"). The
+scanner's `render_version` rewrites only strings that are **entirely** the
+version, so a version embedded in a sentence would carry over to the cloned
+file and name the wrong release. The shape test rejects a reason that contains
+its own file's version.
+
 ## Cost model
 
 These numbers come from a native arm64 alpine 3.22 host with 10 cores. Each
