@@ -158,6 +158,27 @@ fn fixture_files_resolve_against_fixtures_dir() {
 }
 
 #[test]
+fn missing_keyrings_dir_reports_outside() {
+    // fixtures/ has the named file but no keyrings/ subdir, so nothing
+    // can resolve under it; the existing target must be reported as outside.
+    let tmp = repo_with_keyring("keyrings/real.asc");
+    let root = tmp.path();
+    write(&root.join("fixtures/stray.asc"), "stub\n");
+    write(
+        &root.join("fixtures/tier1-a-example.json"),
+        &version_doc("stray.asc"),
+    );
+
+    let diags = keyring_diagnostics(root, None);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert!(
+        diags[0].starts_with("fixtures/tier1-a-example.json:")
+            && diags[0].contains("gpg_keyring \"stray.asc\" resolves outside keyrings/"),
+        "{diags:?}"
+    );
+}
+
+#[test]
 fn real_catalog_keyrings_resolve() {
     // Covers keyrings/nodejs.asc + keyrings/golang.asc and the fixture stub.
     let root = repo_root();
@@ -180,6 +201,12 @@ fn real_catalog_keyrings_resolve() {
             .count();
         assert!(hits > 0, "no tools/{tool} version file pins {keyring}");
     }
+    let fixture =
+        fs::read_to_string(root.join("fixtures/tier1-pinned-keyring-example.json")).unwrap();
+    assert!(
+        fixture.contains("\"gpg_keyring\": \"keyrings/sample-signed.asc\""),
+        "tier1-pinned-keyring-example.json no longer pins the fixture stub"
+    );
 }
 
 #[test]
