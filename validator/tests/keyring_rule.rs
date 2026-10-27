@@ -95,6 +95,21 @@ fn symlink_escaping_keyrings_fails() {
     );
 }
 
+#[test]
+fn dotdot_traversal_out_of_keyrings_fails() {
+    // The schema pattern rejects `..`, but the rule must not lean on that.
+    let tmp = repo_with_keyring("keyrings/../outside.asc");
+    let root = tmp.path();
+    write(&root.join("outside.asc"), "stub\n");
+
+    let diags = keyring_diagnostics(root, None);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert!(
+        diags[0].contains("gpg_keyring \"keyrings/../outside.asc\" resolves outside keyrings/"),
+        "{diags:?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn symlink_within_keyrings_passes() {
