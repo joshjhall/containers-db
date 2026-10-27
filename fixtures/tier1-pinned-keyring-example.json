@@ -4,6 +4,16 @@
   "version": "1.0.0",
   "released": "2026-04-01",
   "channel": "stable",
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-10-27T00:00:00Z",
+      "result": "pass",
+      "verification_tier": 1
+    }
+  ],
   "install_methods": [
     {
       "name": "tarball",

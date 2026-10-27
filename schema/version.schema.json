@@ -463,14 +463,14 @@
               "type": "boolean"
             },
             "gpg_key_url": {
-              "description": "Tier 1 (GPG): URL of the publisher's public key. Weaker than `gpg_keyring`: a key fetched at install time is only as trustworthy as the publisher's infrastructure. Consumers MAY refuse entries that carry only this field.",
+              "description": "Tier 1 (GPG): URL of the publisher's public key. Weaker than `gpg_keyring`: a key fetched at install time is only as trustworthy as the publisher's infrastructure. Consumers MAY refuse entries that carry only this field. When `gpg_keyring` is also present, consumers MUST verify against `gpg_keyring` only and MUST NOT fetch or fall back to this key.",
               "type": "string",
               "format": "uri"
             },
             "gpg_keyring": {
-              "description": "Tier 1 (GPG): path, relative to the catalog root, of an ASCII-armored public keyring committed to this repository (e.g. `keyrings/nodejs.asc`). The signature must verify against a key in this file. Pinned through code review, so a compromised publisher origin cannot substitute its own key. Must not be absolute or contain a `..` segment.",
+              "description": "Tier 1 (GPG): path, relative to the catalog root, of an ASCII-armored public keyring committed to this repository (e.g. `keyrings/nodejs.asc`). The signature must verify against a key in this file. Pinned through code review, so a compromised publisher origin cannot substitute its own key. Must live under `keyrings/` and must not contain a `.` or `..` segment. Takes precedence over `gpg_key_url`: when both are present, consumers MUST verify against this keyring only and never fall back to the remote key.",
               "type": "string",
-              "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[A-Za-z0-9._/-]+\\.asc$"
+              "pattern": "^keyrings/(?![.]{1,2}/)(?!.*/[.]{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\\.asc$"
             },
             "signature_url_template": {
               "description": "Tier 1 (GPG): URL template for the detached signature (binary or ASCII-armored). Covers the downloaded artifact itself, or — in signed-manifest mode (`checksum_url_template` + `checksum_manifest: true`) — the checksum manifest, whose line for the resolved artifact then supplies the digest.",

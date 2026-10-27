@@ -32,6 +32,8 @@ changed only through code review. `gpg_key_url` fetches the key from the
 publisher at install time, so it is only as trustworthy as the publisher's
 infrastructure — a compromised origin can serve its own key alongside its
 own signature. Consumers MAY refuse entries that carry only `gpg_key_url`.
+When an entry carries both, `gpg_keyring` wins: consumers MUST verify
+against the pinned keyring only and never fetch or fall back to the URL.
 
 GPG also has a **signed-manifest mode** for publishers that sign a checksum
 manifest instead of each artifact (Node signs `SHASUMS256.txt`). Set
@@ -89,8 +91,8 @@ The "matching key/identity pair" for Tier 1 is one of:
   `checksum_url_template` / `checksum_manifest`.
 
 `gpg_keyring` is forbidden on Tiers 2–4, like every other Tier 1 carrier.
-It is a catalog-root-relative path (`keyrings/<name>.asc`) and may not be
-absolute or contain a `..` segment.
+It is a catalog-root-relative path that must start with `keyrings/` and end
+in `.asc` (`keyrings/<name>.asc`), with no `.` or `..` segment.
 
 `source_url_template`, `invoke`, `post_install`, `system_packages`, and
 `platform` are orthogonal to the verification block and may appear with
