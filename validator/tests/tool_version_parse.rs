@@ -148,8 +148,9 @@ fn fully_populated_version() -> serde_json::Value {
             ["install_methods", "support_matrix", "tested"]
                 .iter()
                 .all(|k| v[k].as_array().is_some_and(|a| !a.is_empty()))
+                && v["install_methods"][0]["verification"].is_object()
         })
-        .expect("a version file with install_methods, support_matrix and tested rows");
+        .expect("a version file with install_methods (verified), support_matrix and tested rows");
     // The unmutated file parses, so a rejection after mutation is the injected field.
     serde_json::from_value::<ToolVersion>(value.clone()).expect("pristine version parses");
     value
@@ -157,11 +158,19 @@ fn fully_populated_version() -> serde_json::Value {
 
 #[test]
 fn tool_version_rejects_an_unknown_field_at_every_strict_level() {
-    // `""` is ToolVersion itself; the rest are InstallMethod, SupportEntry and
-    // TestEntry. InstallMethod is what catches the live skew — `build_steps`
-    // is in the schema (#461) but not the pinned struct — but a
+    // `""` is ToolVersion itself; the rest are InstallMethod, Verification,
+    // SupportEntry and TestEntry. InstallMethod is what catches the live skew —
+    // `build_steps` is in the schema (#461) but not the pinned struct — but a
     // permanently-invalid name keeps this true after the pin moves past #809.
-    for pointer in ["", "/install_methods/0", "/support_matrix/0", "/tested/0"] {
+    // Verification is where the tier-1 keys (`gpg_keyring`,
+    // `signature_url_template`) live, so a misspelled one must not parse.
+    for pointer in [
+        "",
+        "/install_methods/0",
+        "/install_methods/0/verification",
+        "/support_matrix/0",
+        "/tested/0",
+    ] {
         let mut value = fully_populated_version();
         value
             .pointer_mut(pointer)
