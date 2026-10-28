@@ -21,6 +21,8 @@ pub mod generate;
 pub(crate) mod outcome;
 pub mod pr;
 pub mod stage;
+#[cfg(test)]
+mod test_tls;
 pub mod validate;
 
 use std::collections::HashSet;
@@ -843,8 +845,13 @@ mod tests {
     /// registry holds every shipped adapter. On Linux this runs in a child
     /// whose only root is a committed fixture, so it needs no host CA bundle
     /// (issue #510) and is the "builds with roots" contrast for
-    /// [`missing_tls_roots_are_an_error_not_a_panic`]. Elsewhere the platform
-    /// verifier loads no roots at build time, so it runs in-process.
+    /// [`missing_tls_roots_are_an_error_not_a_panic`].
+    ///
+    /// Elsewhere it runs in-process, by decision (issue #512): on macOS and
+    /// Windows the platform verifier loads no roots in `build()`, so nothing
+    /// in the environment can change whether it builds, and an env-cleared
+    /// child would only add a way to fail (Windows needs `SystemRoot` and the
+    /// like to start a process at all).
     #[test]
     fn system_roots_client_builds() {
         if cfg!(target_os = "linux") {
@@ -931,16 +938,22 @@ mod tests {
         use adapters::{DEFAULT_REQUEST_TIMEOUT, TlsRoots};
 
         // The hint is a fixed context string, so also require what sits under
-        // it: reqwest's builder error, carrying the verifier's own cause. The
-        // cause is checked by shape, not by the verifier's wording, which a
-        // dependency bump may change.
+        // it: reqwest's builder error, carrying the verifier's own cause as a
+        // `rustls::Error` (issue #512: a type, where any source used to do).
+        // Neither the variant nor the wording is pinned; a dependency bump
+        // may change both. What makes the cause specific to missing roots is
+        // the contrast: the same build succeeds in `system_roots_child`, whose
+        // environment differs only by having a root.
         let err = adapters::http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::System).unwrap_err();
         assert!(format!("{err}").contains(hint), "{err:#}");
         let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() else {
             panic!("no reqwest::Error under the context: {err:#}");
         };
         assert!(reqwest_err.is_builder(), "{err:#}");
-        assert!(std::error::Error::source(reqwest_err).is_some(), "{err:#}");
+        assert!(
+            crate::test_tls::find_rustls_error(reqwest_err).is_some(),
+            "no rustls::Error under the builder error: {err:#}"
+        );
 
         // The wiremock constructors' client does not touch the OS store, so
         // the tests built on it run here too.
@@ -998,6 +1011,60 @@ mod tests {
             "{err}"
         );
         assert!(!err.contains(hint), "{err}");
+    }
+
+    /// Set in a [`none_roots_ignore_the_system_store`] child: the directory
+    /// holding the [`test_tls::TestPki`] the parent wrote.
+    #[cfg(target_os = "linux")]
+    const PKI_DIR: &str = "SCANNER_TEST_TLS_PKI_DIR";
+
+    /// [`TlsRoots::None`](adapters::TlsRoots::None) must not fall back to the
+    /// OS store (issue #512). The child's only system root is a throwaway CA
+    /// whose leaf it serves, so a `System` client reaches the server and a
+    /// `None` client that trusted the store would too.
+    ///
+    /// Linux only, like [`missing_tls_roots_are_an_error_not_a_panic`]:
+    /// `SSL_CERT_FILE` is how the platform verifier is given a root there,
+    /// and elsewhere it asks the OS, which a test cannot seed hermetically.
+    /// `adapters::tests::none_roots_reject_https` covers every OS for a
+    /// `None` that trusts anything at all.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn none_roots_ignore_the_system_store() {
+        let dir = tempfile::tempdir().unwrap();
+        test_tls::TestPki::generate().write_to(dir.path());
+        run_with_env(
+            "tests::none_roots_ignore_the_system_store_child",
+            tempfile::tempdir().unwrap().path(),
+            &[
+                ("SSL_CERT_FILE", &dir.path().join("ca.pem")),
+                (PKI_DIR, dir.path()),
+            ],
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[ignore = "run by none_roots_ignore_the_system_store"]
+    fn none_roots_ignore_the_system_store_child() {
+        if !in_child() {
+            return;
+        }
+        use adapters::{DEFAULT_REQUEST_TIMEOUT, TlsRoots};
+
+        let dir = std::env::var_os(PKI_DIR).unwrap();
+        let pki = test_tls::TestPki::read_from(std::path::Path::new(&dir));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let url = pki.serve().await;
+            let system = adapters::http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::System).unwrap();
+            test_tls::assert_reachable(&system, &url).await;
+            let none = adapters::http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::None).unwrap();
+            test_tls::assert_cert_rejected(&none, &url).await;
+        });
     }
 
     #[test]
