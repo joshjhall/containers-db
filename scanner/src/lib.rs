@@ -878,9 +878,23 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        let tool = Cli::try_parse_from(["scanner", "tool", "rust", "--dry-run"]).unwrap();
-        let err = rt.block_on(run(tool)).unwrap_err();
-        assert!(format!("{err}").contains(hint), "{err:#}");
+        // Each scanning command builds the registry first, before any repo I/O.
+        for argv in [
+            &["scanner", "due", "--dry-run"][..],
+            &["scanner", "tool", "rust", "--dry-run"],
+            &[
+                "scanner",
+                "backfill",
+                "rust",
+                "--from",
+                "1.0.0",
+                "--dry-run",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(argv).unwrap();
+            let err = rt.block_on(run(cli)).unwrap_err();
+            assert!(format!("{err}").contains(hint), "{argv:?}: {err:#}");
+        }
 
         // `deliver` makes no requests, so it gets past the registry and fails
         // on the missing plan instead.
@@ -888,8 +902,12 @@ mod tests {
         let plan = dir.path().join("missing-plan.json");
         let deliver =
             Cli::try_parse_from(["scanner", "deliver", "--plan", plan.to_str().unwrap()]).unwrap();
-        let err = rt.block_on(run(deliver)).unwrap_err();
-        assert!(!format!("{err:#}").contains(hint), "{err:#}");
+        let err = format!("{:#}", rt.block_on(run(deliver)).unwrap_err());
+        assert!(
+            err.starts_with(&format!("reading plan {}", plan.display())),
+            "{err}"
+        );
+        assert!(!err.contains(hint), "{err}");
     }
 
     #[test]
