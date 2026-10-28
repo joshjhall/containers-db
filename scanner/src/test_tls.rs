@@ -162,13 +162,19 @@ pub(crate) async fn assert_reachable(client: &reqwest::Client, url: &str) {
 /// is the same everywhere.
 pub(crate) async fn assert_cert_rejected(client: &reqwest::Client, url: &str) {
     let err = client.get(url).send().await.unwrap_err();
-    let rejected = find_rustls_error(&err).is_some_and(|e| {
-        matches!(
-            e,
-            rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)
-        )
-    });
-    assert!(rejected, "expected a certificate rejection: {err:?}");
+    assert!(
+        find_rustls_error(&err).is_some_and(is_unknown_issuer),
+        "expected a certificate rejection: {err:?}"
+    );
+}
+
+/// Whether `e` says the certificate chains to no trusted root, and nothing
+/// else: a name or validity failure is a different variant.
+fn is_unknown_issuer(e: &rustls::Error) -> bool {
+    matches!(
+        e,
+        rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)
+    )
 }
 
 /// The first `rustls::Error` in `err`'s source chain. `io::Error::source`
@@ -195,7 +201,7 @@ pub(crate) fn find_rustls_error<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::find_rustls_error;
+    use super::{find_rustls_error, is_unknown_issuer};
 
     #[derive(Debug)]
     struct Wrapper(std::io::Error);
@@ -261,5 +267,24 @@ mod tests {
     fn no_rustls_error_is_none() {
         let err = Wrapper(std::io::Error::other("refused"));
         assert!(find_rustls_error(&err).is_none());
+    }
+
+    /// The rejection tests count only a missing trust anchor, so the other
+    /// ways a certificate fails must not satisfy them.
+    #[test]
+    fn only_unknown_issuer_counts_as_untrusted() {
+        use rustls::CertificateError;
+
+        assert!(is_unknown_issuer(&rustls::Error::InvalidCertificate(
+            CertificateError::UnknownIssuer
+        )));
+        for other in [
+            rustls::Error::InvalidCertificate(CertificateError::NotValidForName),
+            rustls::Error::InvalidCertificate(CertificateError::Expired),
+            rustls::Error::InvalidCertificate(CertificateError::BadSignature),
+            rustls::Error::General("refused".into()),
+        ] {
+            assert!(!is_unknown_issuer(&other), "{other:?}");
+        }
     }
 }
