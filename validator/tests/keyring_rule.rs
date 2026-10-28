@@ -303,3 +303,127 @@ fn negative_fixture_missing_keyring_fails() {
         ]
     );
 }
+
+#[test]
+fn absolute_keyring_inside_keyrings_is_rejected() {
+    // Path::join drops the root for an absolute path, so without the
+    // guard this resolved straight to the real keyring and passed.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let abs = root.join("keyrings/real.asc");
+    let abs = abs.to_str().unwrap();
+    write(
+        &root.join("tools/cli_a/index.json"),
+        r#"{ "schemaVersion": 1, "id": "cli_a", "kind": "cli" }"#,
+    );
+    write(&root.join("keyrings/real.asc"), "stub\n");
+    write(
+        &root.join("tools/cli_a/versions/1.0.0.json"),
+        &version_doc(abs),
+    );
+
+    let diags = all_diagnostics(root, None);
+    assert_eq!(
+        diags,
+        vec![format!(
+            "tools/cli_a/versions/1.0.0.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"{abs}\" is an absolute path; it must be relative to the catalog root"
+        )]
+    );
+}
+
+#[test]
+fn absolute_keyring_outside_keyrings_is_rejected() {
+    let elsewhere = TempDir::new().unwrap();
+    let stray = elsewhere.path().join("stray.asc");
+    write(&stray, "stub\n");
+    let abs = stray.to_str().unwrap();
+    let tmp = repo_with_keyring(abs);
+
+    let diags = keyring_diagnostics(tmp.path(), None);
+    assert_eq!(
+        diags,
+        vec![format!(
+            "tools/cli_a/versions/1.0.0.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"{abs}\" is an absolute path; it must be relative to the catalog root"
+        )]
+    );
+}
+
+#[test]
+fn absolute_keyring_in_fixture_names_fixtures_root() {
+    let tmp = repo_with_keyring("keyrings/real.asc");
+    let root = tmp.path();
+    write(&root.join("fixtures/keyrings/stub.asc"), "stub\n");
+    let abs = root.join("fixtures/keyrings/stub.asc");
+    let abs = abs.to_str().unwrap();
+    write(
+        &root.join("fixtures/tier1-a-example.json"),
+        &version_doc(abs),
+    );
+
+    let diags = keyring_diagnostics(root, None);
+    assert_eq!(
+        diags,
+        vec![format!(
+            "fixtures/tier1-a-example.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"{abs}\" is an absolute path; it must be relative to fixtures/"
+        )]
+    );
+}
+
+#[test]
+fn only_outside_any_fixtures_dir_falls_back_to_catalog_root() {
+    // No fixtures/ dir exists, so is_under cannot canonicalize it and
+    // takes the lexical fallback; the file must resolve against the root.
+    let tmp = repo_with_keyring("keyrings/typo.asc");
+    let root = tmp.path();
+    let file = root.join("tools/cli_a/versions/1.0.0.json");
+
+    let diags = keyring_diagnostics(root, Some(&file));
+    assert_eq!(
+        diags,
+        vec![
+            "tools/cli_a/versions/1.0.0.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"keyrings/typo.asc\" does not exist (resolved against the catalog root)"
+                .to_string()
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn only_via_symlinked_root_still_resolves_against_fixtures() {
+    // `--only` passes an absolute path through unchanged. Spelled via a
+    // symlink to the repo it no longer lexically starts with
+    // `<root>/fixtures`, which used to fall back to the catalog root.
+    let tmp = repo_with_keyring("keyrings/real.asc");
+    let root = tmp.path();
+    write(&root.join("fixtures/keyrings/stub.asc"), "stub\n");
+    write(
+        &root.join("fixtures/tier1-a-example.json"),
+        &version_doc("keyrings/stub.asc"),
+    );
+    write(
+        &root.join("fixtures/tier1-b-example.json"),
+        &version_doc("keyrings/typo.asc"),
+    );
+    let links = TempDir::new().unwrap();
+    let link = links.path().join("checkout");
+    std::os::unix::fs::symlink(root, &link).unwrap();
+
+    // The stub exists only under fixtures/keyrings/; resolved against
+    // the catalog root it would be reported missing.
+    let ok = link.join("fixtures/tier1-a-example.json");
+    assert_eq!(all_diagnostics(root, Some(&ok)), Vec::<String>::new());
+
+    let bad = link.join("fixtures/tier1-b-example.json");
+    let diags = keyring_diagnostics(root, Some(&bad));
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert!(
+        diags[0].ends_with(
+            "gpg_keyring \"keyrings/typo.asc\" does not exist (resolved against fixtures/)"
+        ),
+        "{diags:?}"
+    );
+}

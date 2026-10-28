@@ -26,7 +26,9 @@
 //!      only checks the path's shape; this catches a typo (a missing
 //!      file) and a symlink that escapes `keyrings/`. Files under
 //!      `fixtures/` resolve against `fixtures/` (its `keyrings/` holds
-//!      stubs); everything else resolves against the repo root.
+//!      stubs); everything else resolves against the repo root. An
+//!      absolute path is rejected outright, since `Path::join` would
+//!      discard that root.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -413,7 +415,7 @@ fn check_gpg_keyring(
     out: &mut Vec<Diagnostic>,
 ) {
     let fixtures = repo_root.join("fixtures");
-    let (root, root_label) = if file.starts_with(&fixtures) {
+    let (root, root_label) = if is_under(file, &fixtures) {
         (fixtures, "fixtures/")
     } else {
         (repo_root.to_path_buf(), "the catalog root")
@@ -425,6 +427,13 @@ fn check_gpg_keyring(
             message,
         })
     };
+
+    if Path::new(keyring).has_root() {
+        push(format!(
+            "gpg_keyring \"{keyring}\" is an absolute path; it must be relative to {root_label}"
+        ));
+        return;
+    }
 
     let target = match root.join(keyring).canonicalize() {
         Ok(t) => t,
@@ -454,6 +463,16 @@ fn check_gpg_keyring(
         ));
     } else if !target.is_file() {
         push(format!("gpg_keyring \"{keyring}\" is not a regular file"));
+    }
+}
+
+/// Whether `path` lies under `dir`, compared canonically so an `--only`
+/// path spelled through a symlink still matches. Falls back to a lexical
+/// compare when either side cannot be canonicalized (e.g. no `fixtures/`).
+fn is_under(path: &Path, dir: &Path) -> bool {
+    match (path.canonicalize(), dir.canonicalize()) {
+        (Ok(p), Ok(d)) => p.starts_with(d),
+        _ => path.starts_with(dir),
     }
 }
 
