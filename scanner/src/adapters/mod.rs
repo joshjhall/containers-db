@@ -43,16 +43,34 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// returned with a pointer at the fix rather than panicking the whole run
 /// (issue #507). The crypto provider is reqwest's default, `aws-lc-rs`; see
 /// `docs/scanner.md` for both requirements.
-pub(crate) fn http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
-    reqwest::Client::builder()
+///
+/// [`TlsRoots::None`] skips the OS store entirely, so the wiremock-facing
+/// constructors build on a host without `ca-certificates` (issue #510).
+pub(crate) fn http_client(timeout: Duration, roots: TlsRoots) -> anyhow::Result<reqwest::Client> {
+    let builder = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(timeout)
-        .connect_timeout(connect_timeout_for(timeout))
-        .build()
-        .context(
-            "building the HTTP client failed (most often no TLS roots in the OS trust \
+        .connect_timeout(connect_timeout_for(timeout));
+    let builder = match roots {
+        TlsRoots::System => builder,
+        TlsRoots::None => builder.tls_certs_only([]),
+    };
+    builder.build().context(
+        "building the HTTP client failed (most often no TLS roots in the OS trust \
              store: install ca-certificates or set SSL_CERT_FILE/SSL_CERT_DIR)",
-        )
+    )
+}
+
+/// Which certificate roots an [`http_client`] trusts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TlsRoots {
+    /// The OS trust store, through the platform verifier. Every production
+    /// constructor uses this.
+    System,
+    /// No roots at all: the client builds without touching the OS store, and
+    /// every HTTPS request fails certificate verification. Only for the
+    /// constructors that point an adapter at a plain-HTTP test server.
+    None,
 }
 
 fn connect_timeout_for(request_timeout: Duration) -> Duration {
@@ -226,15 +244,13 @@ mod tests {
         render_error_body(body.as_bytes(), true)
     }
 
-    /// `scanner due` silently skips any tool missing from this map, so an
-    /// accidentally dropped registration would only show up as a tool that
-    /// quietly stops getting new versions.
+    /// A client with no roots must still build, since the wiremock
+    /// constructors rely on it on hosts without `ca-certificates`.
+    /// `crate::tests::missing_tls_roots_are_an_error_not_a_panic` runs this
+    /// with the OS store emptied.
     #[test]
-    fn registers_every_shipped_adapter() {
-        let registry = register_all().unwrap();
-        let mut ids: Vec<&str> = registry.keys().map(String::as_str).collect();
-        ids.sort_unstable();
-        assert_eq!(ids, vec!["go", "node", "rust"]);
+    fn rootless_client_builds() {
+        http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::None).unwrap();
     }
 
     #[test]

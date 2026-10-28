@@ -28,7 +28,9 @@ use serde::Deserialize;
 use crate::activity::ActivitySignals;
 use crate::adapter::{Adapter, AdapterResult, ToolIndex, UpstreamVersion};
 use crate::adapters::rust::is_strict_semver;
-use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client, request_error, status_error};
+use crate::adapters::{
+    DEFAULT_REQUEST_TIMEOUT, TlsRoots, http_client, request_error, status_error,
+};
 use crate::generate::version_key;
 
 const DEFAULT_BASE: &str = "https://go.dev";
@@ -42,24 +44,34 @@ pub struct GoAdapter {
     /// The request timeout `client` was built with, for the constructor test
     /// (see `RustAdapter`).
     #[cfg(test)]
-    timeout: std::time::Duration,
+    pub(crate) timeout: std::time::Duration,
+    /// The roots `client` trusts, likewise kept for the constructor tests.
+    #[cfg(test)]
+    pub(crate) roots: TlsRoots,
 }
 
 impl GoAdapter {
     pub fn new() -> anyhow::Result<Self> {
-        Self::with_base(DEFAULT_BASE)
+        Self::build(
+            DEFAULT_BASE,
+            None,
+            DEFAULT_REQUEST_TIMEOUT,
+            TlsRoots::System,
+        )
     }
 
     /// Construct an adapter pointed at a custom go.dev base — used by
-    /// `wiremock`-based integration tests.
+    /// `wiremock`-based integration tests. Trusts no TLS roots, so it needs
+    /// no CA bundle and cannot reach an HTTPS base (`TlsRoots::None`); this
+    /// and the other test constructors below share that.
     pub fn with_base(base: impl Into<String>) -> anyhow::Result<Self> {
-        Self::build(base, None, DEFAULT_REQUEST_TIMEOUT)
+        Self::build(base, None, DEFAULT_REQUEST_TIMEOUT, TlsRoots::None)
     }
 
     /// Like `with_base`, but pins "now" so tests can place a release at
     /// exactly `now - 90 days`.
     pub fn with_fixed_now(base: impl Into<String>, now: DateTime<Utc>) -> anyhow::Result<Self> {
-        Self::build(base, Some(now), DEFAULT_REQUEST_TIMEOUT)
+        Self::build(base, Some(now), DEFAULT_REQUEST_TIMEOUT, TlsRoots::None)
     }
 
     /// Like `with_base`, but with a custom request timeout. Test-only (see
@@ -68,20 +80,23 @@ impl GoAdapter {
         base: impl Into<String>,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Self> {
-        Self::build(base, None, timeout)
+        Self::build(base, None, timeout, TlsRoots::None)
     }
 
     fn build(
         base: impl Into<String>,
         now_override: Option<DateTime<Utc>>,
         timeout: std::time::Duration,
+        roots: TlsRoots,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            client: http_client(timeout)?,
+            client: http_client(timeout, roots)?,
             base: base.into(),
             now_override,
             #[cfg(test)]
             timeout,
+            #[cfg(test)]
+            roots,
         })
     }
 }
@@ -251,13 +266,13 @@ mod tests {
     }
 
     /// Every timeout test goes through `with_timeout`, so without this a
-    /// production constructor could drop `DEFAULT_REQUEST_TIMEOUT` — and bring
-    /// back the #467 hang — with every test green.
+    /// constructor could drop `DEFAULT_REQUEST_TIMEOUT` — and bring
+    /// back the #467 hang — with every test green. `new()` is checked in
+    /// `crate::tests::system_roots_client_builds`, which has roots to give it.
     #[test]
-    fn production_constructors_use_the_default_request_timeout() {
+    fn test_constructors_use_the_default_timeout_and_no_roots() {
         let now = Utc::now();
         for (name, adapter) in [
-            ("new", GoAdapter::new().unwrap()),
             ("with_base", GoAdapter::with_base("http://x").unwrap()),
             (
                 "with_fixed_now",
@@ -265,6 +280,7 @@ mod tests {
             ),
         ] {
             assert_eq!(adapter.timeout, DEFAULT_REQUEST_TIMEOUT, "{name}");
+            assert_eq!(adapter.roots, TlsRoots::None, "{name}");
         }
     }
 

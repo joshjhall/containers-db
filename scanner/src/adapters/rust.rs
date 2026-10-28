@@ -21,7 +21,9 @@ use serde::Deserialize;
 
 use crate::activity::ActivitySignals;
 use crate::adapter::{Adapter, AdapterResult, ToolIndex, UpstreamVersion};
-use crate::adapters::{DEFAULT_REQUEST_TIMEOUT, http_client, request_error, status_error};
+use crate::adapters::{
+    DEFAULT_REQUEST_TIMEOUT, TlsRoots, http_client, request_error, status_error,
+};
 
 const DEFAULT_API_BASE: &str = "https://api.github.com";
 
@@ -37,18 +39,28 @@ pub struct RustAdapter {
     /// it, so this copy is what lets a unit test pin that every production
     /// constructor passes `DEFAULT_REQUEST_TIMEOUT` (issue #472).
     #[cfg(test)]
-    timeout: StdDuration,
+    pub(crate) timeout: StdDuration,
+    /// The roots `client` trusts, likewise kept for the constructor tests.
+    #[cfg(test)]
+    pub(crate) roots: TlsRoots,
 }
 
 impl RustAdapter {
     pub fn new() -> anyhow::Result<Self> {
-        Self::with_api_base(DEFAULT_API_BASE)
+        Self::build(
+            DEFAULT_API_BASE,
+            None,
+            DEFAULT_REQUEST_TIMEOUT,
+            TlsRoots::System,
+        )
     }
 
     /// Construct an adapter pointed at a custom API base — used by
-    /// `wiremock`-based integration tests.
+    /// `wiremock`-based integration tests. Trusts no TLS roots, so it needs
+    /// no CA bundle and cannot reach an HTTPS base (`TlsRoots::None`); this
+    /// and the other test constructors below share that.
     pub fn with_api_base(api_base: impl Into<String>) -> anyhow::Result<Self> {
-        Self::build(api_base, None, DEFAULT_REQUEST_TIMEOUT)
+        Self::build(api_base, None, DEFAULT_REQUEST_TIMEOUT, TlsRoots::None)
     }
 
     /// Like `with_api_base`, but pins the adapter's notion of "now" to a fixed
@@ -56,27 +68,30 @@ impl RustAdapter {
     /// `now - 90 days` and assert the window cutoff to the second, rather than
     /// inferring the `>=` comparison from a ±5-minute margin (issue #56).
     pub fn with_fixed_now(api_base: impl Into<String>, now: DateTime<Utc>) -> anyhow::Result<Self> {
-        Self::build(api_base, Some(now), DEFAULT_REQUEST_TIMEOUT)
+        Self::build(api_base, Some(now), DEFAULT_REQUEST_TIMEOUT, TlsRoots::None)
     }
 
     /// Like `with_api_base`, but with a custom request timeout. Test-only:
     /// lets a test drive a stalled upstream into the timeout path in
     /// milliseconds instead of waiting out `DEFAULT_REQUEST_TIMEOUT`.
     pub fn with_timeout(api_base: impl Into<String>, timeout: StdDuration) -> anyhow::Result<Self> {
-        Self::build(api_base, None, timeout)
+        Self::build(api_base, None, timeout, TlsRoots::None)
     }
 
     fn build(
         api_base: impl Into<String>,
         now_override: Option<DateTime<Utc>>,
         timeout: StdDuration,
+        roots: TlsRoots,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            client: http_client(timeout)?,
+            client: http_client(timeout, roots)?,
             api_base: api_base.into(),
             now_override,
             #[cfg(test)]
             timeout,
+            #[cfg(test)]
+            roots,
         })
     }
 }
@@ -262,13 +277,13 @@ mod tests {
     use super::*;
 
     /// Every timeout test goes through `with_timeout`, so without this a
-    /// production constructor could drop `DEFAULT_REQUEST_TIMEOUT` — and bring
-    /// back the #467 hang — with every test green.
+    /// constructor could drop `DEFAULT_REQUEST_TIMEOUT` — and bring
+    /// back the #467 hang — with every test green. `new()` is checked in
+    /// `crate::tests::system_roots_client_builds`, which has roots to give it.
     #[test]
-    fn production_constructors_use_the_default_request_timeout() {
+    fn test_constructors_use_the_default_timeout_and_no_roots() {
         let now = Utc::now();
         for (name, adapter) in [
-            ("new", RustAdapter::new().unwrap()),
             (
                 "with_api_base",
                 RustAdapter::with_api_base("http://x").unwrap(),
@@ -279,6 +294,7 @@ mod tests {
             ),
         ] {
             assert_eq!(adapter.timeout, DEFAULT_REQUEST_TIMEOUT, "{name}");
+            assert_eq!(adapter.roots, TlsRoots::None, "{name}");
         }
     }
 
