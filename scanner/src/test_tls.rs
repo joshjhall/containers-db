@@ -199,6 +199,8 @@ pub(crate) fn find_rustls_error<'a>(
     None
 }
 
+mod roots;
+
 #[cfg(test)]
 mod tests {
     use super::{find_rustls_error, is_unknown_issuer};

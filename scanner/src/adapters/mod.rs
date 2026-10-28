@@ -246,8 +246,8 @@ mod tests {
 
     /// A client with no roots must still build, since the wiremock
     /// constructors rely on it on hosts without `ca-certificates`.
-    /// `crate::tests::missing_tls_roots_are_an_error_not_a_panic` runs this
-    /// with the OS store emptied. That it also trusts nothing is
+    /// `crate::test_tls::roots::missing_tls_roots_are_an_error_not_a_panic`
+    /// runs this with the OS store emptied. That it also trusts nothing is
     /// [`none_roots_reject_https`].
     #[test]
     fn rootless_client_builds() {
@@ -258,7 +258,7 @@ mod tests {
     /// trusting its CA accepts, on every OS (issue #512). This catches `None`
     /// being made to trust anything; `None` quietly falling back to the
     /// system store needs that store to hold the CA, which is
-    /// `crate::tests::none_roots_ignore_the_system_store` on Linux.
+    /// `crate::test_tls::roots::none_roots_ignore_the_system_store` on Linux.
     ///
     /// The `None` client is the production one, so it honours `HTTPS_PROXY`.
     /// With a proxy set that does not exempt `127.0.0.1`, this test fails
