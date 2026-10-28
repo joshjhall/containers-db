@@ -341,10 +341,53 @@ fn absolute_keyring_outside_keyrings_is_rejected() {
     let tmp = repo_with_keyring(abs);
 
     let diags = keyring_diagnostics(tmp.path(), None);
-    assert_eq!(diags.len(), 1, "{diags:?}");
-    assert!(
-        diags[0].contains(&format!("gpg_keyring \"{abs}\" is an absolute path")),
-        "{diags:?}"
+    assert_eq!(
+        diags,
+        vec![format!(
+            "tools/cli_a/versions/1.0.0.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"{abs}\" is an absolute path; it must be relative to the catalog root"
+        )]
+    );
+}
+
+#[test]
+fn absolute_keyring_in_fixture_names_fixtures_root() {
+    let tmp = repo_with_keyring("keyrings/real.asc");
+    let root = tmp.path();
+    write(&root.join("fixtures/keyrings/stub.asc"), "stub\n");
+    let abs = root.join("fixtures/keyrings/stub.asc");
+    let abs = abs.to_str().unwrap();
+    write(
+        &root.join("fixtures/tier1-a-example.json"),
+        &version_doc(abs),
+    );
+
+    let diags = keyring_diagnostics(root, None);
+    assert_eq!(
+        diags,
+        vec![format!(
+            "fixtures/tier1-a-example.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"{abs}\" is an absolute path; it must be relative to fixtures/"
+        )]
+    );
+}
+
+#[test]
+fn only_outside_any_fixtures_dir_falls_back_to_catalog_root() {
+    // No fixtures/ dir exists, so is_under cannot canonicalize it and
+    // takes the lexical fallback; the file must resolve against the root.
+    let tmp = repo_with_keyring("keyrings/typo.asc");
+    let root = tmp.path();
+    let file = root.join("tools/cli_a/versions/1.0.0.json");
+
+    let diags = keyring_diagnostics(root, Some(&file));
+    assert_eq!(
+        diags,
+        vec![
+            "tools/cli_a/versions/1.0.0.json:/install_methods/0/verification/gpg_keyring: \
+             gpg_keyring \"keyrings/typo.asc\" does not exist (resolved against the catalog root)"
+                .to_string()
+        ]
     );
 }
 
