@@ -475,6 +475,113 @@ mod tests {
         assert_eq!(index["default_version"], "22.23.5");
     }
 
+    fn scan_kind() -> Kind {
+        Kind::Scan {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+        }
+    }
+
+    fn now() -> DateTime<Utc> {
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 11, 1, 0, 0, 0).unwrap()
+    }
+
+    /// A scan plan for `demo` whose files are what `activity` renders.
+    fn demo_plan(root: &Path, activity: Activity) -> Plan {
+        let releases = vec![release("26.12.2")];
+        let files = render_files(root, "demo", &scan_kind(), &releases, &activity, now()).unwrap();
+        Plan {
+            tool_id: "demo".into(),
+            kind: scan_kind(),
+            new_versions: vec!["26.12.2".into()],
+            releases,
+            now: now(),
+            activity,
+            files,
+        }
+    }
+
+    fn staged_index(plan: &Plan) -> Value {
+        let file = plan
+            .files
+            .iter()
+            .find(|f| f.path == "tools/demo/index.json")
+            .unwrap();
+        serde_json::from_str(&file.contents).unwrap()
+    }
+
+    /// The plan path, not just `update_index`: an older `default_version`
+    /// smuggled into the staged index is caught by the re-render, and one
+    /// that rides only in `activity` re-renders to the current default.
+    #[test]
+    fn check_rerender_refuses_a_plan_that_moves_the_default_backwards() {
+        // Index default is 22.23.4 (first line); 20.19.0 is listed and older.
+        let tmp = two_line_catalog(&[("22.23.4", "jod"), ("20.19.0", "iron")]);
+        let mut activity = crate::stage::plan::tests::activity();
+        activity.default_version = Some("20.19.0".into());
+
+        // Only `activity` tampered: the honest re-render keeps 22.23.4.
+        let plan = demo_plan(tmp.path(), activity);
+        check_rerender(tmp.path(), &plan).unwrap();
+        assert_eq!(staged_index(&plan)["default_version"], "22.23.4");
+
+        // The staged index tampered to match: the bytes no longer re-render.
+        let mut tampered = plan.clone();
+        let mut index = staged_index(&tampered);
+        index["default_version"] = "20.19.0".into();
+        let file = tampered
+            .files
+            .iter_mut()
+            .find(|f| f.path == "tools/demo/index.json")
+            .unwrap();
+        file.contents = render(&index).unwrap();
+        let err = format!("{:#}", check_rerender(tmp.path(), &tampered).unwrap_err());
+        assert!(err.contains("staged files differ"), "{err}");
+    }
+
+    #[test]
+    fn render_files_names_the_tool_when_nothing_is_cataloged() {
+        let tmp = two_line_catalog(&[("22.23.4", "jod")]);
+        let index_path = tmp.path().join("tools/demo/index.json");
+        let index = serde_json::json!({ "id": "demo", "available": [] });
+        std::fs::write(&index_path, render(&index).unwrap()).unwrap();
+
+        let err = render_files(
+            tmp.path(),
+            "demo",
+            &scan_kind(),
+            &[release("22.23.5")],
+            &crate::stage::plan::tests::activity(),
+            now(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "tool `demo` has no existing versions to template from"
+        );
+    }
+
+    #[test]
+    fn render_files_names_a_listed_template_missing_from_the_checkout() {
+        let tmp = two_line_catalog(&[("22.23.4", "jod")]);
+        let missing = tmp.path().join("tools/demo/versions/22.23.4.json");
+        std::fs::remove_file(&missing).unwrap();
+
+        let err = render_files(
+            tmp.path(),
+            "demo",
+            &scan_kind(),
+            &[release("22.23.5")],
+            &crate::stage::plan::tests::activity(),
+            now(),
+        )
+        .unwrap_err();
+        let err = format!("{err:#}");
+        assert!(
+            err.starts_with(&format!("reading template {}: ", missing.display())),
+            "{err}"
+        );
+    }
+
     #[test]
     fn backfill_still_renders_from_the_oldest_file() {
         let tmp = two_line_catalog(&[("22.23.4", "jod"), ("26.12.1", "current")]);
