@@ -4,6 +4,7 @@
 //! The PKI is generated per test, so no private key is committed:
 //! `tests/fixtures/test-root.pem` had its key discarded and cannot serve.
 
+use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -160,12 +161,44 @@ pub(crate) async fn assert_reachable(client: &reqwest::Client, url: &str) {
 /// verifies with rustls's own WebPKI verifier on every OS (reqwest only uses
 /// the platform verifier when it may consult the OS store), so the variant
 /// is the same everywhere.
+///
+/// A client under test that honours the host's proxy sends the request to the
+/// proxy instead (issue #514), so the failure names any proxy variable set.
 pub(crate) async fn assert_cert_rejected(client: &reqwest::Client, url: &str) {
     let err = client.get(url).send().await.unwrap_err();
     assert!(
         find_rustls_error(&err).is_some_and(is_unknown_issuer),
-        "expected a certificate rejection: {err:?}"
+        "{}",
+        rejection_message(&err, |name| std::env::var_os(name))
     );
+}
+
+/// The failure message for [`assert_cert_rejected`]: the error, then the
+/// [`proxy_hint`] for `var` when there is one.
+fn rejection_message(err: &dyn std::fmt::Debug, var: impl Fn(&str) -> Option<OsString>) -> String {
+    let hint = proxy_hint(var)
+        .map(|hint| format!("\n{hint}"))
+        .unwrap_or_default();
+    format!("expected a certificate rejection: {err:?}{hint}")
+}
+
+/// The proxy variables reqwest reads for an `https` URL.
+const PROXY_VARS: [&str; 4] = ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"];
+
+/// A note naming each non-empty [`PROXY_VARS`] entry `var` reports, or `None`
+/// if there are none. Names only: a proxy URL can carry credentials.
+fn proxy_hint(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
+    let set: Vec<&str> = PROXY_VARS
+        .into_iter()
+        .filter(|name| var(name).is_some_and(|v| !v.is_empty()))
+        .collect();
+    (!set.is_empty()).then(|| {
+        format!(
+            "proxy variable(s) set: {}; the request may have gone to the proxy, not the \
+             test server. Unset them or add 127.0.0.1 to NO_PROXY",
+            set.join(", ")
+        )
+    })
 }
 
 /// Whether `e` says the certificate chains to no trusted root, and nothing
@@ -203,7 +236,92 @@ mod roots;
 
 #[cfg(test)]
 mod tests {
-    use super::{find_rustls_error, is_unknown_issuer};
+    use std::ffi::OsString;
+
+    use super::{find_rustls_error, is_unknown_issuer, proxy_hint, rejection_message};
+
+    /// An environment lookup holding only `vars`.
+    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let vars: Vec<(String, String)> = vars
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |name| {
+            vars.iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| OsString::from(v))
+        }
+    }
+
+    #[test]
+    fn no_proxy_vars_give_no_hint() {
+        assert_eq!(proxy_hint(env(&[("NO_PROXY", "127.0.0.1")])), None);
+    }
+
+    /// Empty is how a proxy is unset for one command, so it does not count.
+    #[test]
+    fn empty_proxy_var_gives_no_hint() {
+        assert_eq!(proxy_hint(env(&[("HTTPS_PROXY", "")])), None);
+    }
+
+    /// The hint names every variable set, and never prints a value, which
+    /// can hold credentials.
+    #[test]
+    fn hint_names_each_proxy_var_but_not_its_value() {
+        let hint = proxy_hint(env(&[
+            ("HTTPS_PROXY", "http://user:secret@127.0.0.1:9"),
+            ("all_proxy", "socks5://127.0.0.1:9"),
+        ]))
+        .unwrap();
+        assert!(
+            hint.starts_with("proxy variable(s) set: HTTPS_PROXY, all_proxy;"),
+            "{hint}"
+        );
+        assert!(
+            !hint.contains("secret") && !hint.contains("127.0.0.1:9"),
+            "{hint}"
+        );
+    }
+
+    /// Every variable reqwest reads for `https` is checked, in both cases.
+    #[test]
+    fn hint_covers_every_proxy_var() {
+        let hint = proxy_hint(env(&[
+            ("HTTPS_PROXY", "x"),
+            ("https_proxy", "x"),
+            ("ALL_PROXY", "x"),
+            ("all_proxy", "x"),
+        ]))
+        .unwrap();
+        assert!(
+            hint.starts_with(
+                "proxy variable(s) set: HTTPS_PROXY, https_proxy, ALL_PROXY, all_proxy;"
+            ),
+            "{hint}"
+        );
+    }
+
+    /// The failure message carries the hint, so a proxied request reads as
+    /// a proxy problem and not a trust one.
+    #[test]
+    fn rejection_message_appends_the_proxy_hint() {
+        let msg = rejection_message(&"refused", env(&[("HTTPS_PROXY", "x")]));
+        assert_eq!(
+            msg,
+            format!(
+                "expected a certificate rejection: \"refused\"\n{}",
+                proxy_hint(env(&[("HTTPS_PROXY", "x")])).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn rejection_message_without_a_proxy_is_just_the_error() {
+        assert_eq!(
+            rejection_message(&"refused", env(&[])),
+            "expected a certificate rejection: \"refused\""
+        );
+    }
 
     #[derive(Debug)]
     struct Wrapper(std::io::Error);
