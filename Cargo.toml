@@ -10,7 +10,7 @@ publish = false
 
 [workspace.dependencies]
 db-validator = { path = "validator" }
-containers-common = { git = "https://github.com/joshjhall/containers", rev = "c18433619ef4ff474b8cf252eba1047435c55645" }
+containers-common = { git = "https://github.com/joshjhall/containers", rev = "1853ba6a563eb001c08d520b037fa7e147fac988" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -19,7 +19,7 @@ tempfile = "3"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "gzip"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 async-trait = "0.1"
 wiremock = "0.6"
