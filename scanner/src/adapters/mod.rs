@@ -259,16 +259,16 @@ mod tests {
     /// being made to trust anything; `None` quietly falling back to the
     /// system store needs that store to hold the CA, which is
     /// `crate::tests::none_roots_ignore_the_system_store` on Linux.
+    ///
+    /// The `None` client is the production one, so it honours `HTTPS_PROXY`;
+    /// with a proxy set that does not exempt `localhost`, this fails on the
+    /// proxy rather than on trust, and says so in the assertion message.
     #[tokio::test]
     async fn none_roots_reject_https() {
         let pki = crate::test_tls::TestPki::generate();
         let url = pki.serve().await;
 
-        let trusting = reqwest::Client::builder()
-            .tls_certs_only([pki.ca_cert()])
-            .build()
-            .unwrap();
-        crate::test_tls::assert_reachable(&trusting, &url).await;
+        crate::test_tls::assert_reachable(&pki.trusting_client(), &url).await;
 
         let none = http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::None).unwrap();
         crate::test_tls::assert_cert_rejected(&none, &url).await;

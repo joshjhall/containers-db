@@ -65,8 +65,18 @@ impl TestPki {
         }
     }
 
-    pub(crate) fn ca_cert(&self) -> reqwest::Certificate {
-        reqwest::Certificate::from_pem(self.ca_pem.as_bytes()).unwrap()
+    /// A client that trusts only this CA: the control that shows the server
+    /// is reachable, so a rejection elsewhere is down to trust. It skips any
+    /// `HTTPS_PROXY` so the request reaches loopback, and is bounded like the
+    /// production client so a stalled server fails rather than hangs.
+    pub(crate) fn trusting_client(&self) -> reqwest::Client {
+        let ca = reqwest::Certificate::from_pem(self.ca_pem.as_bytes()).unwrap();
+        reqwest::Client::builder()
+            .tls_certs_only([ca])
+            .no_proxy()
+            .timeout(crate::adapters::DEFAULT_REQUEST_TIMEOUT)
+            .build()
+            .unwrap()
     }
 
     /// Serve `HTTP/1.1 200` with an empty body over TLS on a loopback port,
@@ -91,8 +101,14 @@ impl TestPki {
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
             loop {
-                let Ok((tcp, _)) = listener.accept().await else {
-                    return;
+                // A failed accept (ECONNABORTED, EMFILE) loses one
+                // connection, not the server.
+                let tcp = match listener.accept().await {
+                    Ok((tcp, _)) => tcp,
+                    Err(e) => {
+                        eprintln!("test_tls: accept failed: {e}");
+                        continue;
+                    }
                 };
                 let acceptor = acceptor.clone();
                 tokio::spawn(async move {
@@ -153,4 +169,41 @@ pub(crate) fn find_rustls_error<'a>(
         next = e.source();
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_rustls_error;
+
+    #[derive(Debug)]
+    struct Wrapper(std::io::Error);
+
+    impl std::fmt::Display for Wrapper {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("wrapper")
+        }
+    }
+
+    impl std::error::Error for Wrapper {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    /// The `io::Error` layer is the one `source()` alone walks past, so a
+    /// rustls cause under it must still be found.
+    #[test]
+    fn finds_rustls_error_inside_io_error() {
+        let err = Wrapper(std::io::Error::other(rustls::Error::General("x".into())));
+        assert!(matches!(
+            find_rustls_error(&err),
+            Some(rustls::Error::General(_))
+        ));
+    }
+
+    #[test]
+    fn no_rustls_error_is_none() {
+        let err = Wrapper(std::io::Error::other("refused"));
+        assert!(find_rustls_error(&err).is_none());
+    }
 }
