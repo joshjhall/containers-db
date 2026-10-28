@@ -69,6 +69,11 @@ pub struct Activity {
     pub score: Score,
     pub cadence_days: u32,
     pub signals: ActivitySignals,
+    /// The adapter's `default_version` choice, applied to the index by
+    /// [`render_files`]. Optional on the wire so a manifest staged before
+    /// the field existed still parses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_version: Option<String>,
 }
 
 /// A file to write, by `/`-separated repo-relative path, with its exact bytes.
@@ -341,6 +346,7 @@ pub(super) mod tests {
             score: Score::Active,
             cadence_days: 7,
             signals: ActivitySignals::default(),
+            default_version: None,
         }
     }
 

@@ -108,8 +108,10 @@ The groups come from reading `acceptable_pythons` out of each release's
 `configure` at its source tag. Building the oldest release that passes
 (18.20.8) confirmed that python, not the compiler, is the floor.
 
-**Keeping it current.** The scanner clones the newest version file, so new
-releases inherit its alpine statuses. That stays correct while node keeps
+**Keeping it current.** The scanner clones the newest cataloged file on the
+new release's own line (22.23.5 from the newest 22.x, see
+[scanner.md](scanner.md) § 4), so new releases inherit that line's alpine
+statuses. That stays correct while node keeps
 accepting the python of each cataloged alpine. When the matrix gains an alpine
 release with a newer python, re-check `acceptable_pythons` for every cataloged
 version, because older releases will likely drop to `unsupported` for that

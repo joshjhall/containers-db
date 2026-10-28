@@ -46,13 +46,16 @@ pub(crate) async fn backfill_one(
     let kind = Kind::Backfill {
         from: from.to_string(),
     };
+    // A backfill adds only versions older than the catalog's oldest, so it
+    // never moves the default.
     let activity = Activity {
         score,
         cadence_days,
         signals: result.signals,
+        default_version: None,
     };
     let files = stage::render_files(repo_root, tool_id, &kind, &picked, &activity, now)?;
-    Ok(Scanned::Plan(Plan {
+    Ok(Scanned::Plan(Box::new(Plan {
         tool_id: tool_id.to_string(),
         kind,
         new_versions: picked.iter().map(|v| v.version.clone()).collect(),
@@ -60,7 +63,7 @@ pub(crate) async fn backfill_one(
         now,
         activity,
         files,
-    }))
+    })))
 }
 
 /// Upstream stable releases `v` with `lo <= v < oldest`, ascending; `lo` is the
@@ -136,6 +139,7 @@ mod tests {
                 upstream_versions: self.0.clone(),
                 signals: ActivitySignals::default(),
                 source_archived: false,
+                default_version: None,
             })
         }
     }
@@ -154,6 +158,7 @@ mod tests {
                 upstream_versions: self.upstream.clone(),
                 signals: ActivitySignals::default(),
                 source_archived: false,
+                default_version: None,
             })
         }
     }

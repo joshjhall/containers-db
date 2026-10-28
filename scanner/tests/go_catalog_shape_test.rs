@@ -2,7 +2,8 @@
 //! glibc/alpine install-method split (#482).
 //!
 //! The scanner has no per-tool version template — `render_version` clones
-//! the newest cataloged version file — so the catalog data *is* the template.
+//! the newest cataloged file on the new release's line (`template_for`) —
+//! so the catalog data *is* the template.
 //! A cataloged file that drops a cell would be carried into every release the
 //! scanner adds after it. These tests read the real catalog rather than a
 //! fixture for exactly that reason.
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{TimeZone, Utc};
 use scanner::adapter::{ToolIndex, UpstreamVersion};
-use scanner::generate::render_version;
+use scanner::generate::{render_version, template_for};
 use serde_json::Value;
 
 const GLIBC_OS: [&str; 3] = ["debian", "ubuntu", "rhel"];
@@ -146,10 +147,10 @@ fn every_cataloged_go_version_has_the_full_matrix() {
 
 #[test]
 fn a_newly_generated_go_version_keeps_the_full_matrix() {
-    // Pick the template exactly as `scan_one` does: the last `available`
-    // entry of the tool index.
+    // Pick the template exactly as a scan does (`render_files`): the newest
+    // cataloged version on the same line — for a new major, newest overall.
     let index = ToolIndex::from_path(&go_dir().join("index.json")).unwrap();
-    let template_version = index.available_versions().last().cloned().unwrap();
+    let template_version = template_for(&index.available_versions(), "99.0.0").unwrap();
     let template = read_json(
         &go_dir()
             .join("versions")
