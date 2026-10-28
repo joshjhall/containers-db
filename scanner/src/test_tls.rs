@@ -276,6 +276,24 @@ mod tests {
         );
     }
 
+    /// Every variable reqwest reads for `https` is checked, in both cases.
+    #[test]
+    fn hint_covers_every_proxy_var() {
+        let hint = proxy_hint(env(&[
+            ("HTTPS_PROXY", "x"),
+            ("https_proxy", "x"),
+            ("ALL_PROXY", "x"),
+            ("all_proxy", "x"),
+        ]))
+        .unwrap();
+        assert!(
+            hint.starts_with(
+                "proxy variable(s) set: HTTPS_PROXY, https_proxy, ALL_PROXY, all_proxy;"
+            ),
+            "{hint}"
+        );
+    }
+
     #[derive(Debug)]
     struct Wrapper(std::io::Error);
 
