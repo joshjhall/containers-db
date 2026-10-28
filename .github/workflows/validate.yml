@@ -73,21 +73,37 @@ jobs:
 
       - name: Validate every tool index against tool schema
         # One glob instead of a hand-kept list: a new tools/<name>/ dir is
-        # covered without editing this workflow (#487). ajv-cli exits 0 on a
-        # glob that matches nothing, so refuse an empty match first.
+        # covered without editing this workflow (#487). The glob silently skips
+        # a tools/<name>/ dir with no index.json, so name every such dir first
+        # (#494). ajv-cli exits 0 on a glob that matches nothing, so refuse an
+        # empty match too, then hand ajv the same checked expansion.
         run: |
           set -euo pipefail
           shopt -s nullglob
+          missing=0
+          for dir in tools/*/; do
+            if [ ! -f "${dir}index.json" ]; then
+              echo "::error::${dir%/} has no index.json"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
           indexes=(tools/*/index.json)
           if [ "${#indexes[@]}" -eq 0 ]; then
             echo "::error::No tools/*/index.json found — glob validated nothing"
             exit 1
           fi
+          data_args=()
+          for f in "${indexes[@]}"; do
+            data_args+=(-d "$f")
+          done
           npx --no-install ajv validate \
             --spec=draft2020 \
             -c ajv-formats \
             -s schema/tool.schema.json \
-            -d "tools/*/index.json"
+            "${data_args[@]}"
 
       - name: Validate rust version files against version schema
         run: |
