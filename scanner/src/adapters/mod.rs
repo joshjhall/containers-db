@@ -263,7 +263,8 @@ mod tests {
     /// The `None` client is the production one, so it honours `HTTPS_PROXY`.
     /// With a proxy set that does not exempt `127.0.0.1`, this test fails
     /// (it cannot pass): the request goes to the proxy, the error carries no
-    /// `UnknownIssuer`, and the assertion prints the proxy error it got.
+    /// `UnknownIssuer`, and the assertion prints the proxy error it got and
+    /// names the proxy variables set (issue #514).
     #[tokio::test]
     async fn none_roots_reject_https() {
         let pki = crate::test_tls::TestPki::generate();
