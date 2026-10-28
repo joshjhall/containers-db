@@ -839,19 +839,77 @@ mod tests {
         run_without_path("tests::no_path_stage_start_needs_ajv");
     }
 
+    /// The production constructors build against the OS store, and the
+    /// registry holds every shipped adapter. On Linux this runs in a child
+    /// whose only root is a committed fixture, so it needs no host CA bundle
+    /// (issue #510) and is the "builds with roots" contrast for
+    /// [`missing_tls_roots_are_an_error_not_a_panic`]. Elsewhere the platform
+    /// verifier loads no roots at build time, so it runs in-process.
+    #[test]
+    fn system_roots_client_builds() {
+        if cfg!(target_os = "linux") {
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/test-root.pem");
+            run_with_env(
+                "tests::system_roots_child",
+                tempfile::tempdir().unwrap().path(),
+                &[("SSL_CERT_FILE", &fixture)],
+            );
+        } else {
+            assert_system_roots_clients_build();
+        }
+    }
+
+    #[test]
+    #[ignore = "run by system_roots_client_builds"]
+    fn system_roots_child() {
+        if in_child() {
+            assert_system_roots_clients_build();
+        }
+    }
+
+    fn assert_system_roots_clients_build() {
+        use adapters::{DEFAULT_REQUEST_TIMEOUT, TlsRoots};
+
+        adapters::http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::System).unwrap();
+
+        // `scanner due` silently skips any tool missing from this map, so an
+        // accidentally dropped registration would only show up as a tool
+        // that quietly stops getting new versions.
+        let registry = adapters::register_all().unwrap();
+        let mut ids: Vec<&str> = registry.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["go", "node", "rust"]);
+
+        // Without this, `new()` could drop `DEFAULT_REQUEST_TIMEOUT` (the #467
+        // hang) or the OS store with every other test green.
+        let go = adapters::go::GoAdapter::new().unwrap();
+        let node = adapters::node::NodeAdapter::new().unwrap();
+        let rust = adapters::rust::RustAdapter::new().unwrap();
+        for (name, timeout, roots) in [
+            ("go", go.timeout, go.roots),
+            ("node", node.timeout, node.roots),
+            ("rust", rust.timeout, rust.roots),
+        ] {
+            assert_eq!(timeout, DEFAULT_REQUEST_TIMEOUT, "{name}");
+            assert_eq!(roots, TlsRoots::System, "{name}");
+        }
+    }
+
     /// With no TLS roots to load, building the HTTP clients fails, and that
     /// must reach the caller as an error rather than a panic (issue #507).
     /// `SSL_CERT_FILE` naming an empty file stands in for a host without
-    /// `ca-certificates`: it replaces the system store with zero roots. Linux
-    /// only: elsewhere the platform verifier does not load roots at build time.
+    /// `ca-certificates`: it replaces the system store with zero roots.
+    ///
+    /// Linux only, by decision (issue #510): on macOS and Windows the
+    /// platform verifier defers to the OS at handshake time and loads no roots
+    /// in `build()`, so there is no build-time failure to provoke, and a
+    /// synthetic `reqwest::Error` cannot be constructed outside reqwest to
+    /// test the mapping alone. The roots-present half,
+    /// [`system_roots_client_builds`], runs everywhere.
     #[test]
     #[cfg(target_os = "linux")]
     fn missing_tls_roots_are_an_error_not_a_panic() {
-        // Contrast: with the host's roots the same calls succeed, so the child
-        // cannot pass on a client that never builds.
-        adapters::http_client(adapters::DEFAULT_REQUEST_TIMEOUT).unwrap();
-        adapters::register_all().unwrap();
-
         let dir = tempfile::tempdir().unwrap();
         let empty = dir.path().join("empty.pem");
         std::fs::write(&empty, "").unwrap();
@@ -870,14 +928,26 @@ mod tests {
         }
         let hint = "install ca-certificates or set SSL_CERT_FILE/SSL_CERT_DIR";
 
-        // The hint is a fixed context string, so also require the verifier's
-        // own cause underneath it: the failure really is the missing roots.
-        let err = adapters::http_client(adapters::DEFAULT_REQUEST_TIMEOUT).unwrap_err();
+        use adapters::{DEFAULT_REQUEST_TIMEOUT, TlsRoots};
+
+        // The hint is a fixed context string, so also require what sits under
+        // it: reqwest's builder error, carrying the verifier's own cause. The
+        // cause is checked by shape, not by the verifier's wording, which a
+        // dependency bump may change.
+        let err = adapters::http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::System).unwrap_err();
         assert!(format!("{err}").contains(hint), "{err:#}");
-        assert!(
-            format!("{err:#}").contains("No CA certificates were loaded from the system"),
-            "{err:#}"
-        );
+        let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() else {
+            panic!("no reqwest::Error under the context: {err:#}");
+        };
+        assert!(reqwest_err.is_builder(), "{err:#}");
+        assert!(std::error::Error::source(reqwest_err).is_some(), "{err:#}");
+
+        // The wiremock constructors' client does not touch the OS store, so
+        // the tests built on it run here too.
+        adapters::http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::None).unwrap();
+        adapters::go::GoAdapter::with_base("http://x").unwrap();
+        adapters::node::NodeAdapter::with_base("http://x").unwrap();
+        adapters::rust::RustAdapter::with_api_base("http://x").unwrap();
 
         // `register_all` stops at the first adapter, so check each one's
         // constructor on its own.

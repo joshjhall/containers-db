@@ -46,6 +46,19 @@ makes no requests and does not need them.
 reqwest 0.13 has no bundled-roots option (0.12's `webpki-roots`), so the
 host's store is the only source.
 
+The test suite needs no CA bundle. The adapters' wiremock constructors
+build clients that trust no roots (so they cannot reach HTTPS), and the
+tests that need real roots run in a child whose only root is
+`scanner/tests/fixtures/test-root.pem`. To reproduce a host without
+roots, empty **both** variables: `cargo` sets `SSL_CERT_DIR` for the
+processes it runs, so an empty `SSL_CERT_FILE` alone still finds the
+host's certificates:
+
+```sh
+SSL_CERT_FILE=/path/to/empty-file SSL_CERT_DIR=/path/to/empty-dir \
+  cargo test -p scanner
+```
+
 **The crypto provider is `aws-lc-rs`**, reqwest's default for `rustls`.
 Building it compiles `aws-lc-sys`, which needs a C toolchain (`cc`) and,
 on some targets, `cmake`. `ring` is the alternative, but it would mean
