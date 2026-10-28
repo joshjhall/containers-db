@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
+
 use crate::adapter::Adapter;
 
 pub mod go;
@@ -33,13 +35,24 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// non-routable address fails fast or hangs depending on the host's routing,
 /// and a full listen backlog stalls a connect only on some kernels. A loopback
 /// refusal fails immediately either way, so it cannot tell the call apart.
-pub(crate) fn http_client(timeout: Duration) -> reqwest::Client {
+///
+/// TLS trust comes from the OS store: reqwest 0.13's `rustls` feature verifies
+/// through `rustls-platform-verifier`, which on Linux loads the system roots
+/// (or `SSL_CERT_FILE`/`SSL_CERT_DIR`) here, in `build()`, and fails when it
+/// finds none. reqwest 0.13 has no bundled-roots option, so that failure is
+/// returned with a pointer at the fix rather than panicking the whole run
+/// (issue #507). The crypto provider is reqwest's default, `aws-lc-rs`; see
+/// `docs/scanner.md` for both requirements.
+pub(crate) fn http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(timeout)
         .connect_timeout(connect_timeout_for(timeout))
         .build()
-        .expect("reqwest client build")
+        .context(
+            "building the HTTP client failed (TLS roots are loaded from the OS trust \
+             store at build time: install ca-certificates or set SSL_CERT_FILE/SSL_CERT_DIR)",
+        )
 }
 
 fn connect_timeout_for(request_timeout: Duration) -> Duration {
@@ -191,13 +204,14 @@ fn breaks_log_line(c: char) -> bool {
 }
 
 /// Built-in registry shipped with the scanner. `register_all` callers
-/// can extend this map for tests or future tools.
-pub fn register_all() -> HashMap<String, Arc<dyn Adapter>> {
+/// can extend this map for tests or future tools. Fails when an adapter's
+/// HTTP client cannot be built (see [`http_client`]).
+pub fn register_all() -> anyhow::Result<HashMap<String, Arc<dyn Adapter>>> {
     let mut registry: HashMap<String, Arc<dyn Adapter>> = HashMap::new();
-    registry.insert("go".to_string(), Arc::new(go::GoAdapter::new()));
-    registry.insert("node".to_string(), Arc::new(node::NodeAdapter::new()));
-    registry.insert("rust".to_string(), Arc::new(rust::RustAdapter::new()));
-    registry
+    registry.insert("go".to_string(), Arc::new(go::GoAdapter::new()?));
+    registry.insert("node".to_string(), Arc::new(node::NodeAdapter::new()?));
+    registry.insert("rust".to_string(), Arc::new(rust::RustAdapter::new()?));
+    Ok(registry)
 }
 
 #[cfg(test)]
@@ -217,7 +231,7 @@ mod tests {
     /// quietly stops getting new versions.
     #[test]
     fn registers_every_shipped_adapter() {
-        let registry = register_all();
+        let registry = register_all().unwrap();
         let mut ids: Vec<&str> = registry.keys().map(String::as_str).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec!["go", "node", "rust"]);

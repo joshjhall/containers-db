@@ -77,7 +77,7 @@ async fn returns_only_stable_semver_releases_with_signals_and_advisories() {
         .mount(&server)
         .await;
 
-    let adapter = RustAdapter::with_api_base(server.uri());
+    let adapter = RustAdapter::with_api_base(server.uri()).unwrap();
     let result = adapter.fetch(&rust_index(&server.uri())).await.unwrap();
 
     let versions: Vec<&str> = result
@@ -175,7 +175,7 @@ async fn counts_releases_at_90_day_window_boundary() {
         .mount(&server)
         .await;
 
-    let adapter = RustAdapter::with_api_base(server.uri());
+    let adapter = RustAdapter::with_api_base(server.uri()).unwrap();
     let result = adapter.fetch(&rust_index(&server.uri())).await.unwrap();
 
     // Both releases pass the draft/prerelease/semver filters, so both land in
@@ -244,7 +244,7 @@ async fn counts_release_published_exactly_at_90_day_cutoff() {
         .mount(&server)
         .await;
 
-    let adapter = RustAdapter::with_fixed_now(server.uri(), now);
+    let adapter = RustAdapter::with_fixed_now(server.uri(), now).unwrap();
     let result = adapter.fetch(&rust_index(&server.uri())).await.unwrap();
 
     assert_eq!(
@@ -302,7 +302,7 @@ async fn excludes_release_published_one_second_before_90_day_cutoff() {
         .mount(&server)
         .await;
 
-    let adapter = RustAdapter::with_fixed_now(server.uri(), now);
+    let adapter = RustAdapter::with_fixed_now(server.uri(), now).unwrap();
     let result = adapter.fetch(&rust_index(&server.uri())).await.unwrap();
 
     // Passes the semver filter, so it lands in upstream_versions — the only
@@ -357,7 +357,7 @@ async fn zero_releases_in_window_is_some_zero_not_none() {
         .mount(&server)
         .await;
 
-    let adapter = RustAdapter::with_api_base(server.uri());
+    let adapter = RustAdapter::with_api_base(server.uri()).unwrap();
     let result = adapter.fetch(&rust_index(&server.uri())).await.unwrap();
 
     // The release passed the semver filter but not the window filter.
@@ -393,7 +393,7 @@ async fn archived_repo_sets_source_archived_flag() {
         .mount(&server)
         .await;
 
-    let adapter = RustAdapter::with_api_base(server.uri());
+    let adapter = RustAdapter::with_api_base(server.uri()).unwrap();
     let result = adapter.fetch(&rust_index(&server.uri())).await.unwrap();
     assert!(result.source_archived);
     assert!(result.upstream_versions.is_empty());

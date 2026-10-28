@@ -35,7 +35,7 @@ fn rust_index(server_uri: &str) -> ToolIndex {
 #[tokio::test]
 async fn missing_source_repo_returns_error() {
     let server = MockServer::start().await;
-    let adapter = RustAdapter::with_api_base(server.uri());
+    let adapter = RustAdapter::with_api_base(server.uri()).unwrap();
     let index = ToolIndex {
         id: "rust".to_string(),
         source_repo: None,
@@ -49,7 +49,7 @@ async fn missing_source_repo_returns_error() {
 #[tokio::test]
 async fn non_github_source_repo_returns_error() {
     let server = MockServer::start().await;
-    let adapter = RustAdapter::with_api_base(server.uri());
+    let adapter = RustAdapter::with_api_base(server.uri()).unwrap();
     let index = ToolIndex {
         id: "rust".to_string(),
         source_repo: Some("https://gitlab.com/rust-lang/rust".to_string()),
@@ -83,6 +83,7 @@ async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
 
     let started = std::time::Instant::now();
     let err = RustAdapter::with_timeout(server.uri(), std::time::Duration::from_millis(200))
+        .unwrap()
         .fetch(&rust_index(&server.uri()))
         .await
         .unwrap_err()
@@ -111,6 +112,7 @@ async fn stall_mid_body_times_out_with_an_error_naming_the_url() {
 
     let started = std::time::Instant::now();
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_millis(200))
+        .unwrap()
         .fetch(&rust_index(&uri))
         .await
         .unwrap_err()
@@ -137,6 +139,7 @@ async fn malformed_json_is_a_decode_error_not_a_timeout() {
         .await;
 
     let err = RustAdapter::with_api_base(server.uri())
+        .unwrap()
         .fetch(&rust_index(&server.uri()))
         .await
         .unwrap_err()
@@ -165,6 +168,7 @@ async fn truncated_body_is_a_decode_error_not_a_timeout() {
     );
 
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .unwrap()
         .fetch(&rust_index(&uri))
         .await
         .unwrap_err()
@@ -190,6 +194,7 @@ async fn refused_connection_is_not_reported_as_a_timeout() {
     let uri = format!("http://127.0.0.1:{port}");
 
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .unwrap()
         .fetch(&rust_index(&uri))
         .await
         .unwrap_err()
@@ -211,6 +216,7 @@ async fn non_2xx_error_names_the_url_status_and_body() {
         .await;
 
     let err = RustAdapter::with_api_base(server.uri())
+        .unwrap()
         .fetch(&rust_index(&server.uri()))
         .await
         .unwrap_err()
@@ -236,6 +242,7 @@ async fn oversized_error_body_is_capped_and_escaped() {
         .await;
 
     let err = RustAdapter::with_api_base(server.uri())
+        .unwrap()
         .fetch(&rust_index(&server.uri()))
         .await
         .unwrap_err()
@@ -262,6 +269,7 @@ async fn oversized_error_body_is_not_read_to_the_end() {
 
     let started = std::time::Instant::now();
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(10))
+        .unwrap()
         .fetch(&rust_index(&uri))
         .await
         .unwrap_err()
@@ -294,6 +302,7 @@ async fn error_body_sent_in_small_chunks_is_accumulated_then_capped() {
 
     let started = std::time::Instant::now();
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(10))
+        .unwrap()
         .fetch(&rust_index(&uri))
         .await
         .unwrap_err()
@@ -323,6 +332,7 @@ async fn error_body_of_exactly_the_cap_is_not_marked_truncated() {
         .await;
 
     let err = RustAdapter::with_api_base(server.uri())
+        .unwrap()
         .fetch(&rust_index(&server.uri()))
         .await
         .unwrap_err()
@@ -347,6 +357,7 @@ async fn invalid_utf8_error_body_is_replaced() {
         .await;
 
     let err = RustAdapter::with_api_base(server.uri())
+        .unwrap()
         .fetch(&rust_index(&server.uri()))
         .await
         .unwrap_err()
@@ -380,6 +391,7 @@ async fn non_2xx_on_releases_names_the_releases_url() {
         .await;
 
     let err = RustAdapter::with_api_base(server.uri())
+        .unwrap()
         .fetch(&rust_index(&server.uri()))
         .await
         .unwrap_err()
@@ -403,6 +415,7 @@ async fn non_2xx_with_stalled_body_reports_unreadable_body() {
 
     let started = std::time::Instant::now();
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_millis(200))
+        .unwrap()
         .fetch(&rust_index(&uri))
         .await
         .unwrap_err()
@@ -432,6 +445,7 @@ async fn non_2xx_with_truncated_body_is_unreadable_not_timed_out() {
     );
 
     let err = RustAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .unwrap()
         .fetch(&rust_index(&uri))
         .await
         .unwrap_err()

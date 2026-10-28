@@ -32,6 +32,27 @@ cargo run --release -p scanner -- deliver --plan /tmp/plan.json
 `GITHUB_TOKEN` is optional but recommended — unauthenticated GitHub API
 calls share a low rate limit.
 
+## Runtime and build requirements
+
+**TLS trust comes from the OS store.** The HTTP client is reqwest 0.13
+with its `rustls` feature, which verifies certificates through
+`rustls-platform-verifier`. On Linux that loads the system roots
+(`ca-certificates`) when the client is built, once per run, before any
+request. Point `SSL_CERT_FILE` or `SSL_CERT_DIR` at a PEM bundle to use
+other roots instead. With no roots at all, `due`, `tool`, and `backfill`
+exit with `building the HTTP client failed (TLS roots are loaded from the
+OS trust store …)`. `deliver` makes no requests and does not need them.
+reqwest 0.13 has no bundled-roots option (0.12's `webpki-roots`), so the
+host's store is the only source.
+
+**The crypto provider is `aws-lc-rs`**, reqwest's default for `rustls`.
+Building it compiles `aws-lc-sys`, which needs a C toolchain (`cc`) and,
+on some targets, `cmake`. `ring` is the alternative, but it would mean
+switching to `rustls-no-provider`, adding `rustls` as a direct dependency,
+and installing the provider before any client is built. That is more to
+keep in step than one build-time requirement, which `ubuntu-latest` CI
+runners already meet.
+
 ## Activity tier rules
 
 Tier mapping is a deliberate heuristic, encoded in

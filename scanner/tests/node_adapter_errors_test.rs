@@ -47,6 +47,7 @@ async fn non_json_index_is_a_decode_error() {
     let server = serve_status(200, "<html>maintenance</html>").await;
 
     let err = NodeAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -70,6 +71,7 @@ async fn entry_without_a_date_is_a_decode_error() {
     .await;
 
     let err = NodeAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -87,6 +89,7 @@ async fn index_error_names_the_url() {
     let server = serve_status(503, "down").await;
 
     let err = NodeAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -106,6 +109,7 @@ async fn oversized_error_body_is_capped_and_escaped() {
     let server = serve_status(503, format!("line1\nline2{}", "z".repeat(600))).await;
 
     let err = NodeAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -135,6 +139,7 @@ async fn error_body_sent_in_small_chunks_is_accumulated_then_capped() {
 
     let started = std::time::Instant::now();
     let err = NodeAdapter::with_timeout(&uri, std::time::Duration::from_secs(10))
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -169,6 +174,7 @@ async fn stalled_upstream_times_out_with_an_error_naming_the_url() {
 
     let started = std::time::Instant::now();
     let err = NodeAdapter::with_timeout(server.uri(), std::time::Duration::from_millis(200))
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -197,6 +203,7 @@ async fn refused_connection_is_not_reported_as_a_timeout() {
     let uri = format!("http://127.0.0.1:{port}");
 
     let err = NodeAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -217,6 +224,7 @@ async fn truncated_body_is_a_body_read_error_not_a_timeout() {
     );
 
     let err = NodeAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -235,6 +243,7 @@ async fn stall_mid_body_times_out_with_an_error_naming_the_url() {
 
     let started = std::time::Instant::now();
     let err = NodeAdapter::with_timeout(&uri, std::time::Duration::from_millis(200))
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -258,6 +267,7 @@ async fn non_2xx_with_stalled_body_reports_unreadable_body() {
     );
 
     let err = NodeAdapter::with_timeout(&uri, std::time::Duration::from_millis(200))
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
@@ -281,6 +291,7 @@ async fn non_2xx_with_truncated_body_is_unreadable_not_timed_out() {
     );
 
     let err = NodeAdapter::with_timeout(&uri, std::time::Duration::from_secs(5))
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap_err()
