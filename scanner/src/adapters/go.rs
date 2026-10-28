@@ -268,7 +268,8 @@ mod tests {
     /// Every timeout test goes through `with_timeout`, so without this a
     /// constructor could drop `DEFAULT_REQUEST_TIMEOUT` — and bring
     /// back the #467 hang — with every test green. `new()` is checked in
-    /// `crate::tests::system_roots_client_builds`, which has roots to give it.
+    /// `crate::test_tls::roots::system_roots_client_builds`, which has roots
+    /// to give it.
     #[test]
     fn test_constructors_use_the_default_timeout_and_no_roots() {
         let now = Utc::now();
