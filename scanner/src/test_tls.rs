@@ -168,11 +168,18 @@ pub(crate) async fn assert_cert_rejected(client: &reqwest::Client, url: &str) {
     let err = client.get(url).send().await.unwrap_err();
     assert!(
         find_rustls_error(&err).is_some_and(is_unknown_issuer),
-        "expected a certificate rejection: {err:?}{}",
-        proxy_hint(|name| std::env::var_os(name))
-            .map(|hint| format!("\n{hint}"))
-            .unwrap_or_default()
+        "{}",
+        rejection_message(&err, |name| std::env::var_os(name))
     );
+}
+
+/// The failure message for [`assert_cert_rejected`]: the error, then the
+/// [`proxy_hint`] for `var` when there is one.
+fn rejection_message(err: &dyn std::fmt::Debug, var: impl Fn(&str) -> Option<OsString>) -> String {
+    let hint = proxy_hint(var)
+        .map(|hint| format!("\n{hint}"))
+        .unwrap_or_default();
+    format!("expected a certificate rejection: {err:?}{hint}")
 }
 
 /// The proxy variables reqwest reads for an `https` URL.
@@ -231,7 +238,7 @@ mod roots;
 mod tests {
     use std::ffi::OsString;
 
-    use super::{find_rustls_error, is_unknown_issuer, proxy_hint};
+    use super::{find_rustls_error, is_unknown_issuer, proxy_hint, rejection_message};
 
     /// An environment lookup holding only `vars`.
     fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
@@ -291,6 +298,28 @@ mod tests {
                 "proxy variable(s) set: HTTPS_PROXY, https_proxy, ALL_PROXY, all_proxy;"
             ),
             "{hint}"
+        );
+    }
+
+    /// The failure message carries the hint, so a proxied request reads as
+    /// a proxy problem and not a trust one.
+    #[test]
+    fn rejection_message_appends_the_proxy_hint() {
+        let msg = rejection_message(&"refused", env(&[("HTTPS_PROXY", "x")]));
+        assert_eq!(
+            msg,
+            format!(
+                "expected a certificate rejection: \"refused\"\n{}",
+                proxy_hint(env(&[("HTTPS_PROXY", "x")])).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn rejection_message_without_a_proxy_is_just_the_error() {
+        assert_eq!(
+            rejection_message(&"refused", env(&[])),
+            "expected a certificate rejection: \"refused\""
         );
     }
 
