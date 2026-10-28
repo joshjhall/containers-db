@@ -167,11 +167,12 @@ pub(crate) fn version_key(v: Option<&str>) -> Vec<u64> {
         .collect()
 }
 
-/// Every dot-separated segment is a non-empty run of ASCII digits, so
-/// [`version_key`] orders it exactly.
+/// Every dot-separated segment is a run of ASCII digits that fits the
+/// `u64` [`version_key`] parses it into, so that key orders it exactly.
+/// The digit check is not redundant: `u64` parsing alone accepts `+1`.
 fn is_numeric_version(v: &str) -> bool {
     v.split('.')
-        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u64>().is_ok())
 }
 
 /// Walk every string in `value` and replace whole-string matches of
@@ -481,7 +482,16 @@ mod tests {
     fn is_numeric_version_needs_digit_only_segments() {
         assert!(is_numeric_version("24.22.2"));
         assert!(is_numeric_version("1.27"));
-        for v in ["24.22.2-rc1", "1..2", "1.2.", "", "v1.2.3"] {
+        // A segment past u64::MAX would key as 0; `+1` parses as a u64.
+        for v in [
+            "24.22.2-rc1",
+            "1..2",
+            "1.2.",
+            "",
+            "v1.2.3",
+            "1.18446744073709551616.0",
+            "1.+2.3",
+        ] {
             assert!(!is_numeric_version(v), "{v:?}");
         }
     }
