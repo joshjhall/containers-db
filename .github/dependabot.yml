@@ -6,6 +6,11 @@
 # install with `npm ci`) current. Version updates cover direct dependencies
 # only by default; `dependency-type: all` extends them to the transitive
 # entries, which are what the lockfile exists to pin.
+#
+# The cargo entry does the same for Cargo.toml/Cargo.lock, with the same
+# `dependency-type: all` so transitive crates pinned only in the lockfile are
+# covered too. Do not rely on it for the containers-common git `rev =` pin:
+# bump that rev by hand to the current joshjhall/containers main.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -16,6 +21,17 @@ updates:
       - dependency-type: all
     groups:
       npm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: all
+    groups:
+      cargo:
         patterns:
           - "*"
 
