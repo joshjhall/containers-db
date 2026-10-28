@@ -260,9 +260,10 @@ mod tests {
     /// system store needs that store to hold the CA, which is
     /// `crate::tests::none_roots_ignore_the_system_store` on Linux.
     ///
-    /// The `None` client is the production one, so it honours `HTTPS_PROXY`;
-    /// with a proxy set that does not exempt `localhost`, this fails on the
-    /// proxy rather than on trust, and says so in the assertion message.
+    /// The `None` client is the production one, so it honours `HTTPS_PROXY`.
+    /// With a proxy set that does not exempt `127.0.0.1`, this test fails
+    /// (it cannot pass): the request goes to the proxy, the error carries no
+    /// `UnknownIssuer`, and the assertion prints the proxy error it got.
     #[tokio::test]
     async fn none_roots_reject_https() {
         let pki = crate::test_tls::TestPki::generate();

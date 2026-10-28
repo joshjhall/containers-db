@@ -13,7 +13,9 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// A CA and a leaf for `localhost` signed by it, all PEM-encoded.
+/// A CA and a leaf for `127.0.0.1` signed by it, all PEM-encoded. The leaf
+/// names the IP, not `localhost`, so no resolver can send a client to `::1`
+/// while the server listens on IPv4 only.
 pub(crate) struct TestPki {
     pub(crate) ca_pem: String,
     pub(crate) leaf_pem: String,
@@ -33,7 +35,7 @@ impl TestPki {
         let issuer = Issuer::new(ca_params, ca_key);
 
         let leaf_key = KeyPair::generate().unwrap();
-        let leaf = CertificateParams::new(vec!["localhost".to_owned()])
+        let leaf = CertificateParams::new(vec!["127.0.0.1".to_owned()])
             .unwrap()
             .signed_by(&leaf_key, &issuer)
             .unwrap();
@@ -81,7 +83,7 @@ impl TestPki {
 
     /// Serve `HTTP/1.1 200` with an empty body over TLS on a loopback port,
     /// presenting the leaf, until the runtime shuts down. Returns
-    /// `https://localhost:{port}/`.
+    /// `https://127.0.0.1:{port}/`.
     pub(crate) async fn serve(&self) -> String {
         let chain = vec![CertificateDer::from_pem_slice(self.leaf_pem.as_bytes()).unwrap()];
         let key = PrivateKeyDer::from_pem_slice(self.key_pem.as_bytes()).unwrap();
@@ -101,13 +103,25 @@ impl TestPki {
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
             loop {
-                // A failed accept (ECONNABORTED, EMFILE) loses one
-                // connection, not the server.
+                // A connection that dies before it is accepted loses only
+                // itself. Anything else (EMFILE) would fail again at once, so
+                // stop rather than spin; the client then sees a refusal, and
+                // the reason is on stderr.
                 let tcp = match listener.accept().await {
                     Ok((tcp, _)) => tcp,
-                    Err(e) => {
-                        eprintln!("test_tls: accept failed: {e}");
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionAborted
+                                | std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::Interrupted
+                        ) =>
+                    {
                         continue;
+                    }
+                    Err(e) => {
+                        eprintln!("test_tls: accept failed, server stopping: {e}");
+                        return;
                     }
                 };
                 let acceptor = acceptor.clone();
@@ -128,7 +142,7 @@ impl TestPki {
                 });
             }
         });
-        format!("https://localhost:{port}/")
+        format!("https://127.0.0.1:{port}/")
     }
 }
 
@@ -141,11 +155,19 @@ pub(crate) async fn assert_reachable(client: &reqwest::Client, url: &str) {
 
 /// GET `url` and require that it fails because the server's certificate was
 /// not trusted. A refused connection or a timeout does not count: the chain
-/// must hold a `rustls::Error::InvalidCertificate`.
+/// must hold `InvalidCertificate(UnknownIssuer)`: no trust anchor for the CA,
+/// which a name or validity problem would not produce. A root-less client
+/// verifies with rustls's own WebPKI verifier on every OS (reqwest only uses
+/// the platform verifier when it may consult the OS store), so the variant
+/// is the same everywhere.
 pub(crate) async fn assert_cert_rejected(client: &reqwest::Client, url: &str) {
     let err = client.get(url).send().await.unwrap_err();
-    let rejected =
-        find_rustls_error(&err).is_some_and(|e| matches!(e, rustls::Error::InvalidCertificate(_)));
+    let rejected = find_rustls_error(&err).is_some_and(|e| {
+        matches!(
+            e,
+            rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)
+        )
+    });
     assert!(rejected, "expected a certificate rejection: {err:?}");
 }
 
@@ -195,6 +217,40 @@ mod tests {
     #[test]
     fn finds_rustls_error_inside_io_error() {
         let err = Wrapper(std::io::Error::other(rustls::Error::General("x".into())));
+        assert!(matches!(
+            find_rustls_error(&err),
+            Some(rustls::Error::General(_))
+        ));
+    }
+
+    #[test]
+    fn finds_rustls_error_at_the_top() {
+        let err = rustls::Error::General("x".into());
+        assert!(matches!(
+            find_rustls_error(&err),
+            Some(rustls::Error::General(_))
+        ));
+    }
+
+    /// Two plain `source()` hops, no `io::Error`: the ordinary walk.
+    #[test]
+    fn finds_rustls_error_down_the_source_chain() {
+        #[derive(Debug)]
+        struct Chain(Box<dyn std::error::Error + Send + Sync>);
+        impl std::fmt::Display for Chain {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("chain")
+            }
+        }
+        impl std::error::Error for Chain {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&*self.0)
+            }
+        }
+
+        let err = Chain(Box::new(Chain(Box::new(rustls::Error::General(
+            "x".into(),
+        )))));
         assert!(matches!(
             find_rustls_error(&err),
             Some(rustls::Error::General(_))
