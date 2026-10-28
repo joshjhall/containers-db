@@ -444,6 +444,22 @@ mod tests {
         assert_eq!(index.raw["default_version"], "24.22.1");
     }
 
+    #[test]
+    fn update_index_sets_a_default_where_there_was_none() {
+        let mut index = index_with(&["22.23.4"], "22.23.4");
+        index.raw.as_object_mut().unwrap().remove("default_version");
+        update_index(
+            &mut index,
+            &["24.22.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("24.22.2"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "24.22.2");
+    }
+
     fn owned(vs: &[&str]) -> Vec<String> {
         vs.iter().map(|v| v.to_string()).collect()
     }
