@@ -247,10 +247,31 @@ mod tests {
     /// A client with no roots must still build, since the wiremock
     /// constructors rely on it on hosts without `ca-certificates`.
     /// `crate::tests::missing_tls_roots_are_an_error_not_a_panic` runs this
-    /// with the OS store emptied.
+    /// with the OS store emptied. That it also trusts nothing is
+    /// [`none_roots_reject_https`].
     #[test]
     fn rootless_client_builds() {
         http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::None).unwrap();
+    }
+
+    /// A [`TlsRoots::None`] client refuses a certificate that a client
+    /// trusting its CA accepts, on every OS (issue #512). This catches `None`
+    /// being made to trust anything; `None` quietly falling back to the
+    /// system store needs that store to hold the CA, which is
+    /// `crate::tests::none_roots_ignore_the_system_store` on Linux.
+    #[tokio::test]
+    async fn none_roots_reject_https() {
+        let pki = crate::test_tls::TestPki::generate();
+        let url = pki.serve().await;
+
+        let trusting = reqwest::Client::builder()
+            .tls_certs_only([pki.ca_cert()])
+            .build()
+            .unwrap();
+        crate::test_tls::assert_reachable(&trusting, &url).await;
+
+        let none = http_client(DEFAULT_REQUEST_TIMEOUT, TlsRoots::None).unwrap();
+        crate::test_tls::assert_cert_rejected(&none, &url).await;
     }
 
     #[test]

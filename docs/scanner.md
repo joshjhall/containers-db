@@ -49,7 +49,9 @@ host's store is the only source.
 The test suite needs no CA bundle. The adapters' wiremock constructors
 build clients that trust no roots (so they cannot reach HTTPS), and the
 tests that need real roots run in a child whose only root is
-`scanner/tests/fixtures/test-root.pem`. To reproduce a host without
+`scanner/tests/fixtures/test-root.pem`. The tests that prove a
+root-less client rejects HTTPS generate a throwaway CA and serve it on
+loopback, so no private key is committed. To reproduce a host without
 roots, empty **both** variables: `cargo` sets `SSL_CERT_DIR` for the
 processes it runs, so an empty `SSL_CERT_FILE` alone still finds the
 host's certificates:
