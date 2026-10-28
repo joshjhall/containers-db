@@ -50,8 +50,8 @@ pub(crate) fn http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> 
         .connect_timeout(connect_timeout_for(timeout))
         .build()
         .context(
-            "building the HTTP client failed (TLS roots are loaded from the OS trust \
-             store at build time: install ca-certificates or set SSL_CERT_FILE/SSL_CERT_DIR)",
+            "building the HTTP client failed (most often no TLS roots in the OS trust \
+             store: install ca-certificates or set SSL_CERT_FILE/SSL_CERT_DIR)",
         )
 }
 

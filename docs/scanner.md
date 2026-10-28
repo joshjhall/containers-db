@@ -40,8 +40,9 @@ with its `rustls` feature, which verifies certificates through
 system roots (`ca-certificates`) when it is built, before any request.
 Point `SSL_CERT_FILE` or `SSL_CERT_DIR` at a PEM bundle to use other
 roots instead. With no roots at all, `due`, `tool`, and `backfill`
-exit with `building the HTTP client failed (TLS roots are loaded from the
-OS trust store …)`. `deliver` makes no requests and does not need them.
+exit with `building the HTTP client failed (most often no TLS roots in
+the OS trust store …)`, followed by the underlying cause. `deliver`
+makes no requests and does not need them.
 reqwest 0.13 has no bundled-roots option (0.12's `webpki-roots`), so the
 host's store is the only source.
 
