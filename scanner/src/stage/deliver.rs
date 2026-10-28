@@ -1,6 +1,7 @@
 //! Staging and delivery I/O: render a plan's files, write and gate them,
 //! and push / open PRs from a vetted [`Manifest`].
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -56,18 +57,27 @@ pub(crate) fn staged_files(
         .collect()
 }
 
-/// The template a plan's version files are cloned from, as the checkout
-/// has it: the newest cataloged version for a scan, the oldest for a
-/// backfill (whose support matrix best describes older releases).
-fn template_version(index: &ToolIndex, kind: &Kind) -> Option<String> {
-    let mut existing = index.available_versions();
+/// The template `version`'s file is cloned from, as the checkout has it:
+/// for a scan, the newest cataloged version on the same line
+/// ([`generate::template_for`]), so a backport to an older line does not
+/// inherit the newest line's dependencies; for a backfill, the oldest
+/// (whose support matrix best describes older releases).
+fn template_version(available: &[String], kind: &Kind, version: &str) -> Option<String> {
     match kind {
-        Kind::Scan { .. } => existing.pop(),
-        Kind::Backfill { .. } => {
-            existing.sort_by_cached_key(|v| generate::version_key(Some(v)));
-            existing.into_iter().next()
-        }
+        Kind::Scan { .. } => generate::template_for(available, version),
+        Kind::Backfill { .. } => available
+            .iter()
+            .min_by_key(|v| generate::version_key(Some(v)))
+            .cloned(),
     }
+}
+
+fn read_template(tool_dir: &Path, version: &str) -> Result<Value> {
+    let path = tool_dir.join("versions").join(format!("{version}.json"));
+    let bytes = std::fs::read(&path)
+        .map_err(|e| anyhow::anyhow!("reading template {}: {e}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| anyhow::anyhow!("parsing template {}: {e}", path.display()))
 }
 
 /// Render a plan's files from the checkout at `repo_root`: each version
@@ -85,28 +95,29 @@ pub(crate) fn render_files(
 ) -> Result<Vec<StagedFile>> {
     let tool_dir = repo_root.join("tools").join(tool_id);
     let mut index = ToolIndex::from_path(&tool_dir.join("index.json"))?;
-    let template_version = template_version(&index, kind).ok_or_else(|| {
-        anyhow::anyhow!("tool `{tool_id}` has no existing versions to template from")
-    })?;
-    let template_path = tool_dir
-        .join("versions")
-        .join(format!("{template_version}.json"));
-    let template_bytes = std::fs::read(&template_path)
-        .map_err(|e| anyhow::anyhow!("reading template {}: {e}", template_path.display()))?;
-    let template: Value = serde_json::from_slice(&template_bytes)
-        .map_err(|e| anyhow::anyhow!("parsing template {}: {e}", template_path.display()))?;
+    // Templates come from the checkout's catalog only — never from a
+    // release this same plan renders — so the output is independent of
+    // the order `releases` arrives in.
+    let available = index.available_versions();
+    let mut templates: HashMap<String, Value> = HashMap::new();
 
-    let mut generated: Vec<(PathBuf, Value)> = releases
-        .iter()
-        .map(|nv| {
-            (
-                tool_dir
-                    .join("versions")
-                    .join(format!("{}.json", nv.version)),
-                generate::render_version(&template, &template_version, nv, now),
-            )
-        })
-        .collect();
+    let mut generated: Vec<(PathBuf, Value)> = Vec::with_capacity(releases.len() + 1);
+    for nv in releases {
+        let from = template_version(&available, kind, &nv.version).ok_or_else(|| {
+            anyhow::anyhow!("tool `{tool_id}` has no existing versions to template from")
+        })?;
+        if !templates.contains_key(&from) {
+            let template = read_template(&tool_dir, &from)?;
+            templates.insert(from.clone(), template);
+        }
+        let template = &templates[&from];
+        generated.push((
+            tool_dir
+                .join("versions")
+                .join(format!("{}.json", nv.version)),
+            generate::render_version(template, &from, nv, now),
+        ));
+    }
     let versions: Vec<String> = releases.iter().map(|r| r.version.clone()).collect();
     generate::update_index(
         &mut index,
@@ -114,6 +125,7 @@ pub(crate) fn render_files(
         &activity.signals,
         activity.score,
         activity.cadence_days,
+        activity.default_version.as_deref(),
         now,
     );
     generated.push((index.path.clone(), index.raw));
@@ -382,5 +394,105 @@ mod tests {
             }]
         );
         assert!(staged_files(root, &[(PathBuf::from("/elsewhere/x.json"), value)]).is_err());
+    }
+
+    /// A temp catalog for tool `demo` with one version file per entry of
+    /// `lines`, each marked by `line` so a rendered file shows which
+    /// template it was cloned from.
+    fn two_line_catalog(lines: &[(&str, &str)]) -> tempfile::TempDir {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tool = tmp.path().join("tools").join("demo");
+        std::fs::create_dir_all(tool.join("versions")).unwrap();
+        let available: Vec<Value> = lines
+            .iter()
+            .map(|(v, _)| serde_json::json!({ "version": v }))
+            .collect();
+        let index = serde_json::json!({
+            "id": "demo",
+            "default_version": lines[0].0,
+            "available": available,
+        });
+        std::fs::write(tool.join("index.json"), render(&index).unwrap()).unwrap();
+        for (v, line) in lines {
+            let doc = serde_json::json!({ "version": v, "released": "2026-01-01", "line": line });
+            std::fs::write(
+                tool.join("versions").join(format!("{v}.json")),
+                render(&doc).unwrap(),
+            )
+            .unwrap();
+        }
+        tmp
+    }
+
+    fn release(v: &str) -> UpstreamVersion {
+        UpstreamVersion {
+            version: v.into(),
+            released_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 11, 1, 0, 0, 0).unwrap(),
+            channel: "stable".into(),
+        }
+    }
+
+    fn rendered(files: &[StagedFile], version: &str) -> Value {
+        let path = format!("tools/demo/versions/{version}.json");
+        let file = files
+            .iter()
+            .find(|f| f.path == path)
+            .unwrap_or_else(|| panic!("{path} not rendered"));
+        serde_json::from_str(&file.contents).unwrap()
+    }
+
+    /// The scan path, not just [`generate::template_for`]: each release in
+    /// one plan is cloned from its own line, even when an earlier release
+    /// in the same plan loaded a different line's template.
+    #[test]
+    fn scan_renders_each_release_from_its_own_lines_template() {
+        let tmp = two_line_catalog(&[("22.23.4", "jod"), ("26.12.1", "current")]);
+        let mut activity = crate::stage::plan::tests::activity();
+        activity.default_version = Some("22.23.5".into());
+        let kind = Kind::Scan {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+        };
+        let now = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 11, 1, 0, 0, 0).unwrap();
+
+        let files = render_files(
+            tmp.path(),
+            "demo",
+            &kind,
+            &[release("26.12.2"), release("22.23.5"), release("26.13.0")],
+            &activity,
+            now,
+        )
+        .unwrap();
+
+        assert_eq!(rendered(&files, "22.23.5")["line"], "jod");
+        assert_eq!(rendered(&files, "26.12.2")["line"], "current");
+        assert_eq!(rendered(&files, "26.13.0")["line"], "current");
+        let index = files
+            .iter()
+            .find(|f| f.path == "tools/demo/index.json")
+            .unwrap();
+        let index: Value = serde_json::from_str(&index.contents).unwrap();
+        assert_eq!(index["default_version"], "22.23.5");
+    }
+
+    #[test]
+    fn backfill_still_renders_from_the_oldest_file() {
+        let tmp = two_line_catalog(&[("22.23.4", "jod"), ("26.12.1", "current")]);
+        let kind = Kind::Backfill {
+            from: "20.0.0".into(),
+        };
+        let now = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 11, 1, 0, 0, 0).unwrap();
+
+        let files = render_files(
+            tmp.path(),
+            "demo",
+            &kind,
+            &[release("20.0.0")],
+            &crate::stage::plan::tests::activity(),
+            now,
+        )
+        .unwrap();
+
+        assert_eq!(rendered(&files, "20.0.0")["line"], "jod");
     }
 }

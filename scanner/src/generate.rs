@@ -66,14 +66,23 @@ pub fn render_version(
 }
 
 /// Mutate `index.raw` in place: add new versions to `available[]`, keep it
-/// in ascending version order, and replace the entire `activity` block with
-/// the recomputed values.
+/// in ascending version order, replace the entire `activity` block with
+/// the recomputed values, and set `default_version` when the adapter chose
+/// one.
+///
+/// A `default_version` missing from `available[]` (after the merge) is
+/// ignored, so a release the adapter held back can never become the
+/// default before its version file exists. One older than the current
+/// default is ignored too: the value rides in the untrusted staging
+/// job's plan, and the delivering re-render can't tell a tampered choice
+/// from a real one, so the default may only ever move forward.
 pub fn update_index(
     index: &mut ToolIndex,
     new_versions: &[String],
     signals: &ActivitySignals,
     score: Score,
     cadence_days: u32,
+    default_version: Option<&str>,
     now: DateTime<Utc>,
 ) {
     let now_str = now.to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -99,6 +108,17 @@ pub fn update_index(
     // would list 1.82.0 after 1.99.0.
     available.sort_by_cached_key(|e| version_key(e.get("version").and_then(Value::as_str)));
 
+    if let Some(dv) = default_version {
+        let listed = available
+            .iter()
+            .any(|e| e.get("version").and_then(Value::as_str) == Some(dv));
+        let current = obj.get("default_version").and_then(Value::as_str);
+        let forward = current.is_none_or(|c| version_key(Some(dv)) >= version_key(Some(c)));
+        if listed && forward {
+            obj.insert("default_version".into(), Value::String(dv.to_string()));
+        }
+    }
+
     obj.insert(
         "activity".into(),
         json!({
@@ -108,6 +128,25 @@ pub fn update_index(
             "scanned_at": now_str,
         }),
     );
+}
+
+/// The cataloged version a scanned `version` should be rendered from: the
+/// one sharing the most leading numeric segments with it, newest on ties.
+/// A release on an existing line therefore clones that line's newest file
+/// (node 22.24.0 ← newest 22.x, go 1.27.4 ← newest 1.27.x) rather than the
+/// newest file overall, whose dependencies and platform statuses can belong
+/// to a different line (node 26's `libatomic`). With no shared segment it
+/// falls back to the newest overall. `None` only for an empty catalog.
+pub fn template_for(available: &[String], version: &str) -> Option<String> {
+    let target = version_key(Some(version));
+    available
+        .iter()
+        .max_by_key(|v| {
+            let key = version_key(Some(v));
+            let shared = key.iter().zip(&target).take_while(|(a, b)| a == b).count();
+            (shared, key)
+        })
+        .cloned()
 }
 
 /// Sort key for a dotted numeric version: `1.9.0` < `1.10.0`. Non-numeric
@@ -225,6 +264,7 @@ mod tests {
             &signals,
             Score::VeryActive,
             1,
+            None,
             at(2026, 10, 12),
         );
         let order: Vec<&str> = idx.raw["available"]
@@ -274,6 +314,7 @@ mod tests {
             &signals,
             Score::Active,
             7,
+            None,
             at(2026, 5, 1),
         );
         let versions: Vec<&str> = index.raw["available"]
@@ -304,12 +345,183 @@ mod tests {
             &signals,
             Score::VeryActive,
             1,
+            None,
             at(2026, 5, 1),
         );
         assert_eq!(index.raw["activity"]["score"], "very-active");
         assert_eq!(index.raw["activity"]["scan_cadence_days"], 1);
         assert_eq!(index.raw["activity"]["scanned_at"], "2026-05-01T00:00:00Z");
         assert_eq!(index.raw["activity"]["signals"]["releases_last_90d"], 4);
+    }
+
+    fn index_with(available: &[&str], default_version: &str) -> ToolIndex {
+        let available: Vec<Value> = available.iter().map(|v| json!({ "version": v })).collect();
+        ToolIndex {
+            id: "node".to_string(),
+            source_repo: None,
+            raw: json!({ "default_version": default_version, "available": available }),
+            path: PathBuf::from("/tmp/index.json"),
+        }
+    }
+
+    #[test]
+    fn update_index_sets_a_listed_default_version() {
+        let mut index = index_with(&["22.23.4", "24.22.1"], "22.23.4");
+        update_index(
+            &mut index,
+            &["24.22.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            // Listed only because this same call adds it.
+            Some("24.22.2"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "24.22.2");
+    }
+
+    #[test]
+    fn update_index_ignores_an_unlisted_default_version() {
+        let mut index = index_with(&["22.23.4", "24.22.1"], "22.23.4");
+        update_index(
+            &mut index,
+            &["24.22.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("24.22.3"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "22.23.4");
+    }
+
+    #[test]
+    fn update_index_without_a_default_version_leaves_it_alone() {
+        let mut index = index_with(&["22.23.4"], "22.23.4");
+        update_index(
+            &mut index,
+            &["24.22.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            None,
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "22.23.4");
+    }
+
+    #[test]
+    fn update_index_never_moves_the_default_backwards() {
+        // A listed, plain, but older choice — what a tampered plan would
+        // use to point the catalog at an EOL line.
+        let mut index = index_with(&["20.19.0", "22.23.4", "24.22.1"], "22.23.4");
+        update_index(
+            &mut index,
+            &["24.22.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("20.19.0"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "22.23.4");
+    }
+
+    #[test]
+    fn update_index_moves_the_default_forward_to_an_already_listed_version() {
+        // The first post-merge node scan: the newest LTS release is already
+        // cataloged, and this call adds an unrelated newer line.
+        let mut index = index_with(&["22.23.4", "24.22.1", "26.12.1"], "22.23.4");
+        update_index(
+            &mut index,
+            &["26.12.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("24.22.1"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "24.22.1");
+    }
+
+    #[test]
+    fn update_index_sets_a_default_where_there_was_none() {
+        let mut index = index_with(&["22.23.4"], "22.23.4");
+        index.raw.as_object_mut().unwrap().remove("default_version");
+        update_index(
+            &mut index,
+            &["24.22.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("24.22.2"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "24.22.2");
+    }
+
+    fn owned(vs: &[&str]) -> Vec<String> {
+        vs.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn template_for_prefers_the_newest_file_on_the_same_line() {
+        let available = owned(&["22.23.3", "22.23.4", "24.22.1", "26.12.0", "26.12.1"]);
+        assert_eq!(
+            template_for(&available, "22.23.5").as_deref(),
+            Some("22.23.4")
+        );
+        assert_eq!(
+            template_for(&available, "22.24.0").as_deref(),
+            Some("22.23.4")
+        );
+        assert_eq!(
+            template_for(&available, "24.23.0").as_deref(),
+            Some("24.22.1")
+        );
+        assert_eq!(
+            template_for(&available, "26.13.0").as_deref(),
+            Some("26.12.1")
+        );
+    }
+
+    #[test]
+    fn template_for_matches_the_deepest_shared_prefix() {
+        // go: a patch on the older supported branch clones that branch.
+        let available = owned(&["1.26.8", "1.26.9", "1.27.2", "1.27.3"]);
+        assert_eq!(
+            template_for(&available, "1.26.10").as_deref(),
+            Some("1.26.9")
+        );
+        assert_eq!(
+            template_for(&available, "1.27.4").as_deref(),
+            Some("1.27.3")
+        );
+        // A new minor shares only the major: newest on that major.
+        assert_eq!(
+            template_for(&available, "1.28.0").as_deref(),
+            Some("1.27.3")
+        );
+    }
+
+    #[test]
+    fn template_for_new_line_falls_back_to_the_newest_overall() {
+        let available = owned(&["22.23.4", "26.12.1", "24.22.1"]);
+        assert_eq!(
+            template_for(&available, "27.0.0").as_deref(),
+            Some("26.12.1")
+        );
+        assert_eq!(template_for(&[], "27.0.0"), None);
+    }
+
+    #[test]
+    fn template_for_orders_numerically_not_lexically() {
+        let available = owned(&["1.9.0", "1.10.0"]);
+        assert_eq!(
+            template_for(&available, "1.11.0").as_deref(),
+            Some("1.10.0")
+        );
+        assert_eq!(template_for(&available, "2.0.0").as_deref(), Some("1.10.0"));
     }
 
     #[test]

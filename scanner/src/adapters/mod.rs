@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::adapter::Adapter;
 
 pub mod go;
+pub mod node;
 pub mod rust;
 
 const USER_AGENT: &str = "containers-db-scanner/0.1";
@@ -194,6 +195,7 @@ fn breaks_log_line(c: char) -> bool {
 pub fn register_all() -> HashMap<String, Arc<dyn Adapter>> {
     let mut registry: HashMap<String, Arc<dyn Adapter>> = HashMap::new();
     registry.insert("go".to_string(), Arc::new(go::GoAdapter::new()));
+    registry.insert("node".to_string(), Arc::new(node::NodeAdapter::new()));
     registry.insert("rust".to_string(), Arc::new(rust::RustAdapter::new()));
     registry
 }
@@ -218,7 +220,7 @@ mod tests {
         let registry = register_all();
         let mut ids: Vec<&str> = registry.keys().map(String::as_str).collect();
         ids.sort_unstable();
-        assert_eq!(ids, vec!["go", "rust"]);
+        assert_eq!(ids, vec!["go", "node", "rust"]);
     }
 
     #[test]

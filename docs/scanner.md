@@ -74,7 +74,8 @@ impl Adapter for MyAdapter {
         // 2. Build a Vec<UpstreamVersion>
         // 3. Build ActivitySignals from raw counts
         // 4. Set source_archived from whatever signal your source exposes
-        Ok(AdapterResult { upstream_versions, signals, source_archived })
+        // 5. Pick a default_version if the tool has a policy for one
+        Ok(AdapterResult { upstream_versions, signals, source_archived, default_version: None })
     }
 }
 ```
@@ -89,6 +90,12 @@ impl Adapter for MyAdapter {
   the source can supply need to be set; the rest stay `None`.
 - `source_archived: bool` — pivots the tool straight to `abandoned`
   regardless of other signals.
+- `default_version: Option<String>` — the version the index's
+  `default_version` should name, for a tool with a policy for it (node:
+  newest active LTS). `None` leaves the index's value alone. It is written
+  only alongside a scan that adds versions, and only if the version is
+  cataloged once they are added — a held-back release never becomes the
+  default.
 
 ### 2. Register it
 
@@ -112,6 +119,7 @@ Registered adapters:
 | Tool   | Adapter                                               | Upstream                                                                       |
 | ------ | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `go`   | [`adapters/go.rs`](../scanner/src/adapters/go.rs)     | go.dev download feed (versions, `stable`) + release-history page (dates)       |
+| `node` | [`adapters/node.rs`](../scanner/src/adapters/node.rs) | nodejs.org `dist/index.json` (versions, dates, artifacts, LTS)                 |
 | `rust` | [`adapters/rust.rs`](../scanner/src/adapters/rust.rs) | GitHub REST: repo, releases, security advisories                               |
 
 The scanner treats the newest cataloged `released` as a strict
@@ -152,9 +160,17 @@ errored" case.
 
 ### 4. Adapter-specific version templates
 
-The scanner generates new `versions/<v>.json` files by deep-cloning the
-most recent existing version of the same tool and swapping the version
-literals. If your tool needs anything else (Tier 2 pinned checksums, a
+The scanner generates new `versions/<v>.json` files by deep-cloning an
+existing version of the same tool and swapping the version literals. The
+template is the cataloged version sharing the most leading segments with
+the new one, newest on ties
+([`generate::template_for`](../scanner/src/generate.rs)): a node 22.x
+backport clones the newest 22.x file, go 1.26.x clones the newest 1.26.x,
+and a release opening a new line clones the newest file overall. Lines
+that ship in parallel can therefore differ in shape (node 26's arm64
+`libatomic` dependency is absent from 22.x) without a backport inheriting
+the newest line's. A backfill clones the oldest file instead. If your tool
+needs anything else (Tier 2 pinned checksums, a
 new `support_matrix` row, etc.), submit it as a manual PR; the scanner
 will then carry that change forward to subsequent versions. For a tool
 whose matrix spans glibc and musl, see

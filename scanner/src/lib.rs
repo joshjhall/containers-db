@@ -110,7 +110,8 @@ pub(crate) enum Mode<'a> {
 #[derive(Debug)]
 pub(crate) enum Scanned {
     NoChange,
-    Plan(Plan),
+    /// Boxed: a `Plan` is hundreds of bytes and `NoChange` is none.
+    Plan(Box<Plan>),
 }
 
 fn mode<'a>(args: &RunArgs, staging: &'a mut Option<Manifest>) -> Mode<'a> {
@@ -306,7 +307,7 @@ fn apply(
             }
             restored?;
             let new_versions = plan.new_versions.clone();
-            manifest.plans.push(plan);
+            manifest.plans.push(*plan);
             Ok(Outcome::Staged { new_versions })
         }
         Mode::Deliver => {
@@ -370,9 +371,10 @@ async fn scan_one(
         score,
         cadence_days,
         signals: result.signals,
+        default_version: result.default_version,
     };
     let files = stage::render_files(repo_root, tool_id, &kind, &new_versions, &activity, now)?;
-    Ok(Scanned::Plan(Plan {
+    Ok(Scanned::Plan(Box::new(Plan {
         tool_id: tool_id.to_string(),
         kind,
         new_versions: new_versions.iter().map(|v| v.version.clone()).collect(),
@@ -380,7 +382,7 @@ async fn scan_one(
         now,
         activity,
         files,
-    }))
+    })))
 }
 
 fn diff_new_versions(
@@ -525,6 +527,7 @@ mod tests {
             score: activity::Score::Active,
             cadence_days: 7,
             signals: activity::ActivitySignals::default(),
+            default_version: None,
         };
         let now = at(2026, 10, 17);
         let files = stage::render_files(p, id, &kind, &releases, &activity, now).unwrap();
@@ -549,7 +552,7 @@ mod tests {
         let ok = apply_with_failure_reporting(
             p,
             "foo",
-            Ok(Scanned::Plan(rendered_plan(p))),
+            Ok(Scanned::Plan(Box::new(rendered_plan(p)))),
             Mode::Stage(&mut manifest),
             at(2026, 10, 17),
         );

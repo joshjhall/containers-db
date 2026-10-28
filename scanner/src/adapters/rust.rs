@@ -225,6 +225,7 @@ impl Adapter for RustAdapter {
             upstream_versions,
             signals,
             source_archived: repo_data.archived || repo_data.disabled,
+            default_version: None,
         })
     }
 }

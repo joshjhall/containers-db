@@ -83,6 +83,10 @@ pub struct AdapterResult {
     /// `true` when the upstream source is archived, disabled, or
     /// otherwise declared EOL — promotes the tool to [`crate::activity::Score::Abandoned`].
     pub source_archived: bool,
+    /// The version the index's `default_version` should name, when the
+    /// adapter has a policy for it (node: newest active LTS). `None` leaves
+    /// the index's value as-is.
+    pub default_version: Option<String>,
 }
 
 #[async_trait]

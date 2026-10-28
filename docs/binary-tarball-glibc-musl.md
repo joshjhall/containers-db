@@ -58,11 +58,12 @@ schema has no free-form notes field.
 ## Keeping new releases in shape
 
 The scanner has no per-tool version template. `render_version`
-(`scanner/src/generate.rs`) clones the newest cataloged version file and
-rewrites the version literals, so the shape of the newest file is the shape of
-every future release. `scanner/tests/go_catalog_shape_test.rs` pins go's 18
-cells and its method split across every cataloged file and a freshly rendered
-version. Copy that test when you move another tool to this pattern.
+(`scanner/src/generate.rs`) clones the newest cataloged file on the new
+release's line (`template_for`; see [scanner.md](scanner.md) § 4) and
+rewrites the version literals, so the shape of each line's newest file is the
+shape of every future release on that line, and of the next new line.
+`scanner/tests/go_catalog_shape_test.rs` pins go's 18 cells and its method
+split across every cataloged file and a freshly rendered version. Copy that test when you move another tool to this pattern.
 
 ## Evidence
 

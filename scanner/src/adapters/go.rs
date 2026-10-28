@@ -221,6 +221,7 @@ impl Adapter for GoAdapter {
             upstream_versions,
             signals,
             source_archived: false,
+            default_version: None,
         })
     }
 }

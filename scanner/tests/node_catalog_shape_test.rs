@@ -2,10 +2,10 @@
 //! glibc tarball methods, and the alpine source-build method (#483).
 //!
 //! The scanner has no per-tool version template — `render_version` clones
-//! the newest cataloged version file — so the catalog data *is* the template.
-//! A cataloged file that drops a cell, or a build dependency that loses its
-//! `purpose: build` scope, would be carried into every release the scanner
-//! adds after it. These tests read the real catalog rather than a fixture for
+//! the newest cataloged file on the new release's line (`template_for`) —
+//! so the catalog data *is* the template. A cataloged file that drops a
+//! cell, or a build dependency that loses its `purpose: build` scope, would
+//! be carried into every release the scanner adds after it on that line. These tests read the real catalog rather than a fixture for
 //! exactly that reason. See docs/source-build-musl.md.
 
 use std::collections::BTreeSet;
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{TimeZone, Utc};
 use scanner::adapter::{ToolIndex, UpstreamVersion};
-use scanner::generate::render_version;
+use scanner::generate::{render_version, template_for};
 use serde_json::{Value, json};
 
 const GLIBC_OS: [&str; 3] = ["debian", "ubuntu", "rhel"];
@@ -229,10 +229,10 @@ fn every_cataloged_node_version_has_the_full_matrix() {
 
 #[test]
 fn a_newly_generated_node_version_keeps_the_full_matrix() {
-    // Pick the template exactly as `scan_one` does: the last `available`
-    // entry of the tool index.
+    // Pick the template exactly as a scan does (`render_files`): the newest
+    // cataloged version on the same line — for a new major, newest overall.
     let index = ToolIndex::from_path(&node_dir().join("index.json")).unwrap();
-    let template_version = index.available_versions().last().cloned().unwrap();
+    let template_version = template_for(&index.available_versions(), "99.0.0").unwrap();
     let template = read_json(
         &node_dir()
             .join("versions")
@@ -253,5 +253,95 @@ fn a_newly_generated_node_version_keeps_the_full_matrix() {
         &rendered,
         "rendered node 99.0.0",
         &["99.0.0", template_version.as_str()],
+    );
+}
+
+/// The stamp the hand-written catalog files carry in `metadata`. Rendering
+/// with it as the scan clock makes the stamps match too, so the comparison
+/// below needs no metadata carve-out.
+fn catalog_stamp() -> chrono::DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap()
+}
+
+/// Re-render cataloged `version` the way a scan would have produced it:
+/// from its template among the other cataloged versions, with its own
+/// release date. Returns the template version and the rendered document.
+fn rerender(version: &str, available: &[String]) -> (String, Value) {
+    let others: Vec<String> = available
+        .iter()
+        .filter(|v| v.as_str() != version)
+        .cloned()
+        .collect();
+    let from = template_for(&others, version).unwrap();
+    let template = read_json(&node_dir().join("versions").join(format!("{from}.json")));
+    let committed = read_json(&node_dir().join("versions").join(format!("{version}.json")));
+    let released =
+        chrono::NaiveDate::parse_from_str(committed["released"].as_str().unwrap(), "%Y-%m-%d")
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+    let new = UpstreamVersion {
+        version: version.to_string(),
+        released_at: released,
+        channel: "stable".to_string(),
+    };
+    let rendered = render_version(&template, &from, &new, catalog_stamp());
+    (from, rendered)
+}
+
+/// The hand-written catalog carries no `tested` key; `render_version` writes
+/// `tested: []` so a fresh release never borrows its template's evidence.
+/// That is the one expected difference between a scanned file and its
+/// hand-written counterpart.
+fn without_empty_tested(mut doc: Value) -> Value {
+    if doc.get("tested") == Some(&json!([])) {
+        doc.as_object_mut().unwrap().remove("tested");
+    }
+    doc
+}
+
+/// Issue #484's byte-identical criterion: re-rendering an existing release
+/// reproduces the committed file. 22.23.4 is the named example; 26.12.1 is
+/// the newest line (libatomic and the alpine 3.24 cells).
+#[test]
+fn rescanning_a_cataloged_release_reproduces_its_file() {
+    let index = ToolIndex::from_path(&node_dir().join("index.json")).unwrap();
+    let available = index.available_versions();
+    for (version, expected_template) in [("22.23.4", "22.23.3"), ("26.12.1", "26.12.0")] {
+        let (from, rendered) = rerender(version, &available);
+        assert_eq!(from, expected_template, "{version}: template");
+        let committed = read_json(&node_dir().join("versions").join(format!("{version}.json")));
+        assert_eq!(without_empty_tested(rendered), committed, "{version}");
+    }
+}
+
+/// The reason templates are picked per line: node 26's arm64 tarball needs
+/// libatomic at runtime and 22's does not. A 22.x backport cloned from the
+/// newest file (26.x) would claim a dependency it doesn't have.
+#[test]
+fn a_backport_does_not_inherit_the_newest_lines_dependencies() {
+    let index = ToolIndex::from_path(&node_dir().join("index.json")).unwrap();
+    let from = template_for(&index.available_versions(), "22.23.5").unwrap();
+    assert!(from.starts_with("22."), "template {from}");
+
+    let template = read_json(&node_dir().join("versions").join(format!("{from}.json")));
+    let new = UpstreamVersion {
+        version: "22.23.5".to_string(),
+        released_at: Utc.with_ymd_and_hms(2026, 11, 1, 0, 0, 0).unwrap(),
+        channel: "stable".to_string(),
+    };
+    let rendered = render_version(&template, &from, &new, Utc::now());
+    let tools: Vec<String> = rendered["install_methods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|m| deps(m, "22.23.5").into_iter().map(|(t, _)| t))
+        .collect();
+    assert!(!tools.iter().any(|t| t == "libatomic"), "{tools:?}");
+    assert_node_shape(
+        &rendered,
+        "rendered node 22.23.5",
+        &["22.23.5", from.as_str()],
     );
 }
