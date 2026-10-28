@@ -95,7 +95,10 @@ impl Adapter for MyAdapter {
   newest active LTS). `None` leaves the index's value alone. It is written
   only alongside a scan that adds versions, and only if the version is
   cataloged once they are added — a held-back release never becomes the
-  default.
+  default. It also must be all-numeric (no `-rc1`) and never older than
+  the current default. A plan could still move it *forward* to any listed
+  version; delivery has no upstream feed to check that against, so it is
+  accepted risk, visible as a one-line `index.json` change in the PR.
 
 ### 2. Register it
 

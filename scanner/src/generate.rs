@@ -75,7 +75,15 @@ pub fn render_version(
 /// default before its version file exists. One older than the current
 /// default is ignored too: the value rides in the untrusted staging
 /// job's plan, and the delivering re-render can't tell a tampered choice
-/// from a real one, so the default may only ever move forward.
+/// from a real one, so the default may only ever move forward. A
+/// non-numeric choice (`24.0.0-rc1`) is ignored outright, since
+/// [`version_key`] can't order it.
+///
+/// A tampered *forward* move to a listed version is accepted risk: the
+/// token job has no upstream feed to check it against (an `lts` flag in
+/// the plan would be just as untrusted), and the target's version file
+/// already exists in the checkout, so the only effect is a one-line
+/// `index.json` change in the PR a human reviews.
 pub fn update_index(
     index: &mut ToolIndex,
     new_versions: &[String],
@@ -114,7 +122,7 @@ pub fn update_index(
             .any(|e| e.get("version").and_then(Value::as_str) == Some(dv));
         let current = obj.get("default_version").and_then(Value::as_str);
         let forward = current.is_none_or(|c| version_key(Some(dv)) >= version_key(Some(c)));
-        if listed && forward {
+        if listed && forward && is_numeric_version(dv) {
             obj.insert("default_version".into(), Value::String(dv.to_string()));
         }
     }
@@ -150,12 +158,20 @@ pub fn template_for(available: &[String], version: &str) -> Option<String> {
 }
 
 /// Sort key for a dotted numeric version: `1.9.0` < `1.10.0`. Non-numeric
-/// segments sort as 0, and a missing version sorts first.
+/// segments sort as 0 (`1.2.3-rc1` as `[1, 2, 0]`), and a missing version
+/// sorts first; [`is_numeric_version`] gates comparisons where that matters.
 pub(crate) fn version_key(v: Option<&str>) -> Vec<u64> {
     v.unwrap_or("")
         .split('.')
         .map(|p| p.parse().unwrap_or(0))
         .collect()
+}
+
+/// Every dot-separated segment is a non-empty run of ASCII digits, so
+/// [`version_key`] orders it exactly.
+fn is_numeric_version(v: &str) -> bool {
+    v.split('.')
+        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Walk every string in `value` and replace whole-string matches of
@@ -442,6 +458,32 @@ mod tests {
             at(2026, 11, 1),
         );
         assert_eq!(index.raw["default_version"], "24.22.1");
+    }
+
+    #[test]
+    fn update_index_refuses_a_pre_release_default() {
+        // `version_key` reads `24.22.2-rc1` as `[24, 22, 0]`; refused even
+        // though it is listed and would sort forward.
+        let mut index = index_with(&["22.23.4", "24.22.2-rc1"], "22.23.4");
+        update_index(
+            &mut index,
+            &[],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("24.22.2-rc1"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "22.23.4");
+    }
+
+    #[test]
+    fn is_numeric_version_needs_digit_only_segments() {
+        assert!(is_numeric_version("24.22.2"));
+        assert!(is_numeric_version("1.27"));
+        for v in ["24.22.2-rc1", "1..2", "1.2.", "", "v1.2.3"] {
+            assert!(!is_numeric_version(v), "{v:?}");
+        }
     }
 
     #[test]
