@@ -168,8 +168,10 @@ pub(crate) fn version_key(v: Option<&str>) -> Vec<u64> {
 }
 
 /// Every dot-separated segment is a run of ASCII digits that fits the
-/// `u64` [`version_key`] parses it into, so that key orders it exactly.
+/// `u64` [`version_key`] parses it into, so no segment silently keys as 0.
 /// The digit check is not redundant: `u64` parsing alone accepts `+1`.
+/// Spellings of one number still share a key (`1.02` and `1.2`); the
+/// value must also be listed, so it is never a version the catalog lacks.
 fn is_numeric_version(v: &str) -> bool {
     v.split('.')
         .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u64>().is_ok())
