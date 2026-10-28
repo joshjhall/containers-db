@@ -160,9 +160,11 @@ pub(super) fn check_additive(repo_root: &Path, plan: &Plan) -> Result<()> {
 
 /// Re-render the plan from this checkout and require the staged bytes to
 /// match exactly. A plan can then pick only *which* releases to add (and
-/// their dates), never what its files say: install URLs, checksums, and
-/// every index field come from the checkout's template. Same commit, same
-/// inputs, same code, so an untampered plan always matches.
+/// their dates) and which listed version becomes the default — never older
+/// than the current one (`generate::update_index`) — never what its files
+/// say: install URLs, checksums, and every other index field come from the
+/// checkout's template. Same commit, same inputs, same code, so an
+/// untampered plan always matches.
 pub(super) fn check_rerender(repo_root: &Path, plan: &Plan) -> Result<()> {
     let id = &plan.tool_id;
     let rendered = render_files(
@@ -274,6 +276,9 @@ impl Plan {
         let id = &self.tool_id;
         if let Kind::Backfill { from } = &self.kind {
             check_token(id, "backfill floor", from)?;
+        }
+        if let Some(dv) = &self.activity.default_version {
+            check_token(id, "default version", dv)?;
         }
         anyhow::ensure!(
             !self.new_versions.is_empty(),
@@ -492,7 +497,26 @@ pub(super) mod tests {
                 check_err(&p),
                 format!("plan for `rust`: backfill floor {v:?} is not a plain version")
             );
+            let mut p = plan();
+            p.activity.default_version = Some(v.into());
+            assert_eq!(
+                check_err(&p),
+                format!("plan for `rust`: default version {v:?} is not a plain version")
+            );
         }
+    }
+
+    #[test]
+    fn a_manifest_activity_without_default_version_still_parses() {
+        // Staged before the field existed.
+        let old = r#"{"score":"active","cadence_days":7,"signals":{}}"#;
+        let a: Activity = serde_json::from_str(old).unwrap();
+        assert_eq!(a.default_version, None);
+        assert!(
+            !serde_json::to_string(&a)
+                .unwrap()
+                .contains("default_version")
+        );
     }
 
     #[test]

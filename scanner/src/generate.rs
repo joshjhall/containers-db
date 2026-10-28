@@ -72,7 +72,10 @@ pub fn render_version(
 ///
 /// A `default_version` missing from `available[]` (after the merge) is
 /// ignored, so a release the adapter held back can never become the
-/// default before its version file exists.
+/// default before its version file exists. One older than the current
+/// default is ignored too: the value rides in the untrusted staging
+/// job's plan, and the delivering re-render can't tell a tampered choice
+/// from a real one, so the default may only ever move forward.
 pub fn update_index(
     index: &mut ToolIndex,
     new_versions: &[String],
@@ -109,7 +112,9 @@ pub fn update_index(
         let listed = available
             .iter()
             .any(|e| e.get("version").and_then(Value::as_str) == Some(dv));
-        if listed {
+        let current = obj.get("default_version").and_then(Value::as_str);
+        let forward = current.is_none_or(|c| version_key(Some(dv)) >= version_key(Some(c)));
+        if listed && forward {
             obj.insert("default_version".into(), Value::String(dv.to_string()));
         }
     }
@@ -403,6 +408,40 @@ mod tests {
             at(2026, 11, 1),
         );
         assert_eq!(index.raw["default_version"], "22.23.4");
+    }
+
+    #[test]
+    fn update_index_never_moves_the_default_backwards() {
+        // A listed, plain, but older choice — what a tampered plan would
+        // use to point the catalog at an EOL line.
+        let mut index = index_with(&["20.19.0", "22.23.4", "24.22.1"], "22.23.4");
+        update_index(
+            &mut index,
+            &["24.22.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("20.19.0"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "22.23.4");
+    }
+
+    #[test]
+    fn update_index_moves_the_default_forward_to_an_already_listed_version() {
+        // The first post-merge node scan: the newest LTS release is already
+        // cataloged, and this call adds an unrelated newer line.
+        let mut index = index_with(&["22.23.4", "24.22.1", "26.12.1"], "22.23.4");
+        update_index(
+            &mut index,
+            &["26.12.2".to_string()],
+            &ActivitySignals::default(),
+            Score::VeryActive,
+            1,
+            Some("24.22.1"),
+            at(2026, 11, 1),
+        );
+        assert_eq!(index.raw["default_version"], "24.22.1");
     }
 
     fn owned(vs: &[&str]) -> Vec<String> {
