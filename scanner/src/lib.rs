@@ -842,8 +842,10 @@ mod tests {
     /// With no TLS roots to load, building the HTTP clients fails, and that
     /// must reach the caller as an error rather than a panic (issue #507).
     /// `SSL_CERT_FILE` naming an empty file stands in for a host without
-    /// `ca-certificates`: it replaces the system store with zero roots.
+    /// `ca-certificates`: it replaces the system store with zero roots. Linux
+    /// only: elsewhere the platform verifier does not load roots at build time.
     #[test]
+    #[cfg(target_os = "linux")]
     fn missing_tls_roots_are_an_error_not_a_panic() {
         // Contrast: with the host's roots the same calls succeed, so the child
         // cannot pass on a client that never builds.
@@ -868,8 +870,26 @@ mod tests {
         }
         let hint = "install ca-certificates or set SSL_CERT_FILE/SSL_CERT_DIR";
 
+        // The hint is a fixed context string, so also require the verifier's
+        // own cause underneath it: the failure really is the missing roots.
         let err = adapters::http_client(adapters::DEFAULT_REQUEST_TIMEOUT).unwrap_err();
         assert!(format!("{err}").contains(hint), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("No CA certificates were loaded from the system"),
+            "{err:#}"
+        );
+
+        // `register_all` stops at the first adapter, so check each one's
+        // constructor on its own.
+        for (name, built) in [
+            ("go", adapters::go::GoAdapter::new().map(drop)),
+            ("node", adapters::node::NodeAdapter::new().map(drop)),
+            ("rust", adapters::rust::RustAdapter::new().map(drop)),
+        ] {
+            let err = built.unwrap_err();
+            assert!(format!("{err}").contains(hint), "{name}: {err:#}");
+        }
+
         let Err(err) = adapters::register_all() else {
             panic!("register_all built clients with no TLS roots");
         };
