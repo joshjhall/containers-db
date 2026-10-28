@@ -124,11 +124,13 @@ fn mode<'a>(args: &RunArgs, staging: &'a mut Option<Manifest>) -> Mode<'a> {
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let repo_root = std::env::current_dir()?;
-    let registry = adapters::register_all();
     let now = Utc::now();
 
     match cli.command {
+        // Only the scanning commands build the registry: its HTTP clients need
+        // the OS trust store, which an offline `deliver` should not (#507).
         Command::Due { run } => {
+            let registry = adapters::register_all()?;
             let mut staging = stage::start(&repo_root, &run)?;
             let due_tools = due::find_due_tools(&repo_root, now)?;
             if due_tools.is_empty() {
@@ -158,6 +160,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             stage::finish(&run, staging)?;
         }
         Command::Tool { id, run } => {
+            let registry = adapters::register_all()?;
             let mut staging = stage::start(&repo_root, &run)?;
             let adapter = registry
                 .get(&id)
@@ -177,6 +180,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             stage::finish(&run, staging)?;
         }
         Command::Backfill { id, from, run } => {
+            let registry = adapters::register_all()?;
             let mut staging = stage::start(&repo_root, &run)?;
             let adapter = registry
                 .get(&id)
@@ -803,10 +807,16 @@ mod tests {
 
     /// [`run_without_path`], but with `PATH` set to `path`.
     fn run_with_path(name: &str, path: &std::path::Path) {
+        run_with_env(name, path, &[]);
+    }
+
+    /// [`run_with_path`], plus the extra `envs`.
+    fn run_with_env(name: &str, path: &std::path::Path, envs: &[(&str, &std::path::Path)]) {
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--ignored", "--test-threads=1"])
             .env_clear()
             .env("PATH", path)
+            .envs(envs.iter().copied())
             .env(CHILD_MARKER, "1")
             .output()
             .unwrap();
@@ -827,6 +837,97 @@ mod tests {
     #[test]
     fn stage_refuses_to_start_without_ajv() {
         run_without_path("tests::no_path_stage_start_needs_ajv");
+    }
+
+    /// With no TLS roots to load, building the HTTP clients fails, and that
+    /// must reach the caller as an error rather than a panic (issue #507).
+    /// `SSL_CERT_FILE` naming an empty file stands in for a host without
+    /// `ca-certificates`: it replaces the system store with zero roots. Linux
+    /// only: elsewhere the platform verifier does not load roots at build time.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn missing_tls_roots_are_an_error_not_a_panic() {
+        // Contrast: with the host's roots the same calls succeed, so the child
+        // cannot pass on a client that never builds.
+        adapters::http_client(adapters::DEFAULT_REQUEST_TIMEOUT).unwrap();
+        adapters::register_all().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty.pem");
+        std::fs::write(&empty, "").unwrap();
+        run_with_env(
+            "tests::no_roots_client_build_fails_cleanly",
+            dir.path(),
+            &[("SSL_CERT_FILE", &empty)],
+        );
+    }
+
+    #[test]
+    #[ignore = "run by missing_tls_roots_are_an_error_not_a_panic"]
+    fn no_roots_client_build_fails_cleanly() {
+        if !in_child() {
+            return;
+        }
+        let hint = "install ca-certificates or set SSL_CERT_FILE/SSL_CERT_DIR";
+
+        // The hint is a fixed context string, so also require the verifier's
+        // own cause underneath it: the failure really is the missing roots.
+        let err = adapters::http_client(adapters::DEFAULT_REQUEST_TIMEOUT).unwrap_err();
+        assert!(format!("{err}").contains(hint), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("No CA certificates were loaded from the system"),
+            "{err:#}"
+        );
+
+        // `register_all` stops at the first adapter, so check each one's
+        // constructor on its own.
+        for (name, built) in [
+            ("go", adapters::go::GoAdapter::new().map(drop)),
+            ("node", adapters::node::NodeAdapter::new().map(drop)),
+            ("rust", adapters::rust::RustAdapter::new().map(drop)),
+        ] {
+            let err = built.unwrap_err();
+            assert!(format!("{err}").contains(hint), "{name}: {err:#}");
+        }
+
+        let Err(err) = adapters::register_all() else {
+            panic!("register_all built clients with no TLS roots");
+        };
+        assert!(format!("{err}").contains(hint), "{err:#}");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        // Each scanning command builds the registry first, before any repo I/O.
+        for argv in [
+            &["scanner", "due", "--dry-run"][..],
+            &["scanner", "tool", "rust", "--dry-run"],
+            &[
+                "scanner",
+                "backfill",
+                "rust",
+                "--from",
+                "1.0.0",
+                "--dry-run",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(argv).unwrap();
+            let err = rt.block_on(run(cli)).unwrap_err();
+            assert!(format!("{err}").contains(hint), "{argv:?}: {err:#}");
+        }
+
+        // `deliver` makes no requests, so it gets past the registry and fails
+        // on the missing plan instead.
+        let dir = tempfile::tempdir().unwrap();
+        let plan = dir.path().join("missing-plan.json");
+        let deliver =
+            Cli::try_parse_from(["scanner", "deliver", "--plan", plan.to_str().unwrap()]).unwrap();
+        let err = format!("{:#}", rt.block_on(run(deliver)).unwrap_err());
+        assert!(
+            err.starts_with(&format!("reading plan {}", plan.display())),
+            "{err}"
+        );
+        assert!(!err.contains(hint), "{err}");
     }
 
     #[test]

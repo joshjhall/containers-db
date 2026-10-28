@@ -68,6 +68,7 @@ async fn fetch(feed: Value) -> AdapterResult {
         .mount(&server)
         .await;
     NodeAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap()
@@ -248,6 +249,7 @@ async fn ninety_day_window_is_by_date_whatever_the_scan_time() {
     let late = now() + Duration::hours(23) + Duration::minutes(59);
 
     let result = NodeAdapter::with_fixed_now(server.uri(), late)
+        .unwrap()
         .fetch(&node_index())
         .await
         .unwrap();

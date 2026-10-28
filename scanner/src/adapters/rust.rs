@@ -40,20 +40,14 @@ pub struct RustAdapter {
     timeout: StdDuration,
 }
 
-impl Default for RustAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RustAdapter {
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         Self::with_api_base(DEFAULT_API_BASE)
     }
 
     /// Construct an adapter pointed at a custom API base — used by
     /// `wiremock`-based integration tests.
-    pub fn with_api_base(api_base: impl Into<String>) -> Self {
+    pub fn with_api_base(api_base: impl Into<String>) -> anyhow::Result<Self> {
         Self::build(api_base, None, DEFAULT_REQUEST_TIMEOUT)
     }
 
@@ -61,14 +55,14 @@ impl RustAdapter {
     /// instant. Test-only: lets a test place a release at *exactly*
     /// `now - 90 days` and assert the window cutoff to the second, rather than
     /// inferring the `>=` comparison from a ±5-minute margin (issue #56).
-    pub fn with_fixed_now(api_base: impl Into<String>, now: DateTime<Utc>) -> Self {
+    pub fn with_fixed_now(api_base: impl Into<String>, now: DateTime<Utc>) -> anyhow::Result<Self> {
         Self::build(api_base, Some(now), DEFAULT_REQUEST_TIMEOUT)
     }
 
     /// Like `with_api_base`, but with a custom request timeout. Test-only:
     /// lets a test drive a stalled upstream into the timeout path in
     /// milliseconds instead of waiting out `DEFAULT_REQUEST_TIMEOUT`.
-    pub fn with_timeout(api_base: impl Into<String>, timeout: StdDuration) -> Self {
+    pub fn with_timeout(api_base: impl Into<String>, timeout: StdDuration) -> anyhow::Result<Self> {
         Self::build(api_base, None, timeout)
     }
 
@@ -76,14 +70,14 @@ impl RustAdapter {
         api_base: impl Into<String>,
         now_override: Option<DateTime<Utc>>,
         timeout: StdDuration,
-    ) -> Self {
-        Self {
-            client: http_client(timeout),
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            client: http_client(timeout)?,
             api_base: api_base.into(),
             now_override,
             #[cfg(test)]
             timeout,
-        }
+        })
     }
 }
 
@@ -274,12 +268,14 @@ mod tests {
     fn production_constructors_use_the_default_request_timeout() {
         let now = Utc::now();
         for (name, adapter) in [
-            ("new", RustAdapter::new()),
-            ("default", RustAdapter::default()),
-            ("with_api_base", RustAdapter::with_api_base("http://x")),
+            ("new", RustAdapter::new().unwrap()),
+            (
+                "with_api_base",
+                RustAdapter::with_api_base("http://x").unwrap(),
+            ),
             (
                 "with_fixed_now",
-                RustAdapter::with_fixed_now("http://x", now),
+                RustAdapter::with_fixed_now("http://x", now).unwrap(),
             ),
         ] {
             assert_eq!(adapter.timeout, DEFAULT_REQUEST_TIMEOUT, "{name}");

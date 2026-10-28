@@ -87,6 +87,7 @@ async fn returns_stable_versions_with_prefix_stripped_and_history_dates() {
     .await;
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&go_index())
         .await
         .unwrap();
@@ -130,6 +131,7 @@ async fn excludes_prereleases_unstable_and_non_semver_entries() {
     .await;
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&go_index())
         .await
         .unwrap();
@@ -155,6 +157,7 @@ async fn undated_same_day_sibling_holds_back_every_new_release() {
     let index = go_index_with(&["1.26.10", "1.27.3"]);
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&index)
         .await
         .unwrap();
@@ -186,6 +189,7 @@ async fn held_back_releases_land_together_once_both_are_dated() {
     let index = go_index_with(&["1.26.10", "1.27.3"]);
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&index)
         .await
         .unwrap();
@@ -211,6 +215,7 @@ async fn permanently_undated_historical_gap_does_not_hold_back() {
     let index = go_index_with(&["1.26.10", "1.27.3"]);
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&index)
         .await
         .unwrap();
@@ -234,6 +239,7 @@ async fn undated_new_minor_holds_back_its_patch_sibling() {
     let index = go_index_with(&["1.27.3"]);
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&index)
         .await
         .unwrap();
@@ -258,6 +264,7 @@ async fn malformed_cataloged_version_is_ignored_not_a_panic() {
     let index = go_index_with(&["1", "1.27", "garbage", "1.26.10", "1.27.3"]);
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&index)
         .await
         .unwrap();
@@ -279,6 +286,7 @@ async fn undated_release_with_empty_catalog_holds_back() {
     .await;
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&go_index_with(&[]))
         .await
         .unwrap();
@@ -298,6 +306,7 @@ async fn feed_entry_without_stable_flag_is_excluded() {
     .await;
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&go_index())
         .await
         .unwrap();
@@ -338,6 +347,7 @@ async fn parses_an_excerpt_of_the_real_history_page() {
     .await;
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&go_index_with(&["1.27.0"]))
         .await
         .unwrap();
@@ -385,6 +395,7 @@ async fn ninety_day_window_includes_edge_and_excludes_day_before() {
     .await;
 
     let result = GoAdapter::with_fixed_now(server.uri(), now())
+        .unwrap()
         .fetch(&go_index())
         .await
         .unwrap();
@@ -416,6 +427,7 @@ async fn ninety_day_window_is_by_date_whatever_the_scan_time() {
     let late = now() + Duration::hours(23) + Duration::minutes(59);
 
     let result = GoAdapter::with_fixed_now(server.uri(), late)
+        .unwrap()
         .fetch(&go_index())
         .await
         .unwrap();

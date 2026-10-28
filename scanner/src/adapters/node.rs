@@ -53,32 +53,29 @@ pub struct NodeAdapter {
     timeout: std::time::Duration,
 }
 
-impl Default for NodeAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl NodeAdapter {
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         Self::with_base(DEFAULT_BASE)
     }
 
     /// Construct an adapter pointed at a custom nodejs.org base — used by
     /// `wiremock`-based integration tests.
-    pub fn with_base(base: impl Into<String>) -> Self {
+    pub fn with_base(base: impl Into<String>) -> anyhow::Result<Self> {
         Self::build(base, None, DEFAULT_REQUEST_TIMEOUT)
     }
 
     /// Like `with_base`, but pins "now" so tests can place a release at
     /// exactly `now - 90 days`.
-    pub fn with_fixed_now(base: impl Into<String>, now: DateTime<Utc>) -> Self {
+    pub fn with_fixed_now(base: impl Into<String>, now: DateTime<Utc>) -> anyhow::Result<Self> {
         Self::build(base, Some(now), DEFAULT_REQUEST_TIMEOUT)
     }
 
     /// Like `with_base`, but with a custom request timeout. Test-only (see
     /// `RustAdapter::with_timeout`).
-    pub fn with_timeout(base: impl Into<String>, timeout: std::time::Duration) -> Self {
+    pub fn with_timeout(
+        base: impl Into<String>,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<Self> {
         Self::build(base, None, timeout)
     }
 
@@ -86,14 +83,14 @@ impl NodeAdapter {
         base: impl Into<String>,
         now_override: Option<DateTime<Utc>>,
         timeout: std::time::Duration,
-    ) -> Self {
-        Self {
-            client: http_client(timeout),
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            client: http_client(timeout)?,
             base: base.into(),
             now_override,
             #[cfg(test)]
             timeout,
-        }
+        })
     }
 }
 
@@ -254,12 +251,11 @@ mod tests {
     fn production_constructors_use_the_default_request_timeout() {
         let now = Utc::now();
         for (name, adapter) in [
-            ("new", NodeAdapter::new()),
-            ("default", NodeAdapter::default()),
-            ("with_base", NodeAdapter::with_base("http://x")),
+            ("new", NodeAdapter::new().unwrap()),
+            ("with_base", NodeAdapter::with_base("http://x").unwrap()),
             (
                 "with_fixed_now",
-                NodeAdapter::with_fixed_now("http://x", now),
+                NodeAdapter::with_fixed_now("http://x", now).unwrap(),
             ),
         ] {
             assert_eq!(adapter.timeout, DEFAULT_REQUEST_TIMEOUT, "{name}");
