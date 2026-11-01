@@ -253,5 +253,95 @@
     }
   ],
   "tool": "node",
-  "version": "22.9.0"
+  "version": "22.9.0",
+  "tested": [
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "amd64",
+      "tested_at": "2026-11-01T21:34:51.157513837Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41351441616",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
+      "image_digest": "sha256:d8d9e5c46133deaca1ca616393c5a0b2c9bf2833d7c928b1f0f2fc5fc6a458a7",
+      "duration_seconds": 0.00044693,
+      "error_class": "infra"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "arm64",
+      "tested_at": "2026-11-01T21:35:18.117102596Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41351441616",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-arm64",
+      "image_digest": "sha256:0d9db4d9a6a21479e896d2cc38166d98a1649e88f9753ee5b9c48d1a9070d3e2",
+      "duration_seconds": 0.000388011,
+      "error_class": "infra"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "amd64",
+      "tested_at": "2026-11-01T21:35:11.09006709Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41351441616",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-amd64",
+      "image_digest": "sha256:0ad08080544a9155998623a76424cebf1c913a4481782408a34b38612830e168",
+      "duration_seconds": 0.000262639,
+      "error_class": "infra"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "arm64",
+      "tested_at": "2026-11-01T21:35:10.257670864Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41351441616",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-arm64",
+      "image_digest": "sha256:8cd4e3f30fadf5799f09ad0b7024416ecc73d00dbe550b642692f773efe4dcea",
+      "duration_seconds": 0.000305128,
+      "error_class": "infra"
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-01T21:35:18.101443007Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41351441616",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:df94e32627701dbbd77898cbfb64f62598680980858da37811a46976f935a403",
+      "duration_seconds": 5.227281859,
+      "version_output": "v22.9.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "arm64",
+      "tested_at": "2026-11-01T21:35:26.957838287Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41351441616",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-arm64",
+      "image_digest": "sha256:9a722265cafd680c4cae0c3f28c3ff9d932f63bdb8a00cb7987e461832853913",
+      "duration_seconds": 5.045793557,
+      "version_output": "v22.9.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        }
+      ],
+      "verification_tier": 1
+    }
+  ]
 }
