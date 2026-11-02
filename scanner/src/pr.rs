@@ -461,17 +461,17 @@ fn commits_verified(repo_root: &Path, pr: &OpenPr) -> Result<bool> {
     parse_verified(&out, &pr.head_oid)
 }
 
-/// Parse `<sha> <verified>` lines, one per commit in PR order, across
-/// every page. Verified only when every line says `true`. An error, so the
+/// Parse `<sha> <verified>` lines, one per commit, across every page. Verified only when every line says `true`. An error, so the
 /// caller fails toward a regen, when:
 /// - the listing is empty, or a line is not `<sha> true|false`;
 /// - it reaches [`PR_COMMITS_LIMIT`] — unsigned commits past the cap
 ///   would go unseen and read as a wrong skip;
-/// - its last commit is not `head_oid` — the branch moved since the PRs
-///   were listed, so this answer describes a head `decide` never saw.
+/// - `head_oid` is not among its commits — the branch was replaced since
+///   the PRs were listed, so this answer describes a head `decide` never
+///   saw. Membership, not position: the endpoint's order is undocumented.
 fn parse_verified(out: &str, head_oid: &str) -> Result<bool> {
     let mut all = true;
-    let mut last = None;
+    let mut has_head = false;
     let mut count = 0;
     for line in out.lines() {
         let (sha, verified) = line
@@ -483,17 +483,17 @@ fn parse_verified(out: &str, head_oid: &str) -> Result<bool> {
             "false" => all = false,
             other => anyhow::bail!("unexpected commit verification value {other:?}"),
         }
-        last = Some(sha);
+        has_head |= sha == head_oid;
         count += 1;
     }
-    let last = last.context("no commits listed for the PR")?;
+    anyhow::ensure!(count > 0, "no commits listed for the PR");
     anyhow::ensure!(
         count < PR_COMMITS_LIMIT,
         "PR lists {count} commits, at the {PR_COMMITS_LIMIT}-commit API cap; refusing to trust a possibly truncated listing"
     );
     anyhow::ensure!(
-        last == head_oid,
-        "PR head moved since listing ({head_oid} listed, {last} now)"
+        has_head,
+        "PR head {head_oid} is not among its listed commits; the branch moved since listing"
     );
     Ok(all)
 }
@@ -642,7 +642,7 @@ mod tests {
         );
     }
 
-    /// `<sha> <verified>` lines for commits `c0..`, the last being `head`.
+    /// `<sha> <verified>` lines for commits `c0..`.
     fn commits(verified: &[bool]) -> String {
         verified
             .iter()
@@ -687,12 +687,19 @@ mod tests {
         assert!(format!("{err:#}").contains("commit API cap"), "got {err:#}");
     }
 
-    /// A push between listing and lookup: the answer describes a head
-    /// `decide` never saw, so it is refused rather than trusted.
+    /// A force-push between listing and lookup: the answer describes a
+    /// head `decide` never saw, so it is refused rather than trusted.
     #[test]
-    fn parse_verified_refuses_a_moved_head() {
-        let err = parse_verified(&commits(&[true, true]), "c0").unwrap_err();
-        assert!(format!("{err:#}").contains("head moved"), "got {err:#}");
+    fn parse_verified_refuses_a_head_not_in_the_listing() {
+        let err = parse_verified(&commits(&[true, true]), "gone").unwrap_err();
+        assert!(format!("{err:#}").contains("branch moved"), "got {err:#}");
+    }
+
+    /// The endpoint's order is undocumented, so the head need not be last.
+    #[test]
+    fn parse_verified_accepts_the_head_anywhere_in_the_listing() {
+        assert!(parse_verified(&commits(&[true, true, true]), "c0").unwrap());
+        assert!(!parse_verified(&commits(&[true, false, true]), "c0").unwrap());
     }
 
     #[test]
