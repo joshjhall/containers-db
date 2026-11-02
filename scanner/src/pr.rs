@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::activity::{ActivitySignals, Score};
-use crate::dedup::{self, Decision, OpenPr};
+use crate::dedup::{self, Decision, OpenPr, RegenReason};
 use crate::publish::{self, GhRemote, Remote, Target};
 
 /// Branch name for a new scan PR: `scan/<tool>/<YYYY-MM-DD>`. An open PR
@@ -172,7 +172,8 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         !new_versions.is_empty(),
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
     );
-    let open = list_open_prs(repo_root)?;
+    let mut open = list_open_prs(repo_root)?;
+    mark_candidate_verified(repo_root, tool_id, prefix, &mut open);
     deliver_with(
         repo_root,
         tool_id,
@@ -217,7 +218,18 @@ fn deliver_with(
             discard_generated(repo_root, tool_id)?;
             return Ok(Delivery::Skipped(*pr));
         }
-        Decision::UpdateExisting(pr) => {
+        Decision::UpdateExisting { pr, reason } => {
+            let n = pr.number;
+            match reason {
+                RegenReason::MissingVersions => {
+                    println!(
+                        "scanner: {tool_id}: open scan PR #{n} is missing versions; regenerating"
+                    )
+                }
+                RegenReason::UnsignedHead => println!(
+                    "scanner: {tool_id}: open scan PR #{n} covers the versions but its head is unsigned; regenerating"
+                ),
+            }
             on_branch_then_return(repo_root, || update(pr).map(Delivery::Updated))
         }
         Decision::OpenNew => on_branch_then_return(repo_root, || open().map(Delivery::Opened)),
@@ -390,6 +402,54 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
     Ok(prs)
 }
 
+/// Look up whether the head of the PR [`dedup::decide`] will act on is
+/// GitHub-verified, and record it on that row. Only the candidate needs
+/// it, so this is one API call per tool rather than one per open PR.
+///
+/// A failed lookup leaves the row unverified: a redundant regen costs one
+/// signed commit, a wrong skip strands the release (#529).
+fn mark_candidate_verified(repo_root: &Path, tool_id: &str, prefix: &str, open: &mut [OpenPr]) {
+    let Some(number) = dedup::candidate(prefix, open).map(|pr| pr.number) else {
+        return;
+    };
+    let Some(pr) = open.iter_mut().find(|pr| pr.number == number) else {
+        return;
+    };
+    pr.head_verified = match head_verified(repo_root, &pr.head_oid) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "scanner: {tool_id}: could not check the signature of PR #{number}'s head; treating it as unsigned: {e:#}"
+            );
+            false
+        }
+    };
+}
+
+/// Whether commit `oid` carries a GitHub-verified signature.
+fn head_verified(repo_root: &Path, oid: &str) -> Result<bool> {
+    let out = gh(
+        repo_root,
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/commits/{oid}"),
+            "--jq",
+            ".commit.verification.verified",
+        ],
+    )?;
+    parse_verified(&out)
+}
+
+/// Parse the `--jq .commit.verification.verified` output. Anything but a
+/// bare `true`/`false` is an error, so the caller fails toward a regen.
+fn parse_verified(out: &str) -> Result<bool> {
+    match out.trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => anyhow::bail!("unexpected commit verification value {other:?}"),
+    }
+}
+
 /// Regenerate onto an existing PR's branch: reset it to the current HEAD
 /// (the run's base + regenerated files — [`deliver`] returns to the base
 /// after each tool), commit, replace the branch with the signed commit,
@@ -532,6 +592,15 @@ mod tests {
             format!("{err:#}").starts_with("git rev-parse HEAD failed:"),
             "got {err:#}"
         );
+    }
+
+    #[test]
+    fn parse_verified_accepts_only_bare_booleans() {
+        assert!(parse_verified("true\n").unwrap());
+        assert!(!parse_verified("false\n").unwrap());
+        for bad in ["", "null\n", "True", "yes"] {
+            assert!(parse_verified(bad).is_err(), "{bad:?} must be an error");
+        }
     }
 
     #[test]
@@ -778,6 +847,7 @@ mod tests {
             head_oid: "abc".to_string(),
             body: String::new(),
             cross_repo: false,
+            head_verified: false,
         }
     }
 
@@ -816,7 +886,10 @@ mod tests {
         let dir = repo_with_generated_rust();
         let p = dir.path();
         let pr = open_pr_fixture(398, "scan/rust/2026-10-15");
-        let decision = Decision::UpdateExisting(pr.clone());
+        let decision = Decision::UpdateExisting {
+            pr: pr.clone(),
+            reason: RegenReason::UnsignedHead,
+        };
         let d = deliver_with(
             p,
             "rust",
