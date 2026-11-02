@@ -173,7 +173,9 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
     );
     let mut open = list_open_prs(repo_root)?;
-    mark_candidate_verified(repo_root, tool_id, prefix, &mut open);
+    mark_candidate_verified(tool_id, prefix, &mut open, |oid| {
+        head_verified(repo_root, oid)
+    });
     deliver_with(
         repo_root,
         tool_id,
@@ -407,15 +409,22 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 /// it, so this is one API call per tool rather than one per open PR.
 ///
 /// A failed lookup leaves the row unverified: a redundant regen costs one
-/// signed commit, a wrong skip strands the release (#529).
-fn mark_candidate_verified(repo_root: &Path, tool_id: &str, prefix: &str, open: &mut [OpenPr]) {
+/// signed commit, a wrong skip strands the release (#529). `lookup` is
+/// [`head_verified`] in production, injected so the fail-closed path is
+/// testable without `gh`.
+fn mark_candidate_verified(
+    tool_id: &str,
+    prefix: &str,
+    open: &mut [OpenPr],
+    lookup: impl FnOnce(&str) -> Result<bool>,
+) {
     let Some(number) = dedup::candidate(prefix, open).map(|pr| pr.number) else {
         return;
     };
     let Some(pr) = open.iter_mut().find(|pr| pr.number == number) else {
         return;
     };
-    pr.head_verified = match head_verified(repo_root, &pr.head_oid) {
+    pr.head_verified = match lookup(&pr.head_oid) {
         Ok(v) => v,
         Err(e) => {
             eprintln!(
@@ -601,6 +610,71 @@ mod tests {
         for bad in ["", "null\n", "True", "yes"] {
             assert!(parse_verified(bad).is_err(), "{bad:?} must be an error");
         }
+    }
+
+    /// Two matching scan PRs plus a fork; only the oldest non-fork row is
+    /// the candidate, so only its oid is looked up and only it is marked.
+    fn listing() -> Vec<OpenPr> {
+        let mut fork = open_pr_fixture(5, "scan/rust/evil");
+        fork.cross_repo = true;
+        vec![
+            fork,
+            OpenPr {
+                head_oid: "newer".into(),
+                ..open_pr_fixture(402, "scan/rust/2026-10-17")
+            },
+            OpenPr {
+                head_oid: "oldest".into(),
+                ..open_pr_fixture(398, "scan/rust/2026-10-16")
+            },
+        ]
+    }
+
+    #[test]
+    fn mark_candidate_verified_marks_only_the_candidate() {
+        let mut open = listing();
+        let mut asked = None;
+        mark_candidate_verified("rust", "scan/rust/", &mut open, |oid| {
+            asked = Some(oid.to_string());
+            Ok(true)
+        });
+        assert_eq!(asked.as_deref(), Some("oldest"));
+        let marked: Vec<u64> = open
+            .iter()
+            .filter(|p| p.head_verified)
+            .map(|p| p.number)
+            .collect();
+        assert_eq!(marked, vec![398]);
+    }
+
+    /// #529: a lookup that errors must leave the candidate unverified, so
+    /// `decide` regenerates it rather than skipping it.
+    #[test]
+    fn mark_candidate_verified_fails_closed_on_lookup_error() {
+        let mut open = listing();
+        for pr in &mut open {
+            pr.head_verified = true;
+        }
+        mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
+            anyhow::bail!("gh api: 502")
+        });
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(!candidate.head_verified);
+        assert!(
+            open.iter()
+                .filter(|p| p.number != 398)
+                .all(|p| p.head_verified),
+            "non-candidate rows must be left untouched"
+        );
+    }
+
+    #[test]
+    fn mark_candidate_verified_skips_lookup_without_a_candidate() {
+        let mut open = vec![open_pr_fixture(10, "scan/node/2026-10-16")];
+        mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
+            panic!("no candidate: lookup must not run")
+        });
+        assert!(!open[0].head_verified);
     }
 
     #[test]

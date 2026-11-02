@@ -380,6 +380,20 @@ mod tests {
     }
 
     #[test]
+    fn candidate_is_the_oldest_non_fork_prefix_match() {
+        let mut fork = pr(5, "scan/rust/evil", &[]);
+        fork.cross_repo = true;
+        let prs = [
+            fork,
+            pr(402, "scan/rust/2026-10-17", &[]),
+            pr(398, "scan/rust/2026-10-16", &[]),
+            pr(300, "scan/rust-dev/2026-10-15", &[]),
+        ];
+        assert_eq!(candidate("scan/rust/", &prs).map(|p| p.number), Some(398));
+        assert_eq!(candidate("scan/go/", &prs), None);
+    }
+
+    #[test]
     fn truncation_check_rejects_a_full_listing() {
         assert!(check_not_truncated(999, 1000).is_ok());
         assert!(check_not_truncated(1000, 1000).is_err());
