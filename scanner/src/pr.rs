@@ -466,9 +466,12 @@ fn commits_verified(repo_root: &Path, pr: &OpenPr) -> Result<bool> {
 /// - the listing is empty, or a line is not `<sha> true|false`;
 /// - it reaches [`PR_COMMITS_LIMIT`] — unsigned commits past the cap
 ///   would go unseen and read as a wrong skip;
-/// - `head_oid` is not among its commits — the branch was replaced since
-///   the PRs were listed, so this answer describes a head `decide` never
-///   saw. Membership, not position: the endpoint's order is undocumented.
+/// - `head_oid` is not among its commits — the branch was rewritten or
+///   replaced since the PRs were listed, so this answer describes commits
+///   `decide` never saw. Membership, not position: the endpoint's order is
+///   undocumented. A fast-forward since listing still contains `head_oid`
+///   and passes; that is safe, because the answer then covers the newer
+///   commits too, and a regen's lease on `head_oid` rejects a stale push.
 fn parse_verified(out: &str, head_oid: &str) -> Result<bool> {
     let mut all = true;
     let mut has_head = false;
@@ -659,8 +662,15 @@ mod tests {
         // A signed fixup on top of an unsigned commit is still unmergeable.
         assert!(!parse_verified(&commits(&[false, true]), "c1").unwrap());
         assert!(!parse_verified(&commits(&[true, false, true]), "c2").unwrap());
+        // The empty-listing guard is checked by its own message: the head
+        // check would also reject an empty listing, masking its removal.
+        let err = parse_verified("", "c0").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("no commits listed"),
+            "got {err:#}"
+        );
+        // A blank line is malformed, not an empty listing.
         for bad in [
-            "",
             "\n",
             "c0 null\n",
             "c0 True\n",
