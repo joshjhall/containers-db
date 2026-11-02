@@ -251,5 +251,47 @@
     }
   ],
   "tool": "node",
-  "version": "24.18.1"
+  "version": "24.18.1",
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-02T20:28:07.099863199Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41477908491",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:df94e32627701dbbd77898cbfb64f62598680980858da37811a46976f935a403",
+      "duration_seconds": 7.000688975,
+      "version_output": "v24.18.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "arm64",
+      "tested_at": "2026-11-02T20:24:02.680092537Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41477908491",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-arm64",
+      "image_digest": "sha256:9a722265cafd680c4cae0c3f28c3ff9d932f63bdb8a00cb7987e461832853913",
+      "duration_seconds": 5.769440144,
+      "version_output": "v24.18.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        }
+      ],
+      "verification_tier": 1
+    }
+  ]
 }
