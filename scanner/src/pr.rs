@@ -957,26 +957,29 @@ mod tests {
 
     #[test]
     fn deliver_update_passes_the_pr_and_returns() {
-        let dir = repo_with_generated_rust();
-        let p = dir.path();
-        let pr = open_pr_fixture(398, "scan/rust/2026-10-15");
-        let decision = Decision::UpdateExisting {
-            pr: pr.clone(),
-            reason: RegenReason::UnsignedHead,
-        };
-        let d = deliver_with(
-            p,
-            "rust",
-            &decision,
-            |got| {
-                assert_eq!(got, &pr);
-                commit_on(p, &got.head)
-            },
-            never_open,
-        )
-        .unwrap();
-        assert!(matches!(d, Delivery::Updated(_)));
-        assert_clean_at_main(p);
+        // Both regen reasons take the same update path; only the log differs.
+        for reason in [RegenReason::MissingVersions, RegenReason::UnsignedHead] {
+            let dir = repo_with_generated_rust();
+            let p = dir.path();
+            let pr = open_pr_fixture(398, "scan/rust/2026-10-15");
+            let decision = Decision::UpdateExisting {
+                pr: pr.clone(),
+                reason,
+            };
+            let d = deliver_with(
+                p,
+                "rust",
+                &decision,
+                |got| {
+                    assert_eq!(got, &pr);
+                    commit_on(p, &got.head)
+                },
+                never_open,
+            )
+            .unwrap();
+            assert!(matches!(d, Delivery::Updated(_)), "{reason:?}");
+            assert_clean_at_main(p);
+        }
     }
 
     #[test]
