@@ -204,8 +204,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history needed because the scanner creates branches
-          # and pushes commits back via `git`. Same commit as `stage`
+          # Full history needed because the scanner builds its scan
+          # commits locally before publishing them through the GitHub API
+          # as signed commits (#526). Same commit as `stage`
           # (`github.sha`); `scanner deliver` refuses any other.
           fetch-depth: 0
           # Fetch with the default read-only token and leave no
@@ -214,8 +215,8 @@ jobs:
           persist-credentials: false
 
       - name: Configure git identity
-        # Required for the scanner's `git commit` step. The bot identity
-        # makes scan-authored commits distinguishable from human ones.
+        # Required for the scanner's local `git commit`. That commit is
+        # never pushed: GitHub creates and signs the published one (#526).
         run: |
           git config user.name "containers-db scanner"
           git config user.email "containers-db-scanner@users.noreply.github.com"
@@ -245,18 +246,17 @@ jobs:
           SCANNER_SHA256: ${{ needs.build.outputs.scanner_sha256 }}
           PLAN: ${{ runner.temp }}/plan/plan.json
           # Command-line git config, which overrides every config file.
-          # The empty helper clears any helper list read from disk, so
-          # `git push` hands GH_TOKEN only to gh. Hooks and fsmonitor are
-          # off. Hardening only: nothing third-party runs in this job.
-          GIT_CONFIG_COUNT: "4"
+          # git never talks to the remote here (#526: commits are published
+          # through the API by gh), so the empty helper leaves it no
+          # credential at all. Hooks and fsmonitor are off. Hardening only:
+          # nothing third-party runs in this job.
+          GIT_CONFIG_COUNT: "3"
           GIT_CONFIG_KEY_0: credential.helper
           GIT_CONFIG_VALUE_0: ""
-          GIT_CONFIG_KEY_1: credential.helper
-          GIT_CONFIG_VALUE_1: "!gh auth git-credential"
-          GIT_CONFIG_KEY_2: core.hooksPath
-          GIT_CONFIG_VALUE_2: /dev/null
-          GIT_CONFIG_KEY_3: core.fsmonitor
-          GIT_CONFIG_VALUE_3: "false"
+          GIT_CONFIG_KEY_1: core.hooksPath
+          GIT_CONFIG_VALUE_1: /dev/null
+          GIT_CONFIG_KEY_2: core.fsmonitor
+          GIT_CONFIG_VALUE_2: "false"
         run: |
           set -euo pipefail
           # Run only the binary `build` hashed (#427). The gate rejects an

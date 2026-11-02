@@ -14,7 +14,7 @@
 pub struct OpenPr {
     pub number: u64,
     pub head: String,
-    /// Head commit when listed — the explicit `--force-with-lease` value.
+    /// Head commit when listed — the lease a regen must still find (#526).
     pub head_oid: String,
     pub body: String,
     /// Head branch lives in a fork. Never trusted: anyone can open one.
@@ -67,12 +67,6 @@ pub fn check_not_truncated(len: usize, limit: usize) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-/// `git push` lease pinned to the head seen at listing time, so a push
-/// that raced in since then rejects ours instead of being overwritten.
-pub fn lease_arg(pr: &OpenPr) -> String {
-    format!("--force-with-lease={}:{}", pr.head, pr.head_oid)
 }
 
 /// What to do with a set of newly detected versions.
@@ -312,15 +306,6 @@ mod tests {
     fn truncation_check_rejects_a_full_listing() {
         assert!(check_not_truncated(999, 1000).is_ok());
         assert!(check_not_truncated(1000, 1000).is_err());
-    }
-
-    #[test]
-    fn lease_pins_branch_to_listed_head() {
-        let p = pr(398, "scan/rust/2026-10-16", &[]);
-        assert_eq!(
-            lease_arg(&p),
-            "--force-with-lease=scan/rust/2026-10-16:abc123"
-        );
     }
 
     #[test]

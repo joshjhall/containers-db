@@ -17,7 +17,7 @@ manually with `workflow_dispatch`.
 cargo run --release -p scanner -- tool rust --dry-run
 cargo run --release -p scanner -- tool go --dry-run
 
-# Real run (will branch, commit, push, and `gh pr create`).
+# Real run (will branch, commit, publish a signed commit, and `gh pr create`).
 GITHUB_TOKEN=$(gh auth token) \
   cargo run --release -p scanner -- tool rust
 
@@ -230,8 +230,9 @@ from forks are ignored — their branch name and body are not trusted:
   `open scan PR #N already covers <versions>, skipping`, discards the
   regenerated files, and succeeds (no failure issue).
 - **Update in place** — that PR misses some versions. The files are
-  regenerated from `main` onto its branch, force-pushed with a lease
-  pinned to the head commit seen when listing, and its title and body
+  regenerated from `main` onto its branch, which is replaced only if it
+  is still at the head commit seen when listing (an `updateRefs`
+  compare-and-swap — see [Signed delivery](#signed-delivery)), and its title and body
   refreshed with `gh pr edit`. No second PR is opened. Manual commits on
   that branch are replaced — carry them in a separate PR.
 - **Open new** — no matching open PR; a new `scan/<tool>/<date>` PR opens.
@@ -290,7 +291,7 @@ GitHub App token scoped to this repository only, with:
 
 | Permission      | Access | Why                                         |
 | --------------- | ------ | ------------------------------------------- |
-| `contents`      | write  | push the `scan/*` branch                    |
+| `contents`      | write  | create signed commits and `scan/*` branches |
 | `pull-requests` | write  | open and update scan PRs                    |
 | `issues`        | write  | file/comment on `scanner-failure` issues    |
 
@@ -319,9 +320,30 @@ the secret is (#416):
    `chmod` on a mismatch or a missing hash), and runs
    `scanner deliver --plan <plan.json>`.
    No cargo, npm, node, or ajv runs here. The token is `GH_TOKEN` (`gh`
-   prefers it over `GITHUB_TOKEN`); `git push` gets it through
-   `credential.helper=!gh auth git-credential`, set by `GIT_CONFIG_*`
-   environment variables so nothing is written to `.git/config`.
+   prefers it over `GITHUB_TOKEN`). Nothing is `git push`ed: commits reach
+   GitHub through the GraphQL API (see [Signed delivery](#signed-delivery)),
+   and `git` itself only runs locally.
+
+### Signed delivery
+
+`main` requires signed commits, and the scanner holds no signing key, so it
+never pushes its local commit (#526). `scanner/src/publish.rs` replays it:
+
+1. The scan commit is built locally exactly as before (branch, stage
+   `tools/<tool>/`, commit), so the dedup and return-to-base logic is
+   unchanged.
+2. Its file changes against its parent are sent to `createCommitOnBranch`
+   on a throwaway `scanner-staging/<branch>/<sha>` branch cut from that
+   parent. GitHub creates and signs that commit (`web-flow`).
+3. The signed commit's tree must equal the local commit's tree. A mismatch
+   (a file lost or altered in transit, a mode change the API can't express)
+   aborts before any PR branch moves.
+4. A new PR's branch is created at the signed commit (`createRef`, which
+   fails if it exists). An existing PR's branch is moved with `updateRefs`
+   pinned to the head seen when PRs were listed, so a racing push survives
+   and the scanner reports `lease rejected`.
+5. The staging branch is deleted (best effort; a leftover is clutter, not a
+   failure).
 
 JavaScript in `stage` never shares a job with the build, so it can
 neither replace the binary `deliver` runs nor poison the cargo cache a
@@ -361,7 +383,8 @@ treats the plan as untrusted:
   `::` workflow command).
 - The PR body's upstream link is read from the checkout's `index.json`
   before the plan's files are written over it.
-- The in-process rules run again on the written files before any push.
+- The in-process rules run again on the written files before anything is
+  published.
   ajv does not — it is third-party code, and it already ran in `stage`.
   The `stage`-side ajv run is a correctness check, not a security gate:
   a compromised `stage` job can skip it.

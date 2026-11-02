@@ -20,6 +20,7 @@ pub mod failure;
 pub mod generate;
 pub(crate) mod outcome;
 pub mod pr;
+pub mod publish;
 pub mod stage;
 #[cfg(test)]
 mod test_tls;
