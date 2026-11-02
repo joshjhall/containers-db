@@ -221,17 +221,7 @@ fn deliver_with(
             return Ok(Delivery::Skipped(*pr));
         }
         Decision::UpdateExisting { pr, reason } => {
-            let n = pr.number;
-            match reason {
-                RegenReason::MissingVersions => {
-                    println!(
-                        "scanner: {tool_id}: open scan PR #{n} is missing versions; regenerating"
-                    )
-                }
-                RegenReason::UnsignedCommits => println!(
-                    "scanner: {tool_id}: open scan PR #{n} covers the versions but has unsigned commits; regenerating (its branch is replaced)"
-                ),
-            }
+            println!("{}", regen_message(tool_id, pr.number, *reason));
             on_branch_then_return(repo_root, || update(pr).map(Delivery::Updated))
         }
         Decision::OpenNew => on_branch_then_return(repo_root, || open().map(Delivery::Opened)),
@@ -242,6 +232,18 @@ fn deliver_with(
         eprintln!("scanner: {tool_id}: discarding generated files after a failed delivery: {e:#}");
     }
     delivered
+}
+
+/// The log line for regenerating PR `n`, naming why (#529).
+fn regen_message(tool_id: &str, n: u64, reason: RegenReason) -> String {
+    match reason {
+        RegenReason::MissingVersions => {
+            format!("scanner: {tool_id}: open scan PR #{n} is missing versions; regenerating")
+        }
+        RegenReason::UnsignedCommits => format!(
+            "scanner: {tool_id}: open scan PR #{n} covers the versions but has unsigned commits; regenerating (its branch is replaced)"
+        ),
+    }
 }
 
 /// Where a scan run started: the checked-out branch (or `None` when
@@ -624,6 +626,20 @@ mod tests {
         for bad in ["", "\n", "null\n", "True", "yes", "true\nnull\n"] {
             assert!(parse_verified(bad).is_err(), "{bad:?} must be an error");
         }
+    }
+
+    #[test]
+    fn regen_message_names_the_reason() {
+        let missing = regen_message("node", 519, RegenReason::MissingVersions);
+        let unsigned = regen_message("node", 519, RegenReason::UnsignedCommits);
+        assert_eq!(
+            missing,
+            "scanner: node: open scan PR #519 is missing versions; regenerating"
+        );
+        assert_eq!(
+            unsigned,
+            "scanner: node: open scan PR #519 covers the versions but has unsigned commits; regenerating (its branch is replaced)"
+        );
     }
 
     /// Two matching scan PRs plus a fork; only the oldest non-fork row is
