@@ -1,6 +1,10 @@
 //! Open a PR with new version files via `git` + `gh`. The shell-out is
 //! intentionally thin; the interesting logic (branch name, commit
 //! message, PR title/body shapes) is in pure functions for easy testing.
+//!
+//! The scan commit is built locally but never pushed: [`crate::publish`]
+//! replays it as a GitHub-signed commit, since `main` requires signatures
+//! and the scanner holds no key (#526).
 
 use std::io::Write;
 use std::path::Path;
@@ -11,6 +15,7 @@ use chrono::{DateTime, Utc};
 
 use crate::activity::{ActivitySignals, Score};
 use crate::dedup::{self, Decision, OpenPr};
+use crate::publish::{self, GhRemote, Remote, Target};
 
 /// Branch name for a new scan PR: `scan/<tool>/<YYYY-MM-DD>`. An open PR
 /// on any earlier date is reused by [`deliver`] rather than duplicated.
@@ -101,10 +106,11 @@ fn score_str(score: Score) -> &'static str {
     }
 }
 
-/// Create the branch, stage `tools/<tool_id>/`, commit, push, and open
-/// the PR via `gh`. Returns the PR URL.
+/// Create the branch, stage `tools/<tool_id>/`, commit, publish it as a
+/// signed commit, and open the PR via `gh`. Returns the PR URL.
 pub fn open_pr(
     repo_root: &Path,
+    remote: &dyn Remote,
     tool_id: &str,
     branch: &str,
     title: &str,
@@ -113,11 +119,9 @@ pub fn open_pr(
 ) -> Result<String> {
     git(repo_root, &["checkout", "-b", branch])?;
     git(repo_root, &["add", &format!("tools/{tool_id}")])?;
-    git(
-        repo_root,
-        &["commit", "-m", &commit_message_from_title(title)],
-    )?;
-    git(repo_root, &["push", "-u", "origin", branch])?;
+    let message = commit_message_from_title(title);
+    git(repo_root, &["commit", "-m", &message])?;
+    publish::publish_head(repo_root, remote, Target::New(branch), &message)?;
     let url = gh(
         repo_root,
         &[
@@ -173,8 +177,20 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         repo_root,
         tool_id,
         &dedup::decide(prefix, &open, new_versions),
-        |pr| update_pr(repo_root, tool_id, pr, title, body),
-        || open_pr(repo_root, tool_id, branch, title, body, "main"),
+        |pr| {
+            update_pr(
+                repo_root,
+                &GhRemote::discover(repo_root)?,
+                tool_id,
+                pr,
+                title,
+                body,
+            )
+        },
+        || {
+            let remote = GhRemote::discover(repo_root)?;
+            open_pr(repo_root, &remote, tool_id, branch, title, body, "main")
+        },
     )
 }
 
@@ -376,8 +392,8 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 
 /// Regenerate onto an existing PR's branch: reset it to the current HEAD
 /// (the run's base + regenerated files — [`deliver`] returns to the base
-/// after each tool), commit, force-push, and refresh the title
-/// and body. Returns the PR URL.
+/// after each tool), commit, replace the branch with the signed commit,
+/// and refresh the title and body. Returns the PR URL.
 ///
 /// The lease is pinned to the head commit seen when the PRs were listed,
 /// so a push that raced in since then rejects this one instead of being
@@ -385,13 +401,14 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 /// replaced: the branch is regenerated from `main`.
 fn update_pr(
     repo_root: &Path,
+    remote: &dyn Remote,
     tool_id: &str,
     pr: &OpenPr,
     title: &str,
     body: &str,
 ) -> Result<String> {
     let number = pr.number.to_string();
-    push_regenerated(repo_root, tool_id, pr, title)?;
+    push_regenerated(repo_root, remote, tool_id, pr, title)?;
     gh(
         repo_root,
         &["pr", "edit", &number, "--title", title, "--body", body],
@@ -404,17 +421,24 @@ fn update_pr(
 }
 
 /// The git half of [`update_pr`]: reset `pr.head` to the current HEAD,
-/// commit the regenerated `tools/<tool_id>/`, and force-push under the
-/// lease from [`dedup::lease_arg`].
-fn push_regenerated(repo_root: &Path, tool_id: &str, pr: &OpenPr, title: &str) -> Result<()> {
-    let lease = dedup::lease_arg(pr);
+/// commit the regenerated `tools/<tool_id>/`, and replace the remote
+/// branch with the signed commit, leased on `pr.head_oid`.
+fn push_regenerated(
+    repo_root: &Path,
+    remote: &dyn Remote,
+    tool_id: &str,
+    pr: &OpenPr,
+    title: &str,
+) -> Result<()> {
     git(repo_root, &["checkout", "-B", &pr.head])?;
     git(repo_root, &["add", &format!("tools/{tool_id}")])?;
-    git(
-        repo_root,
-        &["commit", "-m", &commit_message_from_title(title)],
-    )?;
-    git(repo_root, &["push", &lease, "-u", "origin", &pr.head])?;
+    let message = commit_message_from_title(title);
+    git(repo_root, &["commit", "-m", &message])?;
+    let target = Target::Existing {
+        branch: &pr.head,
+        lease: &pr.head_oid,
+    };
+    publish::publish_head(repo_root, remote, target, &message)?;
     Ok(())
 }
 
@@ -459,6 +483,7 @@ fn gh(repo_root: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::publish::testing::BareRemote;
     use chrono::TimeZone;
 
     /// Temp repo on `main` with one commit. Hermetic: explicit identity,
@@ -635,7 +660,15 @@ mod tests {
         let base = rev(p, "main");
         // Outside the tool's directory: must not ride along in its scan PR.
         std::fs::write(p.join("stray"), "stray").unwrap();
-        push_regenerated(p, "rust", &pr, "feat(rust): add upstream versions 2.0.0").unwrap();
+        let remote = BareRemote::new(origin.path());
+        push_regenerated(
+            p,
+            &remote,
+            "rust",
+            &pr,
+            "feat(rust): add upstream versions 2.0.0",
+        )
+        .unwrap();
         let o = origin.path();
         assert_eq!(
             rev(o, "scan/rust/old^"),
@@ -681,9 +714,13 @@ mod tests {
         // lease would pass: only the oid pinned at listing time rejects.
         git(dir.path(), &["fetch", "-q", "origin"]).unwrap();
 
-        let err = push_regenerated(dir.path(), "rust", &pr, "feat(rust): x").unwrap_err();
-        // `stale info` is git's lease rejection, not any push failure.
-        assert!(format!("{err:#}").contains("stale info"), "{err:#}");
+        let remote = BareRemote::new(origin.path());
+        let err = push_regenerated(dir.path(), &remote, "rust", &pr, "feat(rust): x").unwrap_err();
+        // The lease rejection names the race, not any publish failure.
+        assert!(
+            format!("{err:#}").contains("lease rejected: scan/rust/old moved"),
+            "{err:#}"
+        );
         assert_eq!(
             rev(origin.path(), "scan/rust/old"),
             raced,

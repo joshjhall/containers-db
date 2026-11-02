@@ -20,6 +20,7 @@ db-validator = { workspace = true }
 containers-common = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64 = { workspace = true }
 walkdir = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

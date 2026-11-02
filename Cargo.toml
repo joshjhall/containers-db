@@ -13,6 +13,7 @@ db-validator = { path = "validator" }
 containers-common = { git = "https://github.com/joshjhall/containers", rev = "1853ba6a563eb001c08d520b037fa7e147fac988" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 thiserror = "2"
 walkdir = "2"
 tempfile = "3"
