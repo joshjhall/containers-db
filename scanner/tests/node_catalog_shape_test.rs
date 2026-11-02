@@ -290,14 +290,13 @@ fn rerender(version: &str, available: &[String]) -> (String, Value) {
     (from, rendered)
 }
 
-/// The hand-written catalog carries no `tested` key; `render_version` writes
-/// `tested: []` so a fresh release never borrows its template's evidence.
-/// That is the one expected difference between a scanned file and its
-/// hand-written counterpart.
-fn without_empty_tested(mut doc: Value) -> Value {
-    if doc.get("tested") == Some(&json!([])) {
-        doc.as_object_mut().unwrap().remove("tested");
-    }
+/// `tested` is the one key a scan does not own: `render_version` writes
+/// `tested: []` so a fresh release never borrows its template's evidence,
+/// and evidence ingest (containers' `ingest-evidence-batch.sh`) later appends
+/// rows to the committed file. Strip it from both sides so the comparison
+/// covers only what the scanner produces.
+fn without_tested(mut doc: Value) -> Value {
+    doc.as_object_mut().unwrap().remove("tested");
     doc
 }
 
@@ -312,7 +311,18 @@ fn rescanning_a_cataloged_release_reproduces_its_file() {
         let (from, rendered) = rerender(version, &available);
         assert_eq!(from, expected_template, "{version}: template");
         let committed = read_json(&node_dir().join("versions").join(format!("{version}.json")));
-        assert_eq!(without_empty_tested(rendered), committed, "{version}");
+        // A re-render must start with no evidence even when both the
+        // template and the committed file carry ingested rows.
+        assert_eq!(
+            rendered.get("tested"),
+            Some(&json!([])),
+            "{version}: tested"
+        );
+        assert_eq!(
+            without_tested(rendered),
+            without_tested(committed),
+            "{version}"
+        );
     }
 }
 
