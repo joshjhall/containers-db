@@ -778,11 +778,19 @@ mod tests {
 
     #[test]
     fn mark_candidate_verified_skips_lookup_without_a_candidate() {
-        let mut open = vec![open_pr_fixture(10, "scan/node/2026-10-16")];
+        // Start from `true` so the final assert can tell "left untouched"
+        // apart from the fixture's `false` default.
+        let mut open = vec![OpenPr {
+            commits_verified: true,
+            ..open_pr_fixture(10, "scan/node/2026-10-16")
+        }];
         mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
             panic!("no candidate: lookup must not run")
         });
-        assert!(!open[0].commits_verified);
+        assert!(
+            open[0].commits_verified,
+            "a non-candidate row is left untouched"
+        );
     }
 
     #[test]
