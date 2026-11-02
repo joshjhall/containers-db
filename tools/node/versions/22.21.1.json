@@ -502,6 +502,46 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-01T22:28:33.558950559Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41356045896",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:87d438bd758406008bd094fc5eebe890d0252f456f5be3dc58ef636d7d57bdfb",
+      "duration_seconds": 8.470315816,
+      "version_output": "v22.21.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.26.04.1"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "arm64",
+      "tested_at": "2026-11-01T22:24:00.380549424Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41356045896",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-arm64",
+      "image_digest": "sha256:006821c7501e403de22f2ba6a53e7aa62206c2d35c9b5df3f1e025ff8c856556",
+      "duration_seconds": 7.62631999,
+      "version_output": "v22.21.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.26.04.1"
+        }
+      ],
+      "verification_tier": 1
     }
   ]
 }
