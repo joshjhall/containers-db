@@ -154,8 +154,7 @@ pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Dec
     let Some(pr) = candidate(prefix, open_prs) else {
         return Decision::OpenNew;
     };
-    let covered = parse_pr_versions(&pr.body);
-    let reason = if !new_versions.iter().all(|v| covered.contains(v)) {
+    let reason = if !covers(pr, new_versions) {
         RegenReason::MissingVersions
     } else if !pr.commits_verified {
         RegenReason::UnsignedCommits
@@ -169,6 +168,14 @@ pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Dec
         pr: pr.clone(),
         reason,
     }
+}
+
+/// Whether `pr`'s `## New versions` section lists every one of
+/// `new_versions`. Only a covering PR can be skipped, so only then do its
+/// commit signatures matter to [`decide`].
+pub fn covers(pr: &OpenPr, new_versions: &[String]) -> bool {
+    let covered = parse_pr_versions(&pr.body);
+    new_versions.iter().all(|v| covered.contains(v))
 }
 
 /// The open PR [`decide`] acts on: the oldest non-fork PR whose head
@@ -307,6 +314,15 @@ mod tests {
             decide("scan/rust/", &[unsigned.clone()], &vs(&["1.100.0"])),
             missing(&unsigned)
         );
+    }
+
+    #[test]
+    fn covers_requires_every_new_version() {
+        let p = pr(398, "scan/rust/2026-10-16", &["1.99.0", "1.99.1"]);
+        assert!(covers(&p, &vs(&["1.99.1"])));
+        assert!(covers(&p, &vs(&["1.99.0", "1.99.1"])));
+        assert!(!covers(&p, &vs(&["1.99.1", "1.100.0"])));
+        assert!(!covers(&pr(1, "scan/rust/x", &[]), &vs(&["1.99.1"])));
     }
 
     #[test]
