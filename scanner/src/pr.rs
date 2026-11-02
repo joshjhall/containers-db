@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::activity::{ActivitySignals, Score};
-use crate::dedup::{self, Decision, OpenPr};
+use crate::dedup::{self, Decision, OpenPr, RegenReason};
 use crate::publish::{self, GhRemote, Remote, Target};
 
 /// Branch name for a new scan PR: `scan/<tool>/<YYYY-MM-DD>`. An open PR
@@ -172,11 +172,15 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         !new_versions.is_empty(),
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
     );
-    let open = list_open_prs(repo_root)?;
+    let mut open = list_open_prs(repo_root)?;
+    mark_candidate_verified(tool_id, prefix, &mut open, |pr| {
+        commits_verified(repo_root, pr)
+    });
     deliver_with(
         repo_root,
         tool_id,
         &dedup::decide(prefix, &open, new_versions),
+        |line| println!("{line}"),
         |pr| {
             update_pr(
                 repo_root,
@@ -201,10 +205,14 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
 /// - Update / OpenNew: run the action on its PR branch, then return to the
 ///   start. On failure the regenerated files are discarded too, so a later
 ///   tool in the same run never starts from a dirty tree.
+///
+/// `log` receives the regen line naming the [`RegenReason`]; it is stdout
+/// in production, injected so a test can see which line was emitted.
 fn deliver_with(
     repo_root: &Path,
     tool_id: &str,
     decision: &Decision,
+    mut log: impl FnMut(&str),
     update: impl FnOnce(&OpenPr) -> Result<String>,
     open: impl FnOnce() -> Result<String>,
 ) -> Result<Delivery> {
@@ -217,7 +225,8 @@ fn deliver_with(
             discard_generated(repo_root, tool_id)?;
             return Ok(Delivery::Skipped(*pr));
         }
-        Decision::UpdateExisting(pr) => {
+        Decision::UpdateExisting { pr, reason } => {
+            log(&regen_message(tool_id, pr.number, *reason));
             on_branch_then_return(repo_root, || update(pr).map(Delivery::Updated))
         }
         Decision::OpenNew => on_branch_then_return(repo_root, || open().map(Delivery::Opened)),
@@ -228,6 +237,18 @@ fn deliver_with(
         eprintln!("scanner: {tool_id}: discarding generated files after a failed delivery: {e:#}");
     }
     delivered
+}
+
+/// The log line for regenerating PR `n`, naming why (#529).
+fn regen_message(tool_id: &str, n: u64, reason: RegenReason) -> String {
+    match reason {
+        RegenReason::MissingVersions => {
+            format!("scanner: {tool_id}: open scan PR #{n} is missing versions; regenerating")
+        }
+        RegenReason::UnsignedCommits => format!(
+            "scanner: {tool_id}: open scan PR #{n} covers the versions but has unsigned commits; regenerating (its branch is replaced)"
+        ),
+    }
 }
 
 /// Where a scan run started: the checked-out branch (or `None` when
@@ -390,6 +411,96 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
     Ok(prs)
 }
 
+/// Look up whether every commit on the PR [`dedup::decide`] will act on
+/// is GitHub-verified, and record it on that row. Only the candidate needs
+/// it, so this is one API call per tool rather than one per open PR.
+///
+/// A failed lookup leaves the row unverified: a redundant regen costs one
+/// signed commit, a wrong skip strands the release (#529). `lookup` is
+/// [`commits_verified`] in production, injected so the fail-closed path is
+/// testable without `gh`.
+fn mark_candidate_verified(
+    tool_id: &str,
+    prefix: &str,
+    open: &mut [OpenPr],
+    lookup: impl FnOnce(&OpenPr) -> Result<bool>,
+) {
+    let Some(number) = dedup::candidate(prefix, open).map(|pr| pr.number) else {
+        return;
+    };
+    let Some(pr) = open.iter_mut().find(|pr| pr.number == number) else {
+        return;
+    };
+    pr.commits_verified = match lookup(pr) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "scanner: {tool_id}: could not check the commit signatures of PR #{number}; treating it as unsigned: {e:#}"
+            );
+            false
+        }
+    };
+}
+
+/// The most commits `pulls/{n}/commits` returns, however it is paginated.
+/// A listing that reaches it may be truncated, so it is refused.
+const PR_COMMITS_LIMIT: usize = 250;
+
+/// Whether every commit on `pr` carries a GitHub-verified signature.
+fn commits_verified(repo_root: &Path, pr: &OpenPr) -> Result<bool> {
+    let out = gh(
+        repo_root,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{{owner}}/{{repo}}/pulls/{}/commits", pr.number),
+            "--jq",
+            r#".[] | "\(.sha) \(.commit.verification.verified)""#,
+        ],
+    )?;
+    parse_verified(&out, &pr.head_oid)
+}
+
+/// Parse `<sha> <verified>` lines, one per commit, across every page. Verified only when every line says `true`. An error, so the
+/// caller fails toward a regen, when:
+/// - the listing is empty, or a line is not `<sha> true|false`;
+/// - it reaches [`PR_COMMITS_LIMIT`] — unsigned commits past the cap
+///   would go unseen and read as a wrong skip;
+/// - `head_oid` is not among its commits — the branch was rewritten or
+///   replaced since the PRs were listed, so this answer describes commits
+///   `decide` never saw. Membership, not position: the endpoint's order is
+///   undocumented. A fast-forward since listing still contains `head_oid`
+///   and passes; that is safe, because the answer then covers the newer
+///   commits too, and a regen's lease on `head_oid` rejects a stale push.
+fn parse_verified(out: &str, head_oid: &str) -> Result<bool> {
+    let mut all = true;
+    let mut has_head = false;
+    let mut count = 0;
+    for line in out.lines() {
+        let (sha, verified) = line
+            .trim()
+            .split_once(' ')
+            .with_context(|| format!("unexpected commit verification line {line:?}"))?;
+        match verified {
+            "true" => {}
+            "false" => all = false,
+            other => anyhow::bail!("unexpected commit verification value {other:?}"),
+        }
+        has_head |= sha == head_oid;
+        count += 1;
+    }
+    anyhow::ensure!(count > 0, "no commits listed for the PR");
+    anyhow::ensure!(
+        count < PR_COMMITS_LIMIT,
+        "PR lists {count} commits, at the {PR_COMMITS_LIMIT}-commit API cap; refusing to trust a possibly truncated listing"
+    );
+    anyhow::ensure!(
+        has_head,
+        "PR head {head_oid} is not among its listed commits; the branch moved since listing"
+    );
+    Ok(all)
+}
+
 /// Regenerate onto an existing PR's branch: reset it to the current HEAD
 /// (the run's base + regenerated files — [`deliver`] returns to the base
 /// after each tool), commit, replace the branch with the signed commit,
@@ -531,6 +642,154 @@ mod tests {
         assert!(
             format!("{err:#}").starts_with("git rev-parse HEAD failed:"),
             "got {err:#}"
+        );
+    }
+
+    /// `<sha> <verified>` lines for commits `c0..`.
+    fn commits(verified: &[bool]) -> String {
+        verified
+            .iter()
+            .enumerate()
+            .map(|(i, v)| format!("c{i} {v}\n"))
+            .collect()
+    }
+
+    #[test]
+    fn parse_verified_requires_every_commit_verified() {
+        assert!(parse_verified(&commits(&[true]), "c0").unwrap());
+        assert!(parse_verified(&commits(&[true, true, true]), "c2").unwrap());
+        assert!(!parse_verified(&commits(&[false]), "c0").unwrap());
+        // A signed fixup on top of an unsigned commit is still unmergeable.
+        assert!(!parse_verified(&commits(&[false, true]), "c1").unwrap());
+        assert!(!parse_verified(&commits(&[true, false, true]), "c2").unwrap());
+        // The empty-listing guard is checked by its own message: the head
+        // check would also reject an empty listing, masking its removal.
+        let err = parse_verified("", "c0").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("no commits listed"),
+            "got {err:#}"
+        );
+        // A blank line is malformed, not an empty listing.
+        for bad in [
+            "\n",
+            "c0 null\n",
+            "c0 True\n",
+            "true\n",
+            "c0 true\nc1 yes\n",
+        ] {
+            assert!(
+                parse_verified(bad, "c0").is_err(),
+                "{bad:?} must be an error"
+            );
+        }
+    }
+
+    /// The commits endpoint stops at 250 however it is paginated: a full
+    /// listing may hide unsigned commits past the cap, so it is refused.
+    #[test]
+    fn parse_verified_refuses_a_listing_at_the_api_cap() {
+        let under = commits(&vec![true; PR_COMMITS_LIMIT - 1]);
+        let head = format!("c{}", PR_COMMITS_LIMIT - 2);
+        assert!(parse_verified(&under, &head).unwrap());
+        let at = commits(&vec![true; PR_COMMITS_LIMIT]);
+        let head = format!("c{}", PR_COMMITS_LIMIT - 1);
+        let err = parse_verified(&at, &head).unwrap_err();
+        assert!(format!("{err:#}").contains("commit API cap"), "got {err:#}");
+    }
+
+    /// A force-push between listing and lookup: the answer describes a
+    /// head `decide` never saw, so it is refused rather than trusted.
+    #[test]
+    fn parse_verified_refuses_a_head_not_in_the_listing() {
+        let err = parse_verified(&commits(&[true, true]), "gone").unwrap_err();
+        assert!(format!("{err:#}").contains("branch moved"), "got {err:#}");
+    }
+
+    /// The endpoint's order is undocumented, so the head need not be last.
+    #[test]
+    fn parse_verified_accepts_the_head_anywhere_in_the_listing() {
+        assert!(parse_verified(&commits(&[true, true, true]), "c0").unwrap());
+        assert!(!parse_verified(&commits(&[true, false, true]), "c0").unwrap());
+    }
+
+    #[test]
+    fn regen_message_names_the_reason() {
+        let missing = regen_message("node", 519, RegenReason::MissingVersions);
+        let unsigned = regen_message("node", 519, RegenReason::UnsignedCommits);
+        assert_eq!(
+            missing,
+            "scanner: node: open scan PR #519 is missing versions; regenerating"
+        );
+        assert_eq!(
+            unsigned,
+            "scanner: node: open scan PR #519 covers the versions but has unsigned commits; regenerating (its branch is replaced)"
+        );
+    }
+
+    /// Two matching scan PRs plus a fork; only the oldest non-fork row is
+    /// the candidate, so only it is looked up and only it is marked.
+    fn listing() -> Vec<OpenPr> {
+        let mut fork = open_pr_fixture(5, "scan/rust/evil");
+        fork.cross_repo = true;
+        vec![
+            fork,
+            open_pr_fixture(402, "scan/rust/2026-10-17"),
+            open_pr_fixture(398, "scan/rust/2026-10-16"),
+        ]
+    }
+
+    #[test]
+    fn mark_candidate_verified_marks_only_the_candidate() {
+        let mut open = listing();
+        let mut asked = None;
+        mark_candidate_verified("rust", "scan/rust/", &mut open, |pr| {
+            asked = Some(pr.number);
+            Ok(true)
+        });
+        assert_eq!(asked, Some(398));
+        let marked: Vec<u64> = open
+            .iter()
+            .filter(|p| p.commits_verified)
+            .map(|p| p.number)
+            .collect();
+        assert_eq!(marked, vec![398]);
+    }
+
+    /// #529: a lookup that errors must leave the candidate unverified, so
+    /// `decide` regenerates it rather than skipping it.
+    #[test]
+    fn mark_candidate_verified_fails_closed_on_lookup_error() {
+        let mut open = listing();
+        for pr in &mut open {
+            pr.commits_verified = true;
+        }
+        mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
+            anyhow::bail!("gh api: 502")
+        });
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(!candidate.commits_verified);
+        assert!(
+            open.iter()
+                .filter(|p| p.number != 398)
+                .all(|p| p.commits_verified),
+            "non-candidate rows must be left untouched"
+        );
+    }
+
+    #[test]
+    fn mark_candidate_verified_skips_lookup_without_a_candidate() {
+        // Start from `true` so the final assert can tell "left untouched"
+        // apart from the fixture's `false` default.
+        let mut open = vec![OpenPr {
+            commits_verified: true,
+            ..open_pr_fixture(10, "scan/node/2026-10-16")
+        }];
+        mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
+            panic!("no candidate: lookup must not run")
+        });
+        assert!(
+            open[0].commits_verified,
+            "a non-candidate row is left untouched"
         );
     }
 
@@ -767,6 +1026,8 @@ mod tests {
         panic!("update must not run for this decision")
     }
 
+    fn no_log(_: &str) {}
+
     fn never_open() -> Result<String> {
         panic!("open must not run for this decision")
     }
@@ -778,6 +1039,7 @@ mod tests {
             head_oid: "abc".to_string(),
             body: String::new(),
             cross_repo: false,
+            commits_verified: false,
         }
     }
 
@@ -789,7 +1051,7 @@ mod tests {
             pr: 398,
             covered: vec!["2.0.0".to_string()],
         };
-        let d = deliver_with(p, "rust", &decision, never_update, never_open).unwrap();
+        let d = deliver_with(p, "rust", &decision, no_log, never_update, never_open).unwrap();
         assert!(matches!(d, Delivery::Skipped(398)));
         assert_clean_at_main(p);
     }
@@ -798,7 +1060,7 @@ mod tests {
     fn deliver_open_commits_on_its_branch_and_returns() {
         let dir = repo_with_generated_rust();
         let p = dir.path();
-        let d = deliver_with(p, "rust", &Decision::OpenNew, never_update, || {
+        let d = deliver_with(p, "rust", &Decision::OpenNew, no_log, never_update, || {
             commit_on(p, "scan/rust/2026-10-16")
         })
         .unwrap();
@@ -813,23 +1075,33 @@ mod tests {
 
     #[test]
     fn deliver_update_passes_the_pr_and_returns() {
-        let dir = repo_with_generated_rust();
-        let p = dir.path();
-        let pr = open_pr_fixture(398, "scan/rust/2026-10-15");
-        let decision = Decision::UpdateExisting(pr.clone());
-        let d = deliver_with(
-            p,
-            "rust",
-            &decision,
-            |got| {
-                assert_eq!(got, &pr);
-                commit_on(p, &got.head)
-            },
-            never_open,
-        )
-        .unwrap();
-        assert!(matches!(d, Delivery::Updated(_)));
-        assert_clean_at_main(p);
+        // Both regen reasons take the same update path; the logged line is
+        // what tells them apart (#529), so it is asserted per reason.
+        for reason in [RegenReason::MissingVersions, RegenReason::UnsignedCommits] {
+            let mut logged = Vec::new();
+            let dir = repo_with_generated_rust();
+            let p = dir.path();
+            let pr = open_pr_fixture(398, "scan/rust/2026-10-15");
+            let decision = Decision::UpdateExisting {
+                pr: pr.clone(),
+                reason,
+            };
+            let d = deliver_with(
+                p,
+                "rust",
+                &decision,
+                |line| logged.push(line.to_string()),
+                |got| {
+                    assert_eq!(got, &pr);
+                    commit_on(p, &got.head)
+                },
+                never_open,
+            )
+            .unwrap();
+            assert!(matches!(d, Delivery::Updated(_)), "{reason:?}");
+            assert_eq!(logged, vec![regen_message("rust", 398, reason)]);
+            assert_clean_at_main(p);
+        }
     }
 
     #[test]
@@ -838,7 +1110,7 @@ mod tests {
         // with the regenerated files still uncommitted.
         let dir = repo_with_generated_rust();
         let p = dir.path();
-        let err = deliver_with(p, "rust", &Decision::OpenNew, never_update, || {
+        let err = deliver_with(p, "rust", &Decision::OpenNew, no_log, never_update, || {
             git(p, &["checkout", "-q", "-b", "scan/rust/x"])?;
             anyhow::bail!("push rejected")
         })
