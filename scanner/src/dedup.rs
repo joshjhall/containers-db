@@ -19,11 +19,14 @@ pub struct OpenPr {
     pub body: String,
     /// Head branch lives in a fork. Never trusted: anyone can open one.
     pub cross_repo: bool,
-    /// Head commit is GitHub-verified, so the PR can merge under `main`'s
-    /// required-signatures rule. `false` when unknown: an unsigned covering
-    /// PR is regenerated rather than skipped (#529), and a redundant regen
-    /// costs one signed commit where a wrong skip strands the release.
-    pub head_verified: bool,
+    /// Every commit on the PR is GitHub-verified, so it can merge under
+    /// `main`'s required-signatures ruleset. Not just the head: merge and
+    /// rebase merges carry every commit, so a signed fixup on top of an
+    /// unsigned commit still cannot land. `false` when unknown: such a
+    /// covering PR is regenerated rather than skipped (#529), and a
+    /// redundant regen costs one signed commit where a wrong skip strands
+    /// the release.
+    pub commits_verified: bool,
 }
 
 /// `--json` fields [`parse_open_prs`] expects from `gh pr list`.
@@ -34,7 +37,7 @@ pub const GH_PR_FIELDS: &str = "number,headRefName,headRefOid,body,isCrossReposi
 /// Errors on malformed output rather than dropping rows: a dropped row
 /// would fail open into a duplicate PR. A missing `isCrossRepository`
 /// reads as cross-repo, so [`decide`] ignores the row; a missing
-/// `headVerified` reads as unverified.
+/// `commitsVerified` reads as unverified.
 pub fn parse_open_prs(json: &str) -> Result<Vec<OpenPr>, String> {
     let rows: Vec<serde_json::Value> =
         serde_json::from_str(json).map_err(|e| format!("parsing `gh pr list` output: {e}"))?;
@@ -62,8 +65,8 @@ pub fn parse_open_prs(json: &str) -> Result<Vec<OpenPr>, String> {
                 // `gh pr list` has no verification field; [`crate::pr`]
                 // looks it up for the one candidate PR. Absent reads as
                 // unverified so it fails toward a regen, never a skip.
-                head_verified: r
-                    .get("headVerified")
+                commits_verified: r
+                    .get("commitsVerified")
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
             })
@@ -99,9 +102,12 @@ pub enum Decision {
 pub enum RegenReason {
     /// The PR misses some of the new versions.
     MissingVersions,
-    /// The PR covers every version, but its head commit is not verified,
-    /// so it can never merge under required signatures (#529).
-    UnsignedHead,
+    /// The PR covers every version, but not every commit on it is
+    /// verified, so it can never merge under required signatures (#529).
+    /// Like any regen, this replaces the branch: commits pushed to it by
+    /// hand are discarded, which is intended — unsigned, they could never
+    /// merge anyway.
+    UnsignedCommits,
 }
 
 /// Versions listed under `## New versions` in a scanner PR body.
@@ -141,8 +147,9 @@ pub fn parse_pr_versions(body: &str) -> Vec<String> {
 /// `new_versions` must be non-empty — an empty list would be vacuously
 /// covered by any open PR. [`crate::pr::deliver`] enforces this.
 ///
-/// A covering PR is skipped only when its head is verified; an unsigned
-/// one can never merge, so it is regenerated through the signed path.
+/// A covering PR is skipped only when every commit on it is verified; one
+/// with an unsigned commit can never merge, so it is regenerated through
+/// the signed path.
 pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Decision {
     let Some(pr) = candidate(prefix, open_prs) else {
         return Decision::OpenNew;
@@ -150,8 +157,8 @@ pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Dec
     let covered = parse_pr_versions(&pr.body);
     let reason = if !new_versions.iter().all(|v| covered.contains(v)) {
         RegenReason::MissingVersions
-    } else if !pr.head_verified {
-        RegenReason::UnsignedHead
+    } else if !pr.commits_verified {
+        RegenReason::UnsignedCommits
     } else {
         return Decision::Skip {
             pr: pr.number,
@@ -166,7 +173,7 @@ pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Dec
 
 /// The open PR [`decide`] acts on: the oldest non-fork PR whose head
 /// branch starts with `prefix`. Exposed so the caller can look up the
-/// head's signature for this one PR only.
+/// commit signatures for this one PR only.
 pub fn candidate<'a>(prefix: &str, open_prs: &'a [OpenPr]) -> Option<&'a OpenPr> {
     open_prs
         .iter()
@@ -198,7 +205,7 @@ mod tests {
             head_oid: "abc123".to_string(),
             body: body(versions),
             cross_repo: false,
-            head_verified: true,
+            commits_verified: true,
         }
     }
 
@@ -271,12 +278,12 @@ mod tests {
         );
     }
 
-    /// #519: a covering PR whose head is unsigned can never merge, so it is
+    /// #519: a covering PR with an unsigned commit can never merge, so it is
     /// regenerated through the signed path instead of skipped forever.
     #[test]
-    fn regen_when_covering_pr_head_is_unsigned() {
+    fn regen_when_covering_pr_has_unsigned_commits() {
         let mut unsigned = pr(519, "scan/node/2026-10-28", &["24.22.2", "26.13.0"]);
-        unsigned.head_verified = false;
+        unsigned.commits_verified = false;
         assert_eq!(
             decide(
                 "scan/node/",
@@ -285,17 +292,17 @@ mod tests {
             ),
             Decision::UpdateExisting {
                 pr: unsigned,
-                reason: RegenReason::UnsignedHead,
+                reason: RegenReason::UnsignedCommits,
             }
         );
     }
 
-    /// Missing versions outrank an unsigned head: the regen reason names
+    /// Missing versions outrank unsigned commits: the regen reason names
     /// what the PR lacks, not only that it cannot merge.
     #[test]
-    fn missing_versions_reason_wins_over_unsigned_head() {
+    fn missing_versions_reason_wins_over_unsigned_commits() {
         let mut unsigned = pr(398, "scan/rust/2026-10-16", &["1.99.1"]);
-        unsigned.head_verified = false;
+        unsigned.commits_verified = false;
         assert_eq!(
             decide("scan/rust/", &[unsigned.clone()], &vs(&["1.100.0"])),
             missing(&unsigned)
@@ -401,17 +408,17 @@ mod tests {
 
     #[test]
     fn parse_open_prs_reads_gh_json() {
-        let json = r#"[{"number":398,"headRefName":"scan/rust/2026-10-16","headRefOid":"9f27","body":null,"isCrossRepository":false,"headVerified":true},
+        let json = r#"[{"number":398,"headRefName":"scan/rust/2026-10-16","headRefOid":"9f27","body":null,"isCrossRepository":false,"commitsVerified":true},
                       {"number":5,"headRefName":"x","headRefOid":"1","body":"b"}]"#;
         let prs = parse_open_prs(json).unwrap();
         assert_eq!(prs[0].number, 398);
         assert_eq!(prs[0].head_oid, "9f27");
         assert_eq!(prs[0].body, "");
         assert!(!prs[0].cross_repo);
-        assert!(prs[0].head_verified);
+        assert!(prs[0].commits_verified);
         assert!(
-            !prs[1].head_verified,
-            "a missing headVerified must read as unverified, not error"
+            !prs[1].commits_verified,
+            "a missing commitsVerified must read as unverified, not error"
         );
         assert!(
             prs[1].cross_repo,

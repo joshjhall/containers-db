@@ -173,8 +173,8 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
     );
     let mut open = list_open_prs(repo_root)?;
-    mark_candidate_verified(tool_id, prefix, &mut open, |oid| {
-        head_verified(repo_root, oid)
+    mark_candidate_verified(tool_id, prefix, &mut open, |number| {
+        commits_verified(repo_root, number)
     });
     deliver_with(
         repo_root,
@@ -228,8 +228,8 @@ fn deliver_with(
                         "scanner: {tool_id}: open scan PR #{n} is missing versions; regenerating"
                     )
                 }
-                RegenReason::UnsignedHead => println!(
-                    "scanner: {tool_id}: open scan PR #{n} covers the versions but its head is unsigned; regenerating"
+                RegenReason::UnsignedCommits => println!(
+                    "scanner: {tool_id}: open scan PR #{n} covers the versions but has unsigned commits; regenerating (its branch is replaced)"
                 ),
             }
             on_branch_then_return(repo_root, || update(pr).map(Delivery::Updated))
@@ -404,19 +404,19 @@ fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
     Ok(prs)
 }
 
-/// Look up whether the head of the PR [`dedup::decide`] will act on is
-/// GitHub-verified, and record it on that row. Only the candidate needs
+/// Look up whether every commit on the PR [`dedup::decide`] will act on
+/// is GitHub-verified, and record it on that row. Only the candidate needs
 /// it, so this is one API call per tool rather than one per open PR.
 ///
 /// A failed lookup leaves the row unverified: a redundant regen costs one
 /// signed commit, a wrong skip strands the release (#529). `lookup` is
-/// [`head_verified`] in production, injected so the fail-closed path is
+/// [`commits_verified`] in production, injected so the fail-closed path is
 /// testable without `gh`.
 fn mark_candidate_verified(
     tool_id: &str,
     prefix: &str,
     open: &mut [OpenPr],
-    lookup: impl FnOnce(&str) -> Result<bool>,
+    lookup: impl FnOnce(u64) -> Result<bool>,
 ) {
     let Some(number) = dedup::candidate(prefix, open).map(|pr| pr.number) else {
         return;
@@ -424,39 +424,49 @@ fn mark_candidate_verified(
     let Some(pr) = open.iter_mut().find(|pr| pr.number == number) else {
         return;
     };
-    pr.head_verified = match lookup(&pr.head_oid) {
+    pr.commits_verified = match lookup(number) {
         Ok(v) => v,
         Err(e) => {
             eprintln!(
-                "scanner: {tool_id}: could not check the signature of PR #{number}'s head; treating it as unsigned: {e:#}"
+                "scanner: {tool_id}: could not check the commit signatures of PR #{number}; treating it as unsigned: {e:#}"
             );
             false
         }
     };
 }
 
-/// Whether commit `oid` carries a GitHub-verified signature.
-fn head_verified(repo_root: &Path, oid: &str) -> Result<bool> {
+/// Whether every commit on PR `number` carries a GitHub-verified signature.
+fn commits_verified(repo_root: &Path, number: u64) -> Result<bool> {
     let out = gh(
         repo_root,
         &[
             "api",
-            &format!("repos/{{owner}}/{{repo}}/commits/{oid}"),
+            "--paginate",
+            &format!("repos/{{owner}}/{{repo}}/pulls/{number}/commits"),
             "--jq",
-            ".commit.verification.verified",
+            ".[].commit.verification.verified",
         ],
     )?;
     parse_verified(&out)
 }
 
-/// Parse the `--jq .commit.verification.verified` output. Anything but a
-/// bare `true`/`false` is an error, so the caller fails toward a regen.
+/// Parse the `--jq .[].commit.verification.verified` output: one line per
+/// commit, across every page. Verified only when there is at least one
+/// line and every line is `true`; any line that is not a bare `true` or
+/// `false` is an error, so the caller fails toward a regen.
 fn parse_verified(out: &str) -> Result<bool> {
-    match out.trim() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        other => anyhow::bail!("unexpected commit verification value {other:?}"),
+    let mut any = false;
+    let mut all = true;
+    for line in out.lines() {
+        match line.trim() {
+            "true" => {}
+            "false" => all = false,
+            other => anyhow::bail!("unexpected commit verification value {other:?}"),
+        }
+        any = true;
     }
+    anyhow::ensure!(any, "no commits listed for the PR");
+    Ok(all)
 }
 
 /// Regenerate onto an existing PR's branch: reset it to the current HEAD
@@ -604,29 +614,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_verified_accepts_only_bare_booleans() {
+    fn parse_verified_requires_every_commit_verified() {
         assert!(parse_verified("true\n").unwrap());
+        assert!(parse_verified("true\ntrue\ntrue\n").unwrap());
         assert!(!parse_verified("false\n").unwrap());
-        for bad in ["", "null\n", "True", "yes"] {
+        // A signed fixup on top of an unsigned commit is still unmergeable.
+        assert!(!parse_verified("false\ntrue\n").unwrap());
+        assert!(!parse_verified("true\nfalse\ntrue\n").unwrap());
+        for bad in ["", "\n", "null\n", "True", "yes", "true\nnull\n"] {
             assert!(parse_verified(bad).is_err(), "{bad:?} must be an error");
         }
     }
 
     /// Two matching scan PRs plus a fork; only the oldest non-fork row is
-    /// the candidate, so only its oid is looked up and only it is marked.
+    /// the candidate, so only it is looked up and only it is marked.
     fn listing() -> Vec<OpenPr> {
         let mut fork = open_pr_fixture(5, "scan/rust/evil");
         fork.cross_repo = true;
         vec![
             fork,
-            OpenPr {
-                head_oid: "newer".into(),
-                ..open_pr_fixture(402, "scan/rust/2026-10-17")
-            },
-            OpenPr {
-                head_oid: "oldest".into(),
-                ..open_pr_fixture(398, "scan/rust/2026-10-16")
-            },
+            open_pr_fixture(402, "scan/rust/2026-10-17"),
+            open_pr_fixture(398, "scan/rust/2026-10-16"),
         ]
     }
 
@@ -634,14 +642,14 @@ mod tests {
     fn mark_candidate_verified_marks_only_the_candidate() {
         let mut open = listing();
         let mut asked = None;
-        mark_candidate_verified("rust", "scan/rust/", &mut open, |oid| {
-            asked = Some(oid.to_string());
+        mark_candidate_verified("rust", "scan/rust/", &mut open, |number| {
+            asked = Some(number);
             Ok(true)
         });
-        assert_eq!(asked.as_deref(), Some("oldest"));
+        assert_eq!(asked, Some(398));
         let marked: Vec<u64> = open
             .iter()
-            .filter(|p| p.head_verified)
+            .filter(|p| p.commits_verified)
             .map(|p| p.number)
             .collect();
         assert_eq!(marked, vec![398]);
@@ -653,17 +661,17 @@ mod tests {
     fn mark_candidate_verified_fails_closed_on_lookup_error() {
         let mut open = listing();
         for pr in &mut open {
-            pr.head_verified = true;
+            pr.commits_verified = true;
         }
         mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
             anyhow::bail!("gh api: 502")
         });
         let candidate = open.iter().find(|p| p.number == 398).unwrap();
-        assert!(!candidate.head_verified);
+        assert!(!candidate.commits_verified);
         assert!(
             open.iter()
                 .filter(|p| p.number != 398)
-                .all(|p| p.head_verified),
+                .all(|p| p.commits_verified),
             "non-candidate rows must be left untouched"
         );
     }
@@ -674,7 +682,7 @@ mod tests {
         mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
             panic!("no candidate: lookup must not run")
         });
-        assert!(!open[0].head_verified);
+        assert!(!open[0].commits_verified);
     }
 
     #[test]
@@ -921,7 +929,7 @@ mod tests {
             head_oid: "abc".to_string(),
             body: String::new(),
             cross_repo: false,
-            head_verified: false,
+            commits_verified: false,
         }
     }
 
@@ -958,7 +966,7 @@ mod tests {
     #[test]
     fn deliver_update_passes_the_pr_and_returns() {
         // Both regen reasons take the same update path; only the log differs.
-        for reason in [RegenReason::MissingVersions, RegenReason::UnsignedHead] {
+        for reason in [RegenReason::MissingVersions, RegenReason::UnsignedCommits] {
             let dir = repo_with_generated_rust();
             let p = dir.path();
             let pr = open_pr_fixture(398, "scan/rust/2026-10-15");
