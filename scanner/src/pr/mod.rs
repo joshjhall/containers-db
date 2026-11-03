@@ -177,7 +177,7 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
     );
     let mut open = list_open_prs(repo_root)?;
-    mark_candidate_verified(tool_id, prefix, &mut open, |pr| {
+    mark_candidate_verified(tool_id, prefix, &mut open, new_versions, |pr| {
         commits_verified(repo_root, pr)
     });
     deliver_with(
