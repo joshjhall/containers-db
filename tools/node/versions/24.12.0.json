@@ -253,5 +253,179 @@
     }
   ],
   "tool": "node",
-  "version": "24.12.0"
+  "version": "24.12.0",
+  "tested": [
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "amd64",
+      "tested_at": "2026-11-03T07:52:29.407977468Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41516735934",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
+      "image_digest": "sha256:d8d9e5c46133deaca1ca616393c5a0b2c9bf2833d7c928b1f0f2fc5fc6a458a7",
+      "duration_seconds": 9232.559608686,
+      "version_output": "v24.12.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "arm64",
+      "tested_at": "2026-11-03T07:34:28.355055121Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41516735934",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-arm64",
+      "image_digest": "sha256:0d9db4d9a6a21479e896d2cc38166d98a1649e88f9753ee5b9c48d1a9070d3e2",
+      "duration_seconds": 6706.369751331,
+      "version_output": "v24.12.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "amd64",
+      "tested_at": "2026-11-03T05:57:49.272033815Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41516735934",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-amd64",
+      "image_digest": "sha256:0ad08080544a9155998623a76424cebf1c913a4481782408a34b38612830e168",
+      "duration_seconds": 6593.105982259,
+      "version_output": "v24.12.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "arm64",
+      "tested_at": "2026-11-03T02:13:21.327803295Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/41516735934",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-arm64",
+      "image_digest": "sha256:8cd4e3f30fadf5799f09ad0b7024416ecc73d00dbe550b642692f773efe4dcea",
+      "duration_seconds": 3874.399093692,
+      "version_output": "v24.12.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "verification_tier": 1
+    }
+  ]
 }
