@@ -78,8 +78,7 @@ pub(super) fn mark_candidate_verified(
             Err(e) => match delays.next() {
                 Some(&delay) => {
                     eprintln!(
-                        "scanner: {tool_id}: could not check the commit signatures of PR #{number}; retrying in {}s: {e:#}",
-                        delay.as_secs()
+                        "scanner: {tool_id}: could not check the commit signatures of PR #{number}; retrying in {delay:?}: {e:#}"
                     );
                     sleep(delay);
                 }
