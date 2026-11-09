@@ -263,7 +263,7 @@ impl Remote for ApiRemote<'_> {
     fn delete_branch(&self, branch: &str) -> Result<()> {
         // Percent-encoded per segment: `#`, `%` and `?` are legal in a ref
         // name and would otherwise send the DELETE to another ref.
-        let path = format!("git/refs/heads/{}", crate::github::encode_ref(branch));
+        let path = format!("git/refs/heads/{}", crate::github::encode_ref(branch)?);
         self.gh.rest(reqwest::Method::DELETE, &path, None)?;
         Ok(())
     }

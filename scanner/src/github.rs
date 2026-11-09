@@ -267,25 +267,32 @@ fn split_owner_repo(s: &str) -> Result<(String, String)> {
 }
 
 /// `ref` with each `/`-separated segment percent-encoded, for a REST path.
-/// Only unreserved characters pass through, so no ref name can add a query,
-/// a fragment, or a `..` segment.
-pub fn encode_ref(r: &str) -> String {
+/// Only unreserved characters pass through, so no ref name can add a query
+/// or a fragment.
+///
+/// An empty, `.` or `..` segment is refused rather than encoded: URL parsing
+/// (WHATWG, as the `url` crate under reqwest does it) decodes `%2E%2E` back
+/// into a dot segment and collapses it, so encoding cannot stop the request
+/// naming another ref. Git forbids all three in a ref name anyway.
+pub fn encode_ref(r: &str) -> Result<String> {
     r.split('/')
         .map(|seg| {
-            let enc: String = seg
+            ensure!(
+                !matches!(seg, "" | "." | ".."),
+                "refusing ref {r:?}: empty or dot path segment"
+            );
+            Ok(seg
                 .bytes()
                 .map(|b| match b {
-                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'~' => {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                         (b as char).to_string()
                     }
-                    b'.' if seg != "." && seg != ".." => ".".to_string(),
                     _ => format!("%{b:02X}"),
                 })
-                .collect();
-            enc
+                .collect::<String>())
         })
-        .collect::<Vec<_>>()
-        .join("/")
+        .collect::<Result<Vec<_>>>()
+        .map(|segs| segs.join("/"))
 }
 
 /// The `rel="next"` target of a `Link` header.
@@ -522,13 +529,27 @@ mod tests {
 
     #[test]
     fn encode_ref_keeps_slashes_and_escapes_the_rest() {
-        assert_eq!(encode_ref("scan/rust/2026-11-09"), "scan/rust/2026-11-09");
-        assert_eq!(
-            encode_ref("scanner-staging/v1.2/abc"),
-            "scanner-staging/v1.2/abc"
-        );
-        assert_eq!(encode_ref("scan/x#y"), "scan/x%23y");
-        assert_eq!(encode_ref("a%2Fb?c"), "a%252Fb%3Fc");
-        assert_eq!(encode_ref("a/../b"), "a/%2E%2E/b");
+        let enc = |r: &str| encode_ref(r).unwrap();
+        assert_eq!(enc("scan/rust/2026-11-09"), "scan/rust/2026-11-09");
+        assert_eq!(enc("scanner-staging/v1.2/abc"), "scanner-staging/v1.2/abc");
+        assert_eq!(enc("scan/x#y"), "scan/x%23y");
+        assert_eq!(enc("a%2Fb?c"), "a%252Fb%3Fc");
+        assert_eq!(enc("a b"), "a%20b");
+        assert_eq!(enc("\u{e9}"), "%C3%A9");
+        // A dot inside a segment is fine; only whole dot segments collapse.
+        assert_eq!(enc("a/.b/c."), "a/.b/c.");
+    }
+
+    /// Encoding cannot protect a dot segment: URL parsing decodes and
+    /// collapses `%2E%2E`. So these are refused, never sent.
+    #[test]
+    fn encode_ref_refuses_dot_and_empty_segments() {
+        for bad in ["a/../b", "a/./b", "..", ".", "a//b", "/a", "a/", ""] {
+            let err = encode_ref(bad).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("dot path segment"),
+                "{bad:?}: {err:#}"
+            );
+        }
     }
 }
