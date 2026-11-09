@@ -334,14 +334,16 @@ mod tests {
     fn mark_candidate_verified_retries_a_transient_lookup_error() {
         let mut open = listing();
         let mut calls = 0;
+        let mut asked = Vec::new();
         let mut slept = Vec::new();
         mark_candidate_verified(
             "rust",
             "scan/rust/",
             &mut open,
             &wanted(),
-            |_| {
+            |pr| {
                 calls += 1;
+                asked.push(pr.number);
                 if calls <= LOOKUP_RETRY_DELAYS.len() {
                     anyhow::bail!("gh api: 403 rate limited")
                 }
@@ -351,6 +353,11 @@ mod tests {
         );
         assert!(calls >= 2, "the lookup was retried");
         assert_eq!(calls, LOOKUP_RETRY_DELAYS.len() + 1);
+        assert_eq!(
+            asked,
+            vec![398; calls],
+            "every retry asks about the candidate"
+        );
         assert_eq!(slept, LOOKUP_RETRY_DELAYS);
         let candidate = open.iter().find(|p| p.number == 398).unwrap();
         assert!(candidate.commits_verified, "the retried answer is recorded");
