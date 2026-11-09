@@ -315,6 +315,19 @@ mod tests {
         );
     }
 
+    /// The retry tests derive their expectations from the table, so pin the
+    /// table itself: #535 needs at least one retry, and a persistent failure
+    /// must not stall a scan run for long before the fail-closed regen.
+    #[test]
+    fn lookup_retry_delays_retry_at_least_once_within_a_bounded_cost() {
+        assert!(!LOOKUP_RETRY_DELAYS.is_empty(), "#535 needs a retry");
+        let total: Duration = LOOKUP_RETRY_DELAYS.iter().sum();
+        assert!(
+            total <= Duration::from_secs(10),
+            "retry cost per scan run is bounded, got {total:?}"
+        );
+    }
+
     /// #535: a transient failure that clears on retry yields the true
     /// answer, so a verified PR is not regenerated.
     #[test]
@@ -336,6 +349,7 @@ mod tests {
             },
             |d| slept.push(d),
         );
+        assert!(calls >= 2, "the lookup was retried");
         assert_eq!(calls, LOOKUP_RETRY_DELAYS.len() + 1);
         assert_eq!(slept, LOOKUP_RETRY_DELAYS);
         let candidate = open.iter().find(|p| p.number == 398).unwrap();
