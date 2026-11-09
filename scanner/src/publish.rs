@@ -816,6 +816,23 @@ mod tests {
             remote.delete_branch("scanner-staging/x#y/abc").unwrap();
         }
 
+        /// A dot segment is refused before any request: URL parsing would
+        /// collapse it and the DELETE would name another ref.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn delete_branch_refuses_a_dot_segment_without_a_request() {
+            let server = MockServer::start().await;
+            with_repo_id(&server).await;
+            Mock::given(method("DELETE"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let gh = client_for(&server);
+            let remote = ApiRemote::discover(&gh).unwrap();
+            let err = remote.delete_branch("scanner-staging/../main").unwrap_err();
+            assert!(format!("{err:#}").contains("dot path segment"), "{err:#}");
+        }
+
         #[tokio::test(flavor = "multi_thread")]
         async fn discover_needs_a_repo_id() {
             let server = MockServer::start().await;
