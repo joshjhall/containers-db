@@ -191,7 +191,9 @@ mod tests {
         .await;
         Mock::given(method("POST"))
             .and(path("/repos/o/r/issues/9/comments"))
-            .and(body_partial_json(json!({})))
+            .and(body_partial_json(json!({
+                "body": issue_body("rust", "boom", at(2026, 5, 11))
+            })))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .expect(1)
             .mount(&server)
@@ -232,5 +234,78 @@ mod tests {
             .await;
         let url = report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11));
         assert_eq!(url.unwrap(), "new");
+    }
+
+    /// The match may sit past the first page: it is still commented on,
+    /// not duplicated.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_match_on_a_later_page_is_found() {
+        let server = MockServer::start().await;
+        let page2 = format!("{}/repos/o/r/issues?page=2", server.uri());
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/issues"))
+            .and(query_param("page", "2"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"number": 9, "title": TITLE, "html_url": "u9"}])),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/issues"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"number": 3, "title": "other", "html_url": "u3"}]))
+                    .insert_header("link", format!(r#"<{page2}>; rel="next""#)),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/issues/9/comments"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/issues"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let url = report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11));
+        assert_eq!(url.unwrap(), "u9");
+    }
+
+    /// A failed lookup is an error, not "no issue": filing blind would
+    /// duplicate one that exists.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_lookup_files_nothing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(502))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let err =
+            report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11)).unwrap_err();
+        assert!(format!("{err:#}").contains("502"), "{err:#}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_created_issue_without_a_url_is_an_error() {
+        let server = MockServer::start().await;
+        listing(&server, json!([])).await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/issues"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"number": 1})))
+            .mount(&server)
+            .await;
+        let err =
+            report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11)).unwrap_err();
+        assert!(format!("{err:#}").contains("html_url"), "{err:#}");
     }
 }
