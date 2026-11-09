@@ -3,13 +3,13 @@
 //! The scanner computes "new" versions against `main`, so versions sitting
 //! in an open, unmerged scan PR look new again on every hourly run. Before
 //! opening a PR, the orchestrator lists open PRs and asks [`decide`] what to
-//! do. Everything here is pure so the decision is testable without `gh`.
+//! do. Everything here is pure so the decision is testable without the GitHub API.
 //!
 //! The versions an open PR covers are recovered from its body — the
 //! `## New versions` bullet list that [`crate::pr::pr_body`] writes — not
 //! from its title: a backfill title names only a range (`from to last`).
 
-/// An open PR as listed by `gh pr list`.
+/// An open PR as listed by the GitHub API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenPr {
     pub number: u64,
@@ -29,46 +29,29 @@ pub struct OpenPr {
     pub commits_verified: bool,
 }
 
-/// `--json` fields [`parse_open_prs`] expects from `gh pr list`.
-pub const GH_PR_FIELDS: &str = "number,headRefName,headRefOid,body,isCrossRepository";
-
-/// Parse `gh pr list --json` output into [`OpenPr`]s.
+/// Read REST `pulls` rows into [`OpenPr`]s.
 ///
-/// Errors on malformed output rather than dropping rows: a dropped row
-/// would fail open into a duplicate PR. A missing `isCrossRepository`
-/// reads as cross-repo, so [`decide`] ignores the row; a missing
-/// `commitsVerified` reads as unverified.
-pub fn parse_open_prs(json: &str) -> Result<Vec<OpenPr>, String> {
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_str(json).map_err(|e| format!("parsing `gh pr list` output: {e}"))?;
+/// Errors on a malformed row rather than dropping it: a dropped row would
+/// fail open into a duplicate PR. A row whose head repository is missing
+/// (deleted fork) or is not the base repository reads as cross-repo, so
+/// [`decide`] ignores it. The listing carries no signature data, so every
+/// row starts unverified; [`crate::pr`] looks it up for the one candidate.
+pub fn parse_open_prs(rows: &[serde_json::Value]) -> Result<Vec<OpenPr>, String> {
     rows.iter()
         .map(|r| {
-            let missing = |k: &str| format!("`gh pr list` row missing `{k}`: {r}");
-            let text = |k: &str| {
-                r.get(k)
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                    .ok_or_else(|| missing(k))
+            let missing = |k: &str| format!("PR listing row missing `{k}`: {r}");
+            let text = |v: &serde_json::Value, k: &str| {
+                v.as_str().map(str::to_string).ok_or_else(|| missing(k))
             };
+            let base_repo = r["base"]["repo"]["full_name"].as_str();
+            let head_repo = r["head"]["repo"]["full_name"].as_str();
             Ok(OpenPr {
-                number: r
-                    .get("number")
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or_else(|| missing("number"))?,
-                head: text("headRefName")?,
-                head_oid: text("headRefOid")?,
-                body: text("body").unwrap_or_default(),
-                cross_repo: r
-                    .get("isCrossRepository")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(true),
-                // `gh pr list` has no verification field; [`crate::pr`]
-                // looks it up for the one candidate PR. Absent reads as
-                // unverified so it fails toward a regen, never a skip.
-                commits_verified: r
-                    .get("commitsVerified")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
+                number: r["number"].as_u64().ok_or_else(|| missing("number"))?,
+                head: text(&r["head"]["ref"], "head.ref")?,
+                head_oid: text(&r["head"]["sha"], "head.sha")?,
+                body: r["body"].as_str().unwrap_or_default().to_string(),
+                cross_repo: head_repo.is_none() || head_repo != base_repo,
+                commits_verified: false,
             })
         })
         .collect()
@@ -79,7 +62,7 @@ pub fn parse_open_prs(json: &str) -> Result<Vec<OpenPr>, String> {
 pub fn check_not_truncated(len: usize, limit: usize) -> Result<(), String> {
     if len >= limit {
         return Err(format!(
-            "`gh pr list` hit its {limit}-PR limit; refusing to dedup on a truncated list"
+            "the PR listing hit its {limit}-PR limit; refusing to dedup on a truncated list"
         ));
     }
     Ok(())
@@ -431,29 +414,44 @@ mod tests {
         assert!(check_not_truncated(1000, 1000).is_err());
     }
 
+    /// A REST `pulls` row.
+    fn rest_row(number: u64, head_repo: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "number": number,
+            "body": null,
+            "head": {"ref": "scan/rust/2026-10-16", "sha": "9f27", "repo": head_repo},
+            "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+        })
+    }
+
     #[test]
-    fn parse_open_prs_reads_gh_json() {
-        let json = r#"[{"number":398,"headRefName":"scan/rust/2026-10-16","headRefOid":"9f27","body":null,"isCrossRepository":false,"commitsVerified":true},
-                      {"number":5,"headRefName":"x","headRefOid":"1","body":"b"}]"#;
-        let prs = parse_open_prs(json).unwrap();
+    fn parse_open_prs_reads_rest_rows() {
+        let rows = [
+            rest_row(398, serde_json::json!({"full_name": "o/r"})),
+            rest_row(5, serde_json::json!({"full_name": "fork/r"})),
+            rest_row(6, serde_json::Value::Null),
+        ];
+        let prs = parse_open_prs(&rows).unwrap();
         assert_eq!(prs[0].number, 398);
+        assert_eq!(prs[0].head, "scan/rust/2026-10-16");
         assert_eq!(prs[0].head_oid, "9f27");
         assert_eq!(prs[0].body, "");
         assert!(!prs[0].cross_repo);
-        assert!(prs[0].commits_verified);
+        assert!(prs[1].cross_repo, "a fork's head must read as cross-repo");
+        assert!(prs[2].cross_repo, "a deleted fork must fail closed");
         assert!(
-            !prs[1].commits_verified,
-            "a missing commitsVerified must read as unverified, not error"
-        );
-        assert!(
-            prs[1].cross_repo,
-            "missing isCrossRepository must fail closed"
+            prs.iter().all(|p| !p.commits_verified),
+            "the listing carries no signatures: every row starts unverified"
         );
     }
 
     #[test]
     fn parse_open_prs_rejects_malformed_rows() {
-        assert!(parse_open_prs(r#"[{"number":1,"headRefOid":"a"}]"#).is_err());
-        assert!(parse_open_prs("not json").is_err());
+        let mut no_sha = rest_row(1, serde_json::json!({"full_name": "o/r"}));
+        no_sha["head"]["sha"] = serde_json::Value::Null;
+        assert!(parse_open_prs(&[no_sha]).is_err());
+        let mut no_number = rest_row(1, serde_json::json!({"full_name": "o/r"}));
+        no_number["number"] = serde_json::json!("1");
+        assert!(parse_open_prs(&[no_number]).is_err());
     }
 }

@@ -19,6 +19,8 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::Engine as _;
 use serde_json::{Value, json};
 
+use crate::github::GitHub;
+
 /// The file-level difference between a commit and its parent, as
 /// `createCommitOnBranch` takes it: full contents for every added or
 /// modified path, and the paths removed.
@@ -35,7 +37,7 @@ pub struct RemoteCommit {
     pub tree: String,
 }
 
-/// The branch operations publishing needs. [`GhRemote`] is the GitHub
+/// The branch operations publishing needs. [`ApiRemote`] is the GitHub
 /// implementation; tests use a bare local repository.
 pub trait Remote {
     /// Create `branch` at `oid`. Fails if it already exists.
@@ -182,55 +184,36 @@ pub fn changes_between(repo_root: &Path, from: &str, to: &str) -> Result<FileCha
     Ok(changes)
 }
 
-/// [`Remote`] backed by the GitHub GraphQL API through `gh`, using
-/// whatever token `gh` has (`GH_TOKEN` = `SCANNER_TOKEN` in CI).
-pub struct GhRemote {
+/// [`Remote`] backed by the GitHub GraphQL API through [`GitHub`], using
+/// its token (`GH_TOKEN` = `SCANNER_TOKEN` in CI).
+pub struct ApiRemote<'a> {
+    gh: &'a GitHub,
     repo_id: String,
-    owner: String,
-    name: String,
 }
 
-impl GhRemote {
-    /// Resolve the repository `repo_root` belongs to.
-    pub fn discover(repo_root: &Path) -> Result<Self> {
-        let out = run(
-            "gh",
-            repo_root,
-            &["repo", "view", "--json", "id,nameWithOwner"],
-            None,
-        )?;
-        let v: Value = serde_json::from_slice(&out).context("parsing `gh repo view`")?;
-        let id = v["id"].as_str().context("`gh repo view`: no id")?;
-        let nwo = v["nameWithOwner"]
+impl<'a> ApiRemote<'a> {
+    /// Look up the node id of the client's repository, which `createRef` and
+    /// `updateRefs` take.
+    pub fn discover(gh: &'a GitHub) -> Result<Self> {
+        let v = gh.graphql(&json!({
+            "query": "query($o:String!,$n:String!){repository(owner:$o,name:$n){id}}",
+            "variables": {"o": gh.owner(), "n": gh.repo()},
+        }))?;
+        let id = v["data"]["repository"]["id"]
             .as_str()
-            .context("`gh repo view`: no nameWithOwner")?;
-        let (owner, name) = nwo
-            .split_once('/')
-            .with_context(|| format!("unexpected nameWithOwner {nwo:?}"))?;
-        Ok(GhRemote {
+            .with_context(|| format!("no repository id for {}/{}", gh.owner(), gh.repo()))?;
+        Ok(ApiRemote {
+            gh,
             repo_id: id.to_string(),
-            owner: owner.to_string(),
-            name: name.to_string(),
         })
     }
 
     fn graphql(&self, request: &Value) -> Result<Value> {
-        let body = serde_json::to_vec(request)?;
-        let out = run(
-            "gh",
-            Path::new("."),
-            &["api", "graphql", "--input", "-"],
-            Some(&body),
-        )?;
-        let v: Value = serde_json::from_slice(&out).context("parsing a GraphQL response")?;
-        if let Some(errors) = v.get("errors") {
-            bail!("GraphQL errors: {errors}");
-        }
-        Ok(v)
+        self.gh.graphql(request)
     }
 }
 
-impl Remote for GhRemote {
+impl Remote for ApiRemote<'_> {
     fn create_branch(&self, branch: &str, oid: &str) -> Result<()> {
         self.graphql(&json!({
             "query": "mutation($i:CreateRefInput!){createRef(input:$i){ref{name}}}",
@@ -250,7 +233,7 @@ impl Remote for GhRemote {
         message: &str,
         changes: &FileChanges,
     ) -> Result<RemoteCommit> {
-        let nwo = format!("{}/{}", self.owner, self.name);
+        let nwo = format!("{}/{}", self.gh.owner(), self.gh.repo());
         let v = self.graphql(&commit_request(
             &nwo,
             branch,
@@ -278,15 +261,17 @@ impl Remote for GhRemote {
     }
 
     fn delete_branch(&self, branch: &str) -> Result<()> {
-        let path = format!("repos/{}/{}/git/refs/heads/{branch}", self.owner, self.name);
-        run("gh", Path::new("."), &["api", "-X", "DELETE", &path], None)?;
+        // Percent-encoded per segment: `#`, `%` and `?` are legal in a ref
+        // name and would otherwise send the DELETE to another ref.
+        let path = format!("git/refs/heads/{}", crate::github::encode_ref(branch)?);
+        self.gh.rest(reqwest::Method::DELETE, &path, None)?;
         Ok(())
     }
 
     fn branch_head(&self, branch: &str) -> Result<Option<String>> {
         let v = self.graphql(&json!({
             "query": "query($o:String!,$n:String!,$r:String!){repository(owner:$o,name:$n){ref(qualifiedName:$r){target{oid}}}}",
-            "variables": {"o": self.owner, "n": self.name, "r": format!("refs/heads/{branch}")},
+            "variables": {"o": self.gh.owner(), "n": self.gh.repo(), "r": format!("refs/heads/{branch}")},
         }))?;
         Ok(v["data"]["repository"]["ref"]["target"]["oid"]
             .as_str()
@@ -723,6 +708,143 @@ mod tests {
         };
         let oid = publish_head(p, &remote, target, "m").unwrap();
         assert_eq!(remote.head("scan/rust/old"), Some(oid));
+    }
+
+    mod api_remote {
+        use super::super::*;
+        use crate::github::testing::client_for;
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        async fn with_repo_id(server: &MockServer) {
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_partial_json(
+                    json!({"variables": {"o": "o", "n": "r"}}),
+                ))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"data": {"repository": {"id": "R_1"}}})),
+                )
+                .up_to_n_times(1)
+                .mount(server)
+                .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn branch_ops_send_the_repo_id_and_refs() {
+            let server = MockServer::start().await;
+            with_repo_id(&server).await;
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_partial_json(json!({"variables": {"i": {
+                    "repositoryId": "R_1", "name": "refs/heads/b", "oid": "abc",
+                }}})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": {}})))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_partial_json(json!({"variables": {"i": {
+                    "repositoryId": "R_1",
+                    "refUpdates": [{"name": "refs/heads/b", "beforeOid": "abc", "afterOid": "def", "force": true}],
+                }}})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": {}})))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("DELETE"))
+                .and(path("/repos/o/r/git/refs/heads/b"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let gh = client_for(&server);
+            let remote = ApiRemote::discover(&gh).unwrap();
+            remote.create_branch("b", "abc").unwrap();
+            remote.move_branch("b", "abc", "def").unwrap();
+            remote.delete_branch("b").unwrap();
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn branch_head_reads_a_missing_ref_as_none() {
+            let server = MockServer::start().await;
+            with_repo_id(&server).await;
+            for (branch, oid) in [
+                ("there", json!({"target": {"oid": "abc"}})),
+                ("gone", Value::Null),
+            ] {
+                Mock::given(method("POST"))
+                    .and(path("/graphql"))
+                    .and(body_partial_json(
+                        json!({"variables": {"r": format!("refs/heads/{branch}")}}),
+                    ))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_json(json!({"data": {"repository": {"ref": oid}}})),
+                    )
+                    .mount(&server)
+                    .await;
+            }
+            let gh = client_for(&server);
+            let remote = ApiRemote::discover(&gh).unwrap();
+            assert_eq!(remote.branch_head("there").unwrap().as_deref(), Some("abc"));
+            assert_eq!(remote.branch_head("gone").unwrap(), None);
+        }
+
+        /// A `#` in the branch must reach GitHub encoded, not cut the path
+        /// at a fragment and delete a different ref.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn delete_branch_encodes_the_ref() {
+            let server = MockServer::start().await;
+            with_repo_id(&server).await;
+            Mock::given(method("DELETE"))
+                .and(path("/repos/o/r/git/refs/heads/scanner-staging/x%23y/abc"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("DELETE"))
+                .and(path("/repos/o/r/git/refs/heads/scanner-staging/x"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let gh = client_for(&server);
+            let remote = ApiRemote::discover(&gh).unwrap();
+            remote.delete_branch("scanner-staging/x#y/abc").unwrap();
+        }
+
+        /// A dot segment is refused before any request: URL parsing would
+        /// collapse it and the DELETE would name another ref.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn delete_branch_refuses_a_dot_segment_without_a_request() {
+            let server = MockServer::start().await;
+            with_repo_id(&server).await;
+            Mock::given(method("DELETE"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let gh = client_for(&server);
+            let remote = ApiRemote::discover(&gh).unwrap();
+            let err = remote.delete_branch("scanner-staging/../main").unwrap_err();
+            assert!(format!("{err:#}").contains("dot path segment"), "{err:#}");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn discover_needs_a_repo_id() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({"data": {"repository": null}})),
+                )
+                .mount(&server)
+                .await;
+            let gh = client_for(&server);
+            assert!(ApiRemote::discover(&gh).is_err());
+        }
     }
 
     #[test]

@@ -18,6 +18,7 @@ pub mod dedup;
 pub mod due;
 pub mod failure;
 pub mod generate;
+pub mod github;
 pub(crate) mod outcome;
 pub mod pr;
 pub mod publish;
@@ -564,7 +565,7 @@ mod tests {
             at(2026, 10, 17),
         );
         assert!(!ok);
-        // Recorded for the token job to file, not filed here (no `gh` call).
+        // Recorded for the token job to file, not filed here (no GitHub call).
         assert!(manifest.plans.is_empty());
         assert_eq!(manifest.failures.len(), 1);
         assert_eq!(manifest.failures[0].tool_id, "foo");
@@ -622,7 +623,7 @@ mod tests {
 
     #[test]
     fn a_bad_staged_failure_files_nothing_but_still_fails_the_run() {
-        // Refused before `gh` is called (no issue for a tool the checkout
+        // Refused before GitHub is called (no issue for a tool the checkout
         // doesn't have), yet the run still ends non-zero naming it.
         let repo = catalog_repo();
         let p = repo.path();
@@ -639,14 +640,14 @@ mod tests {
         assert_eq!(git(p, &["status", "--porcelain"]), "");
     }
 
-    /// A PR step for a test whose plan must be refused before `gh`.
+    /// A PR step for a test whose plan must be refused before any GitHub call.
     fn no_pr(req: &pr::PrRequest) -> anyhow::Result<pr::Delivery> {
         panic!("refused plan reached the PR step: {req:?}");
     }
 
     /// [`stage::deliver_manifest`] for a manifest whose every entry must be
     /// refused: filing an issue or reaching the PR step panics instead of
-    /// calling `gh`.
+    /// calling GitHub.
     fn deliver_refused(p: &Path, manifest: &Manifest) -> anyhow::Error {
         stage::deliver_manifest_with(
             p,
@@ -695,7 +696,7 @@ mod tests {
                 // What pr::deliver leaves behind either way: a clean base.
                 pr::discard_generated(p, &req.tool_id)?;
                 match req.tool_id.as_str() {
-                    "foo" => anyhow::bail!("gh pr create failed: 502"),
+                    "foo" => anyhow::bail!("POST pulls returned 502"),
                     _ => Ok(pr::Delivery::Opened("https://pr/1".into())),
                 }
             },
@@ -707,7 +708,7 @@ mod tests {
             reports,
             [
                 ("baz".to_string(), "upstream 502".to_string()),
-                ("foo".to_string(), "gh pr create failed: 502".to_string()),
+                ("foo".to_string(), "POST pulls returned 502".to_string()),
             ]
         );
         let tools: Vec<&str> = requests.iter().map(|r| r.tool_id.as_str()).collect();
@@ -800,7 +801,7 @@ mod tests {
 
     /// Run the `#[ignore]`d test `name` in a child of this test binary with
     /// an empty environment and `PATH` set to an empty directory, so no
-    /// `npx`/`gh` and no token. `PATH` is set, not just cleared: with it
+    /// `npx` and no token. `PATH` is set, not just cleared: with it
     /// unset, libc falls back to a default search path (`/bin:/usr/bin`)
     /// that may well hold them. Asserts that exactly that one test ran and
     /// passed.
@@ -1055,8 +1056,8 @@ mod tests {
 
     #[test]
     fn a_plan_for_an_unknown_tool_files_nothing_but_fails_the_run() {
-        // Vetted before base.guard and before `gh`: no issue or PR for a
-        // tool id the checkout doesn't have. Also stops before `gh` here.
+        // Vetted before base.guard and before any GitHub call: no issue or PR for a
+        // tool id the checkout doesn't have. Also stops before GitHub here.
         let repo = catalog_repo();
         let p = repo.path();
         let mut manifest = Manifest::new(pr::head_sha(p).unwrap());
