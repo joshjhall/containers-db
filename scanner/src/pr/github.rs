@@ -36,7 +36,11 @@ pub(super) fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 
 /// Look up whether every commit on the PR [`dedup::decide`] will act on
 /// is GitHub-verified, and record it on that row. Only the candidate needs
-/// it, so this is one API call per tool rather than one per open PR.
+/// it, so this is one API call per tool rather than one per open PR. And
+/// only a candidate that [`dedup::covers`] every new version is looked up:
+/// otherwise `decide` regenerates it for missing versions whatever its
+/// signatures say, and a failed lookup would only log a misleading
+/// warning (#536).
 ///
 /// A failed lookup leaves the row unverified: a redundant regen costs one
 /// signed commit, a wrong skip strands the release (#529). `lookup` is
@@ -46,9 +50,13 @@ pub(super) fn mark_candidate_verified(
     tool_id: &str,
     prefix: &str,
     open: &mut [OpenPr],
+    new_versions: &[String],
     lookup: impl FnOnce(&OpenPr) -> Result<bool>,
 ) {
-    let Some(number) = dedup::candidate(prefix, open).map(|pr| pr.number) else {
+    let Some(number) = dedup::candidate(prefix, open)
+        .filter(|pr| dedup::covers(pr, new_versions))
+        .map(|pr| pr.number)
+    else {
         return;
     };
     let Some(pr) = open.iter_mut().find(|pr| pr.number == number) else {
@@ -196,15 +204,30 @@ mod tests {
         assert!(!parse_verified(&commits(&[true, false, true]), "c0").unwrap());
     }
 
-    /// Two matching scan PRs plus a fork; only the oldest non-fork row is
-    /// the candidate, so only it is looked up and only it is marked.
+    /// The version every test below asks about; the candidate's body lists it.
+    fn wanted() -> Vec<String> {
+        vec!["1.0.0".to_string()]
+    }
+
+    /// A scan PR whose `## New versions` section lists `versions`.
+    fn listing_pr(number: u64, head: &str, versions: &[&str]) -> OpenPr {
+        let bullets: String = versions.iter().map(|v| format!("- `{v}`\n")).collect();
+        OpenPr {
+            body: format!("## New versions\n\n{bullets}"),
+            ..open_pr_fixture(number, head)
+        }
+    }
+
+    /// Two matching scan PRs plus a fork, all covering [`wanted`]; only the
+    /// oldest non-fork row is the candidate, so only it is looked up and
+    /// only it is marked.
     fn listing() -> Vec<OpenPr> {
-        let mut fork = open_pr_fixture(5, "scan/rust/evil");
+        let mut fork = listing_pr(5, "scan/rust/evil", &["1.0.0"]);
         fork.cross_repo = true;
         vec![
             fork,
-            open_pr_fixture(402, "scan/rust/2026-10-17"),
-            open_pr_fixture(398, "scan/rust/2026-10-16"),
+            listing_pr(402, "scan/rust/2026-10-17", &["1.0.0"]),
+            listing_pr(398, "scan/rust/2026-10-16", &["1.0.0"]),
         ]
     }
 
@@ -212,7 +235,7 @@ mod tests {
     fn mark_candidate_verified_marks_only_the_candidate() {
         let mut open = listing();
         let mut asked = None;
-        mark_candidate_verified("rust", "scan/rust/", &mut open, |pr| {
+        mark_candidate_verified("rust", "scan/rust/", &mut open, &wanted(), |pr| {
             asked = Some(pr.number);
             Ok(true)
         });
@@ -233,7 +256,7 @@ mod tests {
         for pr in &mut open {
             pr.commits_verified = true;
         }
-        mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
+        mark_candidate_verified("rust", "scan/rust/", &mut open, &wanted(), |_| {
             anyhow::bail!("gh api: 502")
         });
         let candidate = open.iter().find(|p| p.number == 398).unwrap();
@@ -252,14 +275,37 @@ mod tests {
         // apart from the fixture's `false` default.
         let mut open = vec![OpenPr {
             commits_verified: true,
-            ..open_pr_fixture(10, "scan/node/2026-10-16")
+            ..listing_pr(10, "scan/node/2026-10-16", &["1.0.0"])
         }];
-        mark_candidate_verified("rust", "scan/rust/", &mut open, |_| {
+        mark_candidate_verified("rust", "scan/rust/", &mut open, &wanted(), |_| {
             panic!("no candidate: lookup must not run")
         });
         assert!(
             open[0].commits_verified,
             "a non-candidate row is left untouched"
+        );
+    }
+
+    /// #536: a candidate missing a new version is regenerated whatever its
+    /// signatures say, so it is not looked up. The newer PR 402 covers
+    /// everything but is not the candidate, so it must not be looked up
+    /// either.
+    #[test]
+    fn mark_candidate_verified_skips_lookup_for_a_non_covering_candidate() {
+        let mut open = vec![
+            listing_pr(402, "scan/rust/2026-10-17", &["1.0.0", "1.0.1"]),
+            listing_pr(398, "scan/rust/2026-10-16", &["1.0.0"]),
+        ];
+        for pr in &mut open {
+            pr.commits_verified = true;
+        }
+        let new_versions = vec!["1.0.0".to_string(), "1.0.1".to_string()];
+        mark_candidate_verified("rust", "scan/rust/", &mut open, &new_versions, |_| {
+            panic!("non-covering candidate: lookup must not run")
+        });
+        assert!(
+            open.iter().all(|p| p.commits_verified),
+            "no row is touched when the candidate is not covering"
         );
     }
 }
