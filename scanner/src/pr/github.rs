@@ -46,8 +46,8 @@ pub(super) fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 /// A [`LookupError::Transient`] failure is retried after each of
 /// [`LOOKUP_RETRY_DELAYS`], so a transient `gh api` failure does not
 /// force-replace a good PR's branch every scan run (#535). A
-/// [`LookupError::Definitive`] one would get the same answer again, so it
-/// is not retried (#547). Either way, a lookup that never succeeds leaves
+/// [`LookupError::Definitive`] one is not retried (#547): asking again would
+/// almost always get the same refusal. Either way, a lookup that never succeeds leaves
 /// the row unverified: a redundant regen costs one signed commit, a wrong
 /// skip strands the release (#529). A definitive answer, `Ok(false)`
 /// included, is never retried.
@@ -120,8 +120,11 @@ pub(super) enum LookupError {
     /// the HTTP status codes of a direct API client (#532).
     #[error(transparent)]
     Transient(anyhow::Error),
-    /// `gh` answered, but [`parse_verified`] refused the answer. Asking
-    /// again gets the same refusal.
+    /// `gh` answered, but [`parse_verified`] refused the answer. Treated as
+    /// final by design: a malformed or capped listing comes back the same,
+    /// and the rarer cases that might not (an empty listing, a head that a
+    /// lagging listing omits) cost only a redundant regen, not a stranded
+    /// release (#529).
     #[error(transparent)]
     Definitive(anyhow::Error),
 }
