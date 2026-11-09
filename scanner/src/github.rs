@@ -605,6 +605,7 @@ mod tests {
     fn endpoints_accept_plain_http_only_to_loopback() {
         for base in [
             "http://127.0.0.1:8080",
+            "http://127.5.5.5:9",
             "http://localhost:9",
             "http://[::1]:9",
         ] {
@@ -636,6 +637,8 @@ mod tests {
             "http://127.0.0.1.evil.example",
             "http://10.0.0.1",
             "http://0.0.0.0",
+            // IPv4-mapped loopback is deliberately not accepted.
+            "http://[::ffff:127.0.0.1]",
         ] {
             let pairs = [("GITHUB_API_URL", base)];
             let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
@@ -745,13 +748,20 @@ mod tests {
         // An explicit default port and a mixed-case host are the same origin,
         // and come back canonical so `list()`'s pagination prefix check
         // matches the `Link` URLs the API echoes.
+        // Both halves non-canonical, so returning either raw input would fail.
         let pairs = [
             ("GITHUB_API_URL", "https://GHE.example:443/api/v3"),
-            ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql"),
+            ("GITHUB_GRAPHQL_URL", "https://Ghe.EXAMPLE:443/api/graphql"),
         ];
         let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
         assert_eq!(api, "https://ghe.example/api/v3");
         assert_eq!(graphql, "https://ghe.example/api/graphql");
+
+        // The derived default follows the normalized API URL.
+        let pairs = [("GITHUB_API_URL", "https://GHE.example:443/api/v3")];
+        let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
+        assert_eq!(api, "https://ghe.example/api/v3");
+        assert_eq!(graphql, "https://ghe.example/api/v3/graphql");
     }
 
     #[test]
