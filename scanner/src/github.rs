@@ -645,14 +645,22 @@ mod tests {
 
     #[test]
     fn endpoints_refuse_unparseable_hostless_and_other_schemes() {
-        for (value, want) in [
-            ("not-a-url", "GITHUB_API_URL is not a valid URL"),
-            ("data:text/plain,x", "GITHUB_API_URL has no host"),
-            ("ftp://ghe.example", "GITHUB_API_URL must use https"),
-        ] {
-            let pairs = [("GITHUB_API_URL", value)];
-            let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
-            assert!(err.contains(want), "{value}: {err}");
+        for var in ["GITHUB_API_URL", "GITHUB_GRAPHQL_URL"] {
+            for (value, want) in [
+                ("not-a-url", "is not a valid URL"),
+                ("data:text/plain,x", "has no host"),
+                ("ftp://ghe.example", "must use https"),
+            ] {
+                // The bad value on `var`, a valid API URL otherwise.
+                let mut pairs = vec![("GITHUB_API_URL", "https://ghe.example/api/v3")];
+                pairs.retain(|(n, _)| *n != var);
+                pairs.push((var, value));
+                let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+                assert!(
+                    err.contains(&format!("{var} {want}")),
+                    "{var}={value}: {err}"
+                );
+            }
         }
     }
 
