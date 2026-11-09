@@ -255,7 +255,9 @@ fn split_owner_repo(s: &str) -> Result<(String, String)> {
     let repo = parts.next().unwrap_or_default();
     let owner = parts.next().unwrap_or_default();
     let valid = |p: &str| {
-        !p.is_empty()
+        // A whole `.`/`..` segment would be collapsed by URL parsing and
+        // aim the token at another API path; a leading dot (`.github`) is fine.
+        !matches!(p, "" | "." | "..")
             && p.chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };
@@ -513,7 +515,20 @@ mod tests {
                 "{s}"
             );
         }
-        for bad in ["", "r", "https://github.com/", "o/r?x=1"] {
+        assert_eq!(
+            split_owner_repo("o/.github").unwrap(),
+            ("o".to_string(), ".github".to_string())
+        );
+        for bad in [
+            "",
+            "r",
+            "https://github.com/",
+            "o/r?x=1",
+            "../..",
+            "o/..",
+            "./r",
+            "git@github.com:o/..git",
+        ] {
             assert!(split_owner_repo(bad).is_err(), "{bad:?}");
         }
     }

@@ -39,8 +39,8 @@ pub fn issue_body(tool_id: &str, error: &str, now: DateTime<Utc>) -> String {
 /// only issues with it.
 const FAILURE_LABEL: &str = "scanner-failure";
 
-/// Most open tracking issues the lookup reads before giving up on finding
-/// a match and filing a new one.
+/// Most open tracking issues the lookup reads. A listing that fills it
+/// without a match is refused rather than read as "none open".
 const OPEN_ISSUE_SCAN_LIMIT: usize = 500;
 
 /// Open or comment on the failure-tracking issue. Returns the issue URL.
@@ -92,6 +92,12 @@ fn find_open_issue(gh: &GitHub, title: &str) -> Result<Option<(u64, String)>> {
         .iter()
         .find(|i| i.get("pull_request").is_none() && i["title"].as_str() == Some(title))
     else {
+        // A listing that filled the cap may hide the match on a later page;
+        // "no match" there would file a duplicate.
+        anyhow::ensure!(
+            issues.len() < OPEN_ISSUE_SCAN_LIMIT,
+            "open {FAILURE_LABEL} listing hit its {OPEN_ISSUE_SCAN_LIMIT}-issue cap; refusing to file a possible duplicate"
+        );
         return Ok(None);
     };
     // A match we cannot act on is an error, never a miss: a miss files a
@@ -358,5 +364,23 @@ mod tests {
         let err =
             report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11)).unwrap_err();
         assert!(format!("{err:#}").contains("503"), "{err:#}");
+    }
+
+    /// No match in a capped listing is unknown, not absent: refuse to file.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_capped_listing_without_a_match_files_nothing() {
+        let server = MockServer::start().await;
+        let rows: Vec<serde_json::Value> = (0..OPEN_ISSUE_SCAN_LIMIT as u64)
+            .map(|n| json!({"number": n, "title": "other", "html_url": "u"}))
+            .collect();
+        listing(&server, serde_json::Value::Array(rows)).await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let err =
+            report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11)).unwrap_err();
+        assert!(format!("{err:#}").contains("refusing to file"), "{err:#}");
     }
 }
