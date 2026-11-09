@@ -700,6 +700,29 @@ mod tests {
             assert!(err.contains("must not carry credentials"), "{err}");
             assert!(!err.contains("tok3n"), "{err}");
         }
+
+        // Password with no username.
+        let err = endpoints_from(env_of(&[(
+            "GITHUB_API_URL",
+            "https://:pw0rd@ghe.example/api/v3",
+        )]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("must not carry credentials"), "{err}");
+        assert!(!err.contains("pw0rd"), "{err}");
+    }
+
+    #[test]
+    fn endpoints_compare_origins_after_port_normalization() {
+        // An explicit default port is the same origin; the GraphQL value is
+        // passed through as given, trailing slash and all.
+        let pairs = [
+            ("GITHUB_API_URL", "https://ghe.example:443/api/v3"),
+            ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql/"),
+        ];
+        let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
+        assert_eq!(api, "https://ghe.example:443/api/v3");
+        assert_eq!(graphql, "https://ghe.example/api/graphql/");
     }
 
     #[test]
