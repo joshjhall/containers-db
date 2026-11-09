@@ -367,6 +367,36 @@ mod tests {
         assert!(!candidate.commits_verified);
     }
 
+    /// A retry that gets a definitive "unsigned" answer records it and
+    /// stops: one sleep, no further attempts, and the row stays unverified.
+    #[test]
+    fn mark_candidate_verified_records_an_unsigned_answer_after_a_retry() {
+        let mut open = listing();
+        for pr in &mut open {
+            pr.commits_verified = true;
+        }
+        let mut calls = 0;
+        let mut slept = Vec::new();
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |_| {
+                calls += 1;
+                if calls == 1 {
+                    anyhow::bail!("gh api: 502")
+                }
+                Ok(false)
+            },
+            |d| slept.push(d),
+        );
+        assert_eq!(calls, 2, "stops at the first definitive answer");
+        assert_eq!(slept, &LOOKUP_RETRY_DELAYS[..1]);
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(!candidate.commits_verified);
+    }
+
     #[test]
     fn mark_candidate_verified_skips_lookup_without_a_candidate() {
         // Start from `true` so the final assert can tell "left untouched"
