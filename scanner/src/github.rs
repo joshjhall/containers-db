@@ -435,7 +435,10 @@ mod tests {
         let server = MockServer::start().await;
         two_pages(&server).await;
         let rows = client_for(&server).list("pulls", 2).unwrap();
-        assert_eq!(rows.len(), 2, "the second page must not be fetched");
+        assert_eq!(rows.len(), 2);
+        // Not just truncated after the fact: page 2 is never requested.
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "the second page must not be fetched");
     }
 
     /// A `next` link to another host would carry the token there.
