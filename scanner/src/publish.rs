@@ -261,7 +261,9 @@ impl Remote for ApiRemote<'_> {
     }
 
     fn delete_branch(&self, branch: &str) -> Result<()> {
-        let path = format!("git/refs/heads/{branch}");
+        // Percent-encoded per segment: `#`, `%` and `?` are legal in a ref
+        // name and would otherwise send the DELETE to another ref.
+        let path = format!("git/refs/heads/{}", crate::github::encode_ref(branch));
         self.gh.rest(reqwest::Method::DELETE, &path, None)?;
         Ok(())
     }
@@ -789,6 +791,29 @@ mod tests {
             let remote = ApiRemote::discover(&gh).unwrap();
             assert_eq!(remote.branch_head("there").unwrap().as_deref(), Some("abc"));
             assert_eq!(remote.branch_head("gone").unwrap(), None);
+        }
+
+        /// A `#` in the branch must reach GitHub encoded, not cut the path
+        /// at a fragment and delete a different ref.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn delete_branch_encodes_the_ref() {
+            let server = MockServer::start().await;
+            with_repo_id(&server).await;
+            Mock::given(method("DELETE"))
+                .and(path("/repos/o/r/git/refs/heads/scanner-staging/x%23y/abc"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("DELETE"))
+                .and(path("/repos/o/r/git/refs/heads/scanner-staging/x"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let gh = client_for(&server);
+            let remote = ApiRemote::discover(&gh).unwrap();
+            remote.delete_branch("scanner-staging/x#y/abc").unwrap();
         }
 
         #[tokio::test(flavor = "multi_thread")]

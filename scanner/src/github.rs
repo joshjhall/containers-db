@@ -266,6 +266,28 @@ fn split_owner_repo(s: &str) -> Result<(String, String)> {
     Ok((owner.to_string(), repo.to_string()))
 }
 
+/// `ref` with each `/`-separated segment percent-encoded, for a REST path.
+/// Only unreserved characters pass through, so no ref name can add a query,
+/// a fragment, or a `..` segment.
+pub fn encode_ref(r: &str) -> String {
+    r.split('/')
+        .map(|seg| {
+            let enc: String = seg
+                .bytes()
+                .map(|b| match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'~' => {
+                        (b as char).to_string()
+                    }
+                    b'.' if seg != "." && seg != ".." => ".".to_string(),
+                    _ => format!("%{b:02X}"),
+                })
+                .collect();
+            enc
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// The `rel="next"` target of a `Link` header.
 fn next_link(link: &str) -> Option<String> {
     link.split(',').find_map(|part| {
@@ -496,5 +518,17 @@ mod tests {
             Some("https://a/3")
         );
         assert_eq!(next_link(r#"<https://a/1>; rel="last""#), None);
+    }
+
+    #[test]
+    fn encode_ref_keeps_slashes_and_escapes_the_rest() {
+        assert_eq!(encode_ref("scan/rust/2026-11-09"), "scan/rust/2026-11-09");
+        assert_eq!(
+            encode_ref("scanner-staging/v1.2/abc"),
+            "scanner-staging/v1.2/abc"
+        );
+        assert_eq!(encode_ref("scan/x#y"), "scan/x%23y");
+        assert_eq!(encode_ref("a%2Fb?c"), "a%252Fb%3Fc");
+        assert_eq!(encode_ref("a/../b"), "a/%2E%2E/b");
     }
 }
