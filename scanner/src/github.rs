@@ -267,6 +267,12 @@ fn checked_endpoint(var: &str, value: &str) -> Result<reqwest::Url> {
         url.username().is_empty() && url.password().is_none(),
         "{var} must not carry credentials in the URL"
     );
+    // A query or fragment would be logged with every request error and
+    // would swallow the paths built onto the base by string concatenation.
+    ensure!(
+        url.query().is_none() && url.fragment().is_none(),
+        "{var} must not carry a query or fragment"
+    );
     match url.scheme() {
         "https" => {}
         "http" if is_loopback(&host) => {}
@@ -747,6 +753,26 @@ mod tests {
         .to_string();
         assert!(err.contains("must not carry credentials"), "{err}");
         assert!(!err.contains("pw0rd"), "{err}");
+    }
+
+    #[test]
+    fn endpoints_refuse_query_or_fragment_and_never_echo_it() {
+        for var in ["GITHUB_API_URL", "GITHUB_GRAPHQL_URL"] {
+            for value in [
+                "https://ghe.example/api/v3?access_token=s3cret",
+                "https://ghe.example/api/v3#s3cret",
+            ] {
+                let mut pairs = vec![("GITHUB_API_URL", "https://ghe.example/api/v3")];
+                pairs.retain(|(n, _)| *n != var);
+                pairs.push((var, value));
+                let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+                assert!(
+                    err.contains(&format!("{var} must not carry a query or fragment")),
+                    "{var}={value}: {err}"
+                );
+                assert!(!err.contains("s3cret"), "{err}");
+            }
+        }
     }
 
     #[test]
