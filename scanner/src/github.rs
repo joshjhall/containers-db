@@ -65,12 +65,10 @@ impl GitHub {
             Some(nwo) => split_owner_repo(&nwo)?,
             None => split_owner_repo(&origin_url(repo_root)?)?,
         };
-        let api = env("GITHUB_API_URL").unwrap_or_else(|| DEFAULT_API_URL.to_string());
+        let (api, graphql) = endpoints_from(env)?;
         let client = http_client(TIMEOUT, TlsRoots::System)?;
         let mut gh = Self::with_base(client, &api, token, owner, repo);
-        if let Some(graphql) = env("GITHUB_GRAPHQL_URL") {
-            gh.graphql_url = graphql;
-        }
+        gh.graphql_url = graphql;
         Ok(gh)
     }
 
@@ -230,6 +228,70 @@ fn token_from(get: impl Fn(&str) -> Option<String>) -> Result<String> {
                 crate::validate::TOKEN_VARS.join(", ")
             )
         })
+}
+
+/// The REST and GraphQL endpoints from `GITHUB_API_URL` and
+/// `GITHUB_GRAPHQL_URL` (defaulting to github.com and `{api}/graphql`),
+/// refused unless the token can safely go to both: `https` (plain `http`
+/// only to a loopback host, for tests), no userinfo, and one origin for
+/// the pair. Errors name the variable (and at most the scheme), never any
+/// part of its value, which may carry credentials. The pair comes back
+/// normalized (default port dropped, host lowercased) so it matches the
+/// canonical URLs the API echoes in pagination `Link` headers.
+fn endpoints_from(get: impl Fn(&str) -> Option<String>) -> Result<(String, String)> {
+    let api = get("GITHUB_API_URL").unwrap_or_else(|| DEFAULT_API_URL.to_string());
+    let api = api.trim_end_matches('/').to_string();
+    let graphql = get("GITHUB_GRAPHQL_URL").unwrap_or_else(|| format!("{api}/graphql"));
+    let api_url = checked_endpoint("GITHUB_API_URL", &api)?;
+    let graphql_url = checked_endpoint("GITHUB_GRAPHQL_URL", &graphql)?;
+    ensure!(
+        api_url.origin() == graphql_url.origin(),
+        "GITHUB_GRAPHQL_URL is not on the same origin (scheme, host and port) as \
+         GITHUB_API_URL; refusing to send the token to it"
+    );
+    Ok((
+        api_url.as_str().trim_end_matches('/').to_string(),
+        graphql_url.into(),
+    ))
+}
+
+/// Parse `value` (from `var`) and check it is a safe place for the token.
+fn checked_endpoint(var: &str, value: &str) -> Result<reqwest::Url> {
+    let url =
+        reqwest::Url::parse(value).map_err(|e| anyhow::anyhow!("{var} is not a valid URL: {e}"))?;
+    let host = url
+        .host_str()
+        .with_context(|| format!("{var} has no host"))?
+        .to_string();
+    ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "{var} must not carry credentials in the URL"
+    );
+    // A query or fragment would be logged with every request error and
+    // would swallow the paths built onto the base by string concatenation.
+    ensure!(
+        url.query().is_none() && url.fragment().is_none(),
+        "{var} must not carry a query or fragment"
+    );
+    match url.scheme() {
+        "https" => {}
+        "http" if is_loopback(&host) => {}
+        scheme => bail!(
+            "{var} must use https (plain http only to a loopback host), got {scheme}; \
+             refusing to send the token to it"
+        ),
+    }
+    Ok(url)
+}
+
+/// `localhost`, `127.0.0.0/8` or `::1` — the hosts a mock server binds.
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn origin_url(repo_root: &Path) -> Result<String> {
@@ -500,6 +562,238 @@ mod tests {
         let only_github = |k: &str| (k == "GITHUB_TOKEN").then(|| "g".to_string());
         assert_eq!(token_from(only_github).unwrap(), "g");
         assert!(token_from(|_| None).is_err());
+    }
+
+    /// An env getter over fixed pairs, so no test mutates the process env.
+    fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn endpoints_default_to_github_com() {
+        let (api, graphql) = endpoints_from(env_of(&[])).unwrap();
+        assert_eq!(api, "https://api.github.com");
+        assert_eq!(graphql, "https://api.github.com/graphql");
+    }
+
+    #[test]
+    fn endpoints_accept_github_com_and_ghes_pairs() {
+        let (api, graphql) = endpoints_from(env_of(&[
+            ("GITHUB_API_URL", "https://api.github.com"),
+            ("GITHUB_GRAPHQL_URL", "https://api.github.com/graphql"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            (api.as_str(), graphql.as_str()),
+            ("https://api.github.com", "https://api.github.com/graphql")
+        );
+
+        let (api, graphql) = endpoints_from(env_of(&[
+            ("GITHUB_API_URL", "https://ghe.example/api/v3/"),
+            ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            (api.as_str(), graphql.as_str()),
+            (
+                "https://ghe.example/api/v3",
+                "https://ghe.example/api/graphql"
+            )
+        );
+    }
+
+    #[test]
+    fn endpoints_accept_plain_http_only_to_loopback() {
+        for base in [
+            "http://127.0.0.1:8080",
+            "http://127.5.5.5:9",
+            "http://localhost:9",
+            "http://[::1]:9",
+        ] {
+            let pairs = [("GITHUB_API_URL", base)];
+            let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
+            assert_eq!(graphql, format!("{api}/graphql"), "{base}");
+        }
+    }
+
+    #[test]
+    fn endpoints_refuse_plain_http_off_loopback() {
+        let err = endpoints_from(env_of(&[("GITHUB_API_URL", "http://ghe.example/api/v3")]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("GITHUB_API_URL must use https"), "{err}");
+
+        // An https API does not license a plain-http GraphQL endpoint.
+        let err = endpoints_from(env_of(&[
+            ("GITHUB_API_URL", "https://ghe.example/api/v3"),
+            ("GITHUB_GRAPHQL_URL", "http://ghe.example/api/graphql"),
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("GITHUB_GRAPHQL_URL must use https"), "{err}");
+
+        // Hosts that merely look loopback are not.
+        for base in [
+            "http://localhost.evil.example",
+            "http://127.0.0.1.evil.example",
+            "http://10.0.0.1",
+            "http://0.0.0.0",
+            // IPv4-mapped loopback is deliberately not accepted.
+            "http://[::ffff:127.0.0.1]",
+        ] {
+            let pairs = [("GITHUB_API_URL", base)];
+            let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+            assert!(
+                err.contains("GITHUB_API_URL must use https"),
+                "{base}: {err}"
+            );
+        }
+
+        // A token pasted into the host position is never echoed.
+        let pairs = [("GITHUB_API_URL", "http://ghp_l3aked/api/v3")];
+        let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+        assert!(err.contains("got http;"), "{err}");
+        assert!(!err.contains("ghp_l3aked"), "{err}");
+    }
+
+    #[test]
+    fn endpoints_refuse_unparseable_hostless_and_other_schemes() {
+        for var in ["GITHUB_API_URL", "GITHUB_GRAPHQL_URL"] {
+            for (value, want) in [
+                ("not-a-url", "is not a valid URL"),
+                ("data:text/plain,x", "has no host"),
+                ("ftp://ghe.example", "must use https"),
+            ] {
+                // The bad value on `var`, a valid API URL otherwise.
+                let mut pairs = vec![("GITHUB_API_URL", "https://ghe.example/api/v3")];
+                pairs.retain(|(n, _)| *n != var);
+                pairs.push((var, value));
+                let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+                assert!(
+                    err.contains(&format!("{var} {want}")),
+                    "{var}={value}: {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn endpoints_refuse_graphql_on_another_origin() {
+        for (api, graphql) in [
+            (
+                "https://ghe.example/api/v3",
+                "https://evil.example/api/graphql",
+            ),
+            (
+                "https://ghe.example/api/v3",
+                "https://ghe.example:8443/api/graphql",
+            ),
+            // Scheme alone differs (both legal on their own: loopback http).
+            (
+                "https://localhost:8443/api",
+                "http://localhost:8443/graphql",
+            ),
+        ] {
+            let pairs = [("GITHUB_API_URL", api), ("GITHUB_GRAPHQL_URL", graphql)];
+            let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+            assert!(err.contains("not on the same origin"), "{graphql}: {err}");
+            // Neither origin is echoed: the host is part of the value.
+            assert!(!err.contains("evil.example"), "{err}");
+            assert!(!err.contains("8443"), "{err}");
+        }
+
+        // A GraphQL override alone is checked against the github.com default.
+        let pairs = [("GITHUB_GRAPHQL_URL", "https://evil.example/graphql")];
+        let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+        assert!(err.contains("not on the same origin"), "{err}");
+        assert!(!err.contains("evil.example"), "{err}");
+    }
+
+    #[test]
+    fn endpoints_refuse_userinfo_and_never_echo_it() {
+        let err = endpoints_from(env_of(&[(
+            "GITHUB_API_URL",
+            "https://user:s3cret@ghe.example/api/v3",
+        )]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("must not carry credentials"), "{err}");
+        assert!(!err.contains("s3cret"), "{err}");
+
+        // A bare token as username, and userinfo on the GraphQL side.
+        for pairs in [
+            [
+                ("GITHUB_API_URL", "https://tok3n@ghe.example/api/v3"),
+                ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql"),
+            ],
+            [
+                ("GITHUB_API_URL", "https://ghe.example/api/v3"),
+                (
+                    "GITHUB_GRAPHQL_URL",
+                    "https://tok3n@ghe.example/api/graphql",
+                ),
+            ],
+        ] {
+            let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+            assert!(err.contains("must not carry credentials"), "{err}");
+            assert!(!err.contains("tok3n"), "{err}");
+        }
+
+        // Password with no username.
+        let err = endpoints_from(env_of(&[(
+            "GITHUB_API_URL",
+            "https://:pw0rd@ghe.example/api/v3",
+        )]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("must not carry credentials"), "{err}");
+        assert!(!err.contains("pw0rd"), "{err}");
+    }
+
+    #[test]
+    fn endpoints_refuse_query_or_fragment_and_never_echo_it() {
+        for var in ["GITHUB_API_URL", "GITHUB_GRAPHQL_URL"] {
+            for value in [
+                "https://ghe.example/api/v3?access_token=s3cret",
+                "https://ghe.example/api/v3#s3cret",
+            ] {
+                let mut pairs = vec![("GITHUB_API_URL", "https://ghe.example/api/v3")];
+                pairs.retain(|(n, _)| *n != var);
+                pairs.push((var, value));
+                let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+                assert!(
+                    err.contains(&format!("{var} must not carry a query or fragment")),
+                    "{var}={value}: {err}"
+                );
+                assert!(!err.contains("s3cret"), "{err}");
+            }
+        }
+    }
+
+    #[test]
+    fn endpoints_come_back_normalized() {
+        // An explicit default port and a mixed-case host are the same origin,
+        // and come back canonical so `list()`'s pagination prefix check
+        // matches the `Link` URLs the API echoes.
+        // Both halves non-canonical, so returning either raw input would fail.
+        let pairs = [
+            ("GITHUB_API_URL", "https://GHE.example:443/api/v3"),
+            ("GITHUB_GRAPHQL_URL", "https://Ghe.EXAMPLE:443/api/graphql"),
+        ];
+        let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
+        assert_eq!(api, "https://ghe.example/api/v3");
+        assert_eq!(graphql, "https://ghe.example/api/graphql");
+
+        // The derived default follows the normalized API URL.
+        let pairs = [("GITHUB_API_URL", "https://GHE.example:443/api/v3")];
+        let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
+        assert_eq!(api, "https://ghe.example/api/v3");
+        assert_eq!(graphql, "https://ghe.example/api/v3/graphql");
     }
 
     #[test]
