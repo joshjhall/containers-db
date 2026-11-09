@@ -1,36 +1,23 @@
 //! The read-only GitHub lookups behind [`super::deliver`]: list the open
 //! PRs and check the dedup candidate's commit signatures. Split out of
-//! `pr.rs` (#531); the seam a direct GitHub API client replaces (#532).
+//! `pr.rs` (#531); served by the direct API client since #532.
 
-use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use serde_json::Value;
 
-use super::gh;
 use crate::dedup::{self, OpenPr};
+use crate::github::GitHub;
 
 /// Upper bound on listed open PRs. Hitting it errors rather than risk
 /// missing the tool's scan PR and opening a duplicate.
 const PR_LIST_LIMIT: usize = 1000;
 
 /// Open PRs in the repo, as [`OpenPr`]s.
-pub(super) fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
-    let limit = PR_LIST_LIMIT.to_string();
-    let out = gh(
-        repo_root,
-        &[
-            "pr",
-            "list",
-            "--state",
-            "open",
-            "--limit",
-            &limit,
-            "--json",
-            dedup::GH_PR_FIELDS,
-        ],
-    )?;
-    let prs = dedup::parse_open_prs(&out).map_err(anyhow::Error::msg)?;
+pub(super) fn list_open_prs(gh: &GitHub) -> Result<Vec<OpenPr>> {
+    let rows = gh.list("pulls?state=open&per_page=100", PR_LIST_LIMIT)?;
+    let prs = dedup::parse_open_prs(&rows).map_err(anyhow::Error::msg)?;
     dedup::check_not_truncated(prs.len(), PR_LIST_LIMIT).map_err(anyhow::Error::msg)?;
     Ok(prs)
 }
@@ -44,7 +31,7 @@ pub(super) fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 /// warning (#536).
 ///
 /// A [`LookupError::Transient`] failure is retried after each of
-/// [`LOOKUP_RETRY_DELAYS`], so a transient `gh api` failure does not
+/// [`LOOKUP_RETRY_DELAYS`], so a transient API failure does not
 /// force-replace a good PR's branch every scan run (#535). A
 /// [`LookupError::Definitive`] one is not retried (#547): asking again
 /// would almost always get the same refusal. Either way, a lookup that
@@ -54,7 +41,7 @@ pub(super) fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 ///
 /// `lookup` is [`commits_verified`] and `sleep` is [`std::thread::sleep`]
 /// in production, injected so the retry and fail-closed paths are testable
-/// without `gh` or real delays.
+/// without the API or real delays.
 pub(super) fn mark_candidate_verified(
     tool_id: &str,
     prefix: &str,
@@ -114,13 +101,12 @@ const PR_COMMITS_LIMIT: usize = 250;
 /// [`mark_candidate_verified`] retries it (#547).
 #[derive(Debug, thiserror::Error)]
 pub(super) enum LookupError {
-    /// The `gh` call itself failed: network, 5xx, rate limit. Worth a
-    /// retry. Auth and token-scope failures land here too: telling them
-    /// apart would mean matching `gh` stderr text, so that split waits for
-    /// the HTTP status codes of a direct API client (#532).
+    /// The request itself failed: network, 5xx, rate limit. Worth a
+    /// retry. Auth and token-scope failures land here too: a 403 is also
+    /// GitHub's rate-limit status, so status alone cannot tell them apart.
     #[error(transparent)]
     Transient(anyhow::Error),
-    /// `gh` answered, but [`parse_verified`] refused the answer. Treated as
+    /// GitHub answered, but [`parse_verified`] refused the answer. Treated as
     /// final by design: a malformed or capped listing comes back the same,
     /// and the rarer cases that might not (an empty listing, a head that a
     /// lagging listing omits) cost only a redundant regen, not a stranded
@@ -130,23 +116,28 @@ pub(super) enum LookupError {
 }
 
 /// Whether every commit on `pr` carries a GitHub-verified signature.
-pub(super) fn commits_verified(repo_root: &Path, pr: &OpenPr) -> Result<bool, LookupError> {
-    let listing = gh(
-        repo_root,
-        &[
-            "api",
-            "--paginate",
-            &format!("repos/{{owner}}/{{repo}}/pulls/{}/commits", pr.number),
-            "--jq",
-            r#".[] | "\(.sha) \(.commit.verification.verified)""#,
-        ],
-    );
+pub(super) fn commits_verified(gh: &GitHub, pr: &OpenPr) -> Result<bool, LookupError> {
+    let suffix = format!("pulls/{}/commits?per_page=100", pr.number);
+    let listing = gh
+        .list(&suffix, PR_COMMITS_LIMIT)
+        .map(|rows| listing_lines(&rows));
     classify(listing, &pr.head_oid)
 }
 
-/// Tag a failure from the `gh` call as [`LookupError::Transient`] and one
-/// from parsing its output as [`LookupError::Definitive`]. Split out of
-/// [`commits_verified`] so the tagging is testable without `gh`.
+/// One `<sha> <verified>` line per commit row, the shape [`parse_verified`]
+/// reads. A missing field renders as `null`, which it refuses.
+fn listing_lines(rows: &[Value]) -> String {
+    rows.iter()
+        .map(|c| {
+            let sha = c["sha"].as_str().unwrap_or("null");
+            format!("{sha} {}\n", c["commit"]["verification"]["verified"])
+        })
+        .collect()
+}
+
+/// Tag a failure of the request as [`LookupError::Transient`] and one
+/// from parsing its answer as [`LookupError::Definitive`]. Split out of
+/// [`commits_verified`] so the tagging is testable without the API.
 fn classify(listing: Result<String>, head_oid: &str) -> Result<bool, LookupError> {
     let out = listing.map_err(LookupError::Transient)?;
     parse_verified(&out, head_oid).map_err(LookupError::Definitive)
@@ -333,7 +324,9 @@ mod tests {
             &wanted(),
             |_| {
                 calls += 1;
-                Err(LookupError::Transient(anyhow::anyhow!("gh api: 502")))
+                Err(LookupError::Transient(anyhow::anyhow!(
+                    "GET commits returned 502"
+                )))
             },
             |d| slept.push(d),
         );
@@ -380,7 +373,7 @@ mod tests {
                 asked.push(pr.number);
                 if calls <= LOOKUP_RETRY_DELAYS.len() {
                     return Err(LookupError::Transient(anyhow::anyhow!(
-                        "gh api: 403 rate limited"
+                        "GET commits returned 403 rate limited"
                     )));
                 }
                 Ok(true)
@@ -442,7 +435,9 @@ mod tests {
             |_| {
                 calls += 1;
                 if calls == 1 {
-                    return Err(LookupError::Transient(anyhow::anyhow!("gh api: 502")));
+                    return Err(LookupError::Transient(anyhow::anyhow!(
+                        "GET commits returned 502"
+                    )));
                 }
                 Ok(false)
             },
@@ -550,7 +545,9 @@ mod tests {
             |_| {
                 calls += 1;
                 if calls == 1 {
-                    return Err(LookupError::Transient(anyhow::anyhow!("gh api: 502")));
+                    return Err(LookupError::Transient(anyhow::anyhow!(
+                        "GET commits returned 502"
+                    )));
                 }
                 Err(LookupError::Definitive(anyhow::anyhow!(
                     "no commits listed for the PR"
@@ -564,13 +561,13 @@ mod tests {
         assert!(!candidate.commits_verified);
     }
 
-    /// #547: a failed `gh` call is transient; every `parse_verified`
-    /// refusal of a listing `gh` did return is definitive; a good listing
+    /// #547: a failed request is transient; every `parse_verified`
+    /// refusal of a listing GitHub did return is definitive; a good listing
     /// passes its answer through.
     #[test]
-    fn classify_tags_gh_failures_transient_and_parse_refusals_definitive() {
+    fn classify_tags_request_failures_transient_and_parse_refusals_definitive() {
         assert!(matches!(
-            classify(Err(anyhow::anyhow!("gh api: 502")), "c0"),
+            classify(Err(anyhow::anyhow!("GET …: 502")), "c0"),
             Err(LookupError::Transient(_))
         ));
         let at_cap = commits(&vec![true; PR_COMMITS_LIMIT]);
@@ -594,6 +591,106 @@ mod tests {
         assert!(matches!(
             classify(Ok(commits(&[true, false])), "c0"),
             Ok(false)
+        ));
+    }
+
+    use crate::github::testing::client_for;
+    use serde_json::json;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn rest_pr(number: u64) -> Value {
+        json!({
+            "number": number,
+            "body": "b",
+            "head": {"ref": format!("scan/rust/{number}"), "sha": "h", "repo": {"full_name": "o/r"}},
+            "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+        })
+    }
+
+    async fn serve(server: &MockServer, p: &str, rows: Value) {
+        Mock::given(method("GET"))
+            .and(path(p))
+            .and(query_param("per_page", "100"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(rows))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_open_prs_reads_the_rest_listing() {
+        let server = MockServer::start().await;
+        serve(&server, "/repos/o/r/pulls", json!([rest_pr(7), rest_pr(8)])).await;
+        let prs = list_open_prs(&client_for(&server)).unwrap();
+        let numbers: Vec<_> = prs.iter().map(|p| p.number).collect();
+        assert_eq!(numbers, [7, 8]);
+        assert_eq!(prs[0].head, "scan/rust/7");
+    }
+
+    /// One page at the cap reads as truncated: a missed row would open a
+    /// duplicate PR.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_open_prs_refuses_a_listing_at_the_cap() {
+        let server = MockServer::start().await;
+        let rows: Vec<Value> = (0..PR_LIST_LIMIT as u64).map(rest_pr).collect();
+        serve(&server, "/repos/o/r/pulls", Value::Array(rows)).await;
+        let err = list_open_prs(&client_for(&server)).unwrap_err();
+        assert!(format!("{err:#}").contains("truncated"), "{err:#}");
+    }
+
+    fn api_commits(verified: &[Option<bool>]) -> Value {
+        verified
+            .iter()
+            .enumerate()
+            .map(|(i, v)| json!({"sha": format!("c{i}"), "commit": {"verification": {"verified": v}}}))
+            .collect()
+    }
+
+    async fn lookup(rows: Value, head: &str) -> Result<bool, LookupError> {
+        let server = MockServer::start().await;
+        serve(&server, "/repos/o/r/pulls/398/commits", rows).await;
+        let pr = open_pr_fixture(398, "scan/rust/x");
+        commits_verified(
+            &client_for(&server),
+            &OpenPr {
+                head_oid: head.into(),
+                ..pr
+            },
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn commits_verified_reads_the_rest_listing() {
+        assert!(matches!(
+            lookup(api_commits(&[Some(true), Some(true)]), "c1").await,
+            Ok(true)
+        ));
+        assert!(matches!(
+            lookup(api_commits(&[Some(false), Some(true)]), "c1").await,
+            Ok(false)
+        ));
+        // A missing verification block is malformed, never verified.
+        assert!(matches!(
+            lookup(api_commits(&[None]), "c0").await,
+            Err(LookupError::Definitive(_))
+        ));
+        assert!(matches!(
+            lookup(api_commits(&[Some(true)]), "gone").await,
+            Err(LookupError::Definitive(_))
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn commits_verified_tags_a_failed_request_transient() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(502))
+            .mount(&server)
+            .await;
+        let pr = open_pr_fixture(398, "scan/rust/x");
+        assert!(matches!(
+            commits_verified(&client_for(&server), &pr),
+            Err(LookupError::Transient(_))
         ));
     }
 }

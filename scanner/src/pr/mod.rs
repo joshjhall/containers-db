@@ -1,5 +1,5 @@
-//! Open a PR with new version files via `git` + `gh`. The shell-out is
-//! intentionally thin; the interesting logic (branch name, commit
+//! Open a PR with new version files via `git` and the GitHub API
+//! ([`crate::github`]). The I/O is intentionally thin; the interesting logic (branch name, commit
 //! message, PR title/body shapes) is in pure functions for easy testing.
 //!
 //! The scan commit is built locally but never pushed: [`crate::publish`]
@@ -15,7 +15,8 @@ use chrono::{DateTime, Utc};
 
 use crate::activity::{ActivitySignals, Score};
 use crate::dedup::{self, Decision, OpenPr, RegenReason};
-use crate::publish::{self, GhRemote, Remote, Target};
+use crate::github::GitHub;
+use crate::publish::{self, ApiRemote, Remote, Target};
 
 mod github;
 
@@ -111,10 +112,10 @@ fn score_str(score: Score) -> &'static str {
 }
 
 /// Create the branch, stage `tools/<tool_id>/`, commit, publish it as a
-/// signed commit, and open the PR via `gh`. Returns the PR URL.
+/// signed commit, and open the PR. Returns the PR URL.
 pub fn open_pr(
     repo_root: &Path,
-    remote: &dyn Remote,
+    gh: &GitHub,
     tool_id: &str,
     branch: &str,
     title: &str,
@@ -125,14 +126,21 @@ pub fn open_pr(
     git(repo_root, &["add", &format!("tools/{tool_id}")])?;
     let message = commit_message_from_title(title);
     git(repo_root, &["commit", "-m", &message])?;
-    publish::publish_head(repo_root, remote, Target::New(branch), &message)?;
-    let url = gh(
+    publish::publish_head(
         repo_root,
-        &[
-            "pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body,
-        ],
+        &ApiRemote::discover(gh)?,
+        Target::New(branch),
+        &message,
     )?;
-    Ok(url.trim().to_string())
+    let pr = serde_json::json!({"base": base, "head": branch, "title": title, "body": body});
+    html_url(&gh.rest(reqwest::Method::POST, "pulls", Some(&pr))?)
+}
+
+fn html_url(pr: &serde_json::Value) -> Result<String> {
+    pr["html_url"]
+        .as_str()
+        .map(str::to_string)
+        .context("PR response has no html_url")
 }
 
 /// How [`deliver`] handled a set of new versions.
@@ -159,7 +167,7 @@ pub struct PrRequest {
 /// files, so a tool never has more than one open PR per `prefix` (see
 /// [`crate::dedup`]). `branch` is used only when a new PR is opened.
 ///
-/// Errors on an empty `new_versions` before touching `gh` or git: callers
+/// Errors on an empty `new_versions` before touching GitHub or git: callers
 /// return `NoChange` first, and [`dedup::decide`] would otherwise read an
 /// empty list as vacuously covered by any open PR (#407).
 pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
@@ -176,13 +184,14 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         !new_versions.is_empty(),
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
     );
-    let mut open = list_open_prs(repo_root)?;
+    let gh = GitHub::discover(repo_root)?;
+    let mut open = list_open_prs(&gh)?;
     mark_candidate_verified(
         tool_id,
         prefix,
         &mut open,
         new_versions,
-        |pr| commits_verified(repo_root, pr),
+        |pr| commits_verified(&gh, pr),
         std::thread::sleep,
     );
     deliver_with(
@@ -190,25 +199,13 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         tool_id,
         &dedup::decide(prefix, &open, new_versions),
         |line| println!("{line}"),
-        |pr| {
-            update_pr(
-                repo_root,
-                &GhRemote::discover(repo_root)?,
-                tool_id,
-                pr,
-                title,
-                body,
-            )
-        },
-        || {
-            let remote = GhRemote::discover(repo_root)?;
-            open_pr(repo_root, &remote, tool_id, branch, title, body, "main")
-        },
+        |pr| update_pr(repo_root, &gh, tool_id, pr, title, body),
+        || open_pr(repo_root, &gh, tool_id, branch, title, body, "main"),
     )
 }
 
 /// Act on a dedup [`Decision`]: the git-state half of [`deliver`], with
-/// the PR-side actions injected so every arm is testable without `gh`.
+/// the PR-side actions injected so every arm is testable without GitHub.
 ///
 /// - Skip: discard the regenerated files; HEAD stays on the base.
 /// - Update / OpenNew: run the action on its PR branch, then return to the
@@ -406,23 +403,16 @@ pub(crate) fn discard_generated(repo_root: &Path, tool_id: &str) -> Result<()> {
 /// replaced: the branch is regenerated from `main`.
 fn update_pr(
     repo_root: &Path,
-    remote: &dyn Remote,
+    gh: &GitHub,
     tool_id: &str,
     pr: &OpenPr,
     title: &str,
     body: &str,
 ) -> Result<String> {
-    let number = pr.number.to_string();
-    push_regenerated(repo_root, remote, tool_id, pr, title)?;
-    gh(
-        repo_root,
-        &["pr", "edit", &number, "--title", title, "--body", body],
-    )?;
-    let url = gh(
-        repo_root,
-        &["pr", "view", &number, "--json", "url", "--jq", ".url"],
-    )?;
-    Ok(url.trim().to_string())
+    push_regenerated(repo_root, &ApiRemote::discover(gh)?, tool_id, pr, title)?;
+    let edit = serde_json::json!({"title": title, "body": body});
+    let path = format!("pulls/{}", pr.number);
+    html_url(&gh.rest(reqwest::Method::PATCH, &path, Some(&edit))?)
 }
 
 /// The git half of [`update_pr`]: reset `pr.head` to the current HEAD,
@@ -462,22 +452,6 @@ fn git(repo_root: &Path, args: &[&str]) -> Result<String> {
     if !output.status.success() {
         anyhow::bail!(
             "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-fn gh(repo_root: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("gh")
-        .current_dir(repo_root)
-        .args(args)
-        .output()
-        .with_context(|| format!("running `gh {}`", args.join(" ")))?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "gh {} failed: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr),
         );
@@ -555,7 +529,7 @@ pub(super) mod tests {
 
     #[test]
     fn deliver_rejects_empty_new_versions() {
-        // Not a repo and no `gh` stub: reaching `list_open_prs` would fail
+        // Not a repo and no token: reaching `list_open_prs` would fail
         // with a different message, so the text pins the guard itself.
         let dir = tempfile::tempdir().unwrap();
         let req = PrRequest {

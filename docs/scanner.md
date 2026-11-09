@@ -17,7 +17,8 @@ manually with `workflow_dispatch`.
 cargo run --release -p scanner -- tool rust --dry-run
 cargo run --release -p scanner -- tool go --dry-run
 
-# Real run (will branch, commit, publish a signed commit, and `gh pr create`).
+# Real run (will branch, commit, publish a signed commit, and open the PR).
+# Any token with the scopes below works; `gh auth token` is one source.
 GITHUB_TOKEN=$(gh auth token) \
   cargo run --release -p scanner -- tool rust
 
@@ -233,7 +234,7 @@ from forks are ignored — their branch name and body are not trusted:
   regenerated from `main` onto its branch, which is replaced only if it
   is still at the head commit seen when listing (an `updateRefs`
   compare-and-swap — see [Signed delivery](#signed-delivery)), and its title and body
-  refreshed with `gh pr edit`. No second PR is opened. Manual commits on
+  refreshed through the REST API. No second PR is opened. Manual commits on
   that branch are replaced — carry them in a separate PR.
 - **Open new** — no matching open PR; a new `scan/<tool>/<date>` PR opens.
 
@@ -278,8 +279,11 @@ API outage), no human action is needed.
 - `concurrency.group = catalog-scanner` serializes runs so a slow scan
   doesn't race the next hourly trigger.
 
-The scanner uses `gh` and `git` from the runner — same code works
-locally as long as those CLIs are available.
+The scanner talks to GitHub directly over HTTPS (`scanner/src/github.rs`)
+and needs only `git` from the runner — same code works locally given a
+token in `GH_TOKEN` or `GITHUB_TOKEN` (checked in that order). The
+repository comes from `GITHUB_REPOSITORY`, else the `origin` remote; the
+endpoints from `GITHUB_API_URL`/`GITHUB_GRAPHQL_URL`, else github.com.
 
 ### `SCANNER_TOKEN` secret
 
@@ -319,7 +323,7 @@ the secret is (#416):
    checks the binary against `build`'s `scanner_sha256` (the job fails before
    `chmod` on a mismatch or a missing hash), and runs
    `scanner deliver --plan <plan.json>`.
-   No cargo, npm, node, or ajv runs here. The token is `GH_TOKEN` (`gh`
+   No cargo, npm, node, or ajv runs here. The token is `GH_TOKEN` (the scanner
    prefers it over `GITHUB_TOKEN`). Nothing is `git push`ed: commits reach
    GitHub through the GraphQL API (see [Signed delivery](#signed-delivery)),
    and `git` itself only runs locally.
@@ -391,8 +395,8 @@ treats the plan as untrusted:
 - The PR still goes through `validate.yml`, which runs ajv again. That is
   the schema gate that enforces, before anything merges.
 
-The remaining processes that hold the token are the scanner binary,
-`gh`, and `git`. Checkout uses the default token with
+The remaining processes that hold the token are the scanner binary
+and the `git` it runs. Checkout uses the default token with
 `persist-credentials: false` in both jobs, and `GITHUB_TOKEN` is limited
 to `contents: read`: it only fetches the repo and makes the adapters'
 read-only API calls.
@@ -404,7 +408,7 @@ environment from `/proc`. The job split is the boundary.
 
 `deliver` starts with a step that fails the run with an `::error::`
 naming the secret if it is unset. Without it, the run would only fail at
-the first push or `gh` call. Failures recorded while staging are filed
+the first GitHub API call. Failures recorded while staging are filed
 as tracking issues by `deliver`, and they fail that job, so a broken
 adapter still turns the run red.
 

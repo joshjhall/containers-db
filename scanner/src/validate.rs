@@ -53,7 +53,7 @@ pub fn validate_schemas(repo_root: &Path) -> Result<()> {
 }
 
 /// GitHub token variables a local run may have set (#416).
-const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
+pub(crate) const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 
 /// An `npx` command that does not inherit the GitHub tokens. ajv-cli
 /// and its transitive npm dependencies are third-party code with no use

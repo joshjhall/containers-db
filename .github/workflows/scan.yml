@@ -5,13 +5,13 @@ name: Catalog scanner
 # in `action_required` with no validate run. SCANNER_TOKEN is a
 # fine-grained PAT or GitHub App token, this repo only, with
 # contents:write, pull-requests:write, and issues:write (the scanner
-# files tracking issues via `gh`). See docs/scanner.md#scanner_token-secret.
+# files tracking issues through the GitHub API). See docs/scanner.md#scanner_token-secret.
 #
 # Three jobs, so third-party code never runs where the secret is (#416):
 # `build` compiles the scanner (cargo only, no npm). `stage` runs that
 # binary's adapters and validates the generated files with ajv, with no
-# secret and no cargo cache. `deliver` runs only the prebuilt binary,
-# `gh`, and `git`, and is the one job that sees SCANNER_TOKEN. It checks
+# secret and no cargo cache. `deliver` runs only the prebuilt binary
+# and `git`, and is the one job that sees SCANNER_TOKEN. It checks
 # the binary against the sha256 `build` publishes before running it
 # (#427). Dry runs stop after `stage`.
 
@@ -180,7 +180,7 @@ jobs:
 
   deliver:
     # The only job with SCANNER_TOKEN. It runs the scanner binary built in
-    # `build`, `gh`, and `git` — no npm, node, ajv, or cargo (#416).
+    # `build` and `git` — no npm, node, ajv, cargo, or gh (#416, #532).
     # Dry runs make no writes and skip it. A scheduled run has no inputs,
     # so `inputs.dry_run` is null there and this job still runs.
     name: Open scan PRs
@@ -191,7 +191,7 @@ jobs:
 
     steps:
       - name: Require SCANNER_TOKEN
-        # Fail with a clear message rather than at the first push or `gh`
+        # Fail with a clear message rather than at the first GitHub API
         # call.
         env:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
@@ -239,7 +239,7 @@ jobs:
 
       - name: Deliver
         env:
-          # `gh` prefers GH_TOKEN, so PRs/issues are opened as this
+          # The scanner prefers GH_TOKEN, so PRs/issues are opened as this
           # identity and their pushes trigger validate.yml (#401).
           GH_TOKEN: ${{ secrets.SCANNER_TOKEN }}
           SCANNER_BIN: ${{ runner.temp }}/scanner-bin/scanner
@@ -247,7 +247,7 @@ jobs:
           PLAN: ${{ runner.temp }}/plan/plan.json
           # Command-line git config, which overrides every config file.
           # git never talks to the remote here (#526: commits are published
-          # through the API by gh), so the empty helper leaves it no
+          # through the GitHub API by the scanner), so the empty helper leaves it no
           # credential at all. Hooks and fsmonitor are off. Hardening only:
           # nothing third-party runs in this job.
           GIT_CONFIG_COUNT: "3"

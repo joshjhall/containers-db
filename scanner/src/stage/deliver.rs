@@ -213,9 +213,9 @@ pub(crate) fn deliver_manifest(
     )
 }
 
-/// [`deliver_manifest`] with its two `gh` steps — filing a tracking issue
+/// [`deliver_manifest`] with its two GitHub steps — filing a tracking issue
 /// and opening/updating a PR — and its step-summary path injected, so the
-/// loop is testable without `gh` or the real job summary.
+/// loop is testable without GitHub or the real job summary.
 pub(crate) fn deliver_manifest_with(
     repo_root: &Path,
     manifest: &Manifest,
