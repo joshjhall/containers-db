@@ -255,5 +255,247 @@
     }
   ],
   "tool": "node",
-  "version": "25.0.0"
+  "version": "25.0.0",
+  "tested": [
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T20:41:00.080636498Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
+      "image_digest": "sha256:97d1c2a91e6a0c0d5b1aa6917df1932114a553015837e5a4b635d65af9cca959",
+      "duration_seconds": 7582.571822203,
+      "version_output": "v25.0.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T20:16:22.476876865Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-amd64",
+      "image_digest": "sha256:e5ddf4398221879474759292827c641675168df7e946211e81730d629a6efec2",
+      "duration_seconds": 6139.340949637,
+      "version_output": "v25.0.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.24",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T20:02:01.998912411Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.24-amd64",
+      "image_digest": "sha256:708a99522d5ce7ca71efe2b405f704485809ee22e18aa9ab5e48d352aa7da552",
+      "duration_seconds": 5338.642497699,
+      "version_output": "v25.0.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T18:33:09.19885556Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-arm64",
+      "image_digest": "sha256:a404fdb1370c22a5658dfd502ee0bbba16649f20843da1d168103dc78f3f14a1",
+      "duration_seconds": 6.267963125,
+      "version_output": "v25.0.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419+deb13u1"
+        },
+        {
+          "tool": "libatomic",
+          "package": "libatomic1",
+          "version": "14.2.0-19"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T18:33:43.314636407Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-amd64",
+      "image_digest": "sha256:213908595011c991850ff95ce52b3542a2bc7517937275d3947a072146e3a375",
+      "duration_seconds": 5.868424763,
+      "error_class": "validate"
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T18:33:44.115020841Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-arm64",
+      "image_digest": "sha256:799c290292f6506ebfc3aa532b88e12ab608d3cbc838b83f1abe2442b4e3fe2f",
+      "duration_seconds": 4.023998567,
+      "version_output": "v25.0.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-100.3.el10_2"
+        },
+        {
+          "tool": "libatomic",
+          "package": "libatomic",
+          "version": "14.3.1-4.4.el10"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T18:34:03.828433493Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:c50e52ce1ad9ee5877f5325f8a564780a6c7c401cc42ef5bc6e6b3fef71aa838",
+      "duration_seconds": 6.229709405,
+      "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T18:33:48.942925653Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-arm64",
+      "image_digest": "sha256:3fa7fc5451c4de16b7fac6a1d6f07958e9257d3eedda744b730fcaf01a1a000b",
+      "duration_seconds": 8.0291768,
+      "version_output": "v25.0.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.24.04.2"
+        },
+        {
+          "tool": "libatomic",
+          "package": "libatomic1",
+          "version": "14.2.0-4ubuntu2~24.04.1"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T18:34:05.466491254Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:0c8e4f5979b1018269b14bc169707ccf5eb8d5e1a591894f3384307e8eb1c06d",
+      "duration_seconds": 9.310528507,
+      "error_class": "validate"
+    }
+  ]
 }

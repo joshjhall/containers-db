@@ -426,6 +426,66 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T18:30:02.178161238Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:1d02aa399025a6fa9d7d06497ec983a6bf6094f45e7ba18796c179c9cf18a5d4",
+      "duration_seconds": 5.403366883,
+      "version_output": "v24.9.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T18:29:50.80598512Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-amd64",
+      "image_digest": "sha256:fd1d93c7b5bffda59439743b56e20476fc75756e06a4a5e49a7ed82c6357eba0",
+      "duration_seconds": 5.437007783,
+      "version_output": "v24.9.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419+deb13u1"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T18:30:50.20271412Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-arm64",
+      "image_digest": "sha256:d34d0604d88351268d3a865f71e6588507704dfa8da08571ec84d315209d525a",
+      "duration_seconds": 6.577219254,
+      "version_output": "v24.9.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.26.04.2"
+        }
+      ],
+      "verification_tier": 1
     }
   ]
 }

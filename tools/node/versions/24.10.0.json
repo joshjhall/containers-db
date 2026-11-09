@@ -426,6 +426,46 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T18:31:03.725239737Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-arm64",
+      "image_digest": "sha256:799c290292f6506ebfc3aa532b88e12ab608d3cbc838b83f1abe2442b4e3fe2f",
+      "duration_seconds": 4.639226897,
+      "version_output": "v24.10.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-100.3.el10_2"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T18:30:00.000234063Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42673528270",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:c50e52ce1ad9ee5877f5325f8a564780a6c7c401cc42ef5bc6e6b3fef71aa838",
+      "duration_seconds": 5.225770678,
+      "version_output": "v24.10.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-90.3.el9_8"
+        }
+      ],
+      "verification_tier": 1
     }
   ]
 }
