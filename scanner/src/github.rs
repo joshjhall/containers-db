@@ -626,6 +626,34 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("GITHUB_GRAPHQL_URL must use https"), "{err}");
+
+        // Hosts that merely look loopback are not.
+        for base in [
+            "http://localhost.evil.example",
+            "http://127.0.0.1.evil.example",
+            "http://10.0.0.1",
+            "http://0.0.0.0",
+        ] {
+            let pairs = [("GITHUB_API_URL", base)];
+            let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+            assert!(
+                err.contains("GITHUB_API_URL must use https"),
+                "{base}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn endpoints_refuse_unparseable_hostless_and_other_schemes() {
+        for (value, want) in [
+            ("not-a-url", "GITHUB_API_URL is not a valid URL"),
+            ("data:text/plain,x", "GITHUB_API_URL has no host"),
+            ("ftp://ghe.example", "GITHUB_API_URL must use https"),
+        ] {
+            let pairs = [("GITHUB_API_URL", value)];
+            let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+            assert!(err.contains(want), "{value}: {err}");
+        }
     }
 
     #[test]
@@ -653,6 +681,25 @@ mod tests {
         .to_string();
         assert!(err.contains("must not carry credentials"), "{err}");
         assert!(!err.contains("s3cret"), "{err}");
+
+        // A bare token as username, and userinfo on the GraphQL side.
+        for pairs in [
+            [
+                ("GITHUB_API_URL", "https://tok3n@ghe.example/api/v3"),
+                ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql"),
+            ],
+            [
+                ("GITHUB_API_URL", "https://ghe.example/api/v3"),
+                (
+                    "GITHUB_GRAPHQL_URL",
+                    "https://tok3n@ghe.example/api/graphql",
+                ),
+            ],
+        ] {
+            let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+            assert!(err.contains("must not carry credentials"), "{err}");
+            assert!(!err.contains("tok3n"), "{err}");
+        }
     }
 
     #[test]
