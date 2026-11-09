@@ -4,6 +4,16 @@
   "version": "3.13.1",
   "released": "2026-10-01",
   "channel": "stable",
+  "tested": [
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-10-26T00:00:00Z",
+      "result": "pass",
+      "removed_build_dependencies": ["g++", "make", "python3"]
+    }
+  ],
   "install_methods": [
     {
       "name": "source-build",

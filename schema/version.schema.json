@@ -228,6 +228,12 @@
           "type": "array",
           "items": { "$ref": "#/$defs/InstalledDependency" }
         },
+        "removed_build_dependencies": {
+          "description": "Per-distro package names luggage installed only for the build and purged after the install method finished, before validation ran (e.g., `g++`, `make`, `linux-headers` after an alpine source build). Produced by luggage (joshjhall/containers#1524) as `InstallReport.removed_build_dependencies`. A `result: pass` row carrying this field shows the tool passed without its build toolchain present. Distinct from `dependencies[]`, which records the observed versions of every dependency present at install time, captured before this removal. Produced only on pass rows, like `dependencies[]`; absent when nothing was removed.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
         "verification_warnings": {
           "description": "Verifications that succeeded on weaker grounds than the tier name alone suggests — currently only tier-4 TOFU acceptances, where an artifact was installed with nothing establishing its authenticity. Structured rather than prose so the evidence database can answer `which shipped images installed something with no authenticity check?` as a field query: a reworded warning must not silently break that query. Produced by `luggage install --json-report` and carried through `record-evidence`; absent on the ordinary verified install, which is what keeps it a signal rather than noise in every row. See `VerificationWarning`.",
           "type": "array",
