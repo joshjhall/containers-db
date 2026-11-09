@@ -43,12 +43,14 @@ pub(super) fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 /// signatures say, and a failed lookup would only log a misleading
 /// warning (#536).
 ///
-/// A failed lookup is retried after each of [`LOOKUP_RETRY_DELAYS`], so a
-/// transient `gh api` failure does not force-replace a good PR's branch
-/// every scan run (#535). Only when every attempt fails is the row left
-/// unverified: a redundant regen costs one signed commit, a wrong skip
-/// strands the release (#529). A definitive answer, `Ok(false)` included,
-/// is never retried.
+/// A [`LookupError::Transient`] failure is retried after each of
+/// [`LOOKUP_RETRY_DELAYS`], so a transient `gh api` failure does not
+/// force-replace a good PR's branch every scan run (#535). A
+/// [`LookupError::Definitive`] one would get the same answer again, so it
+/// is not retried (#547). Either way, a lookup that never succeeds leaves
+/// the row unverified: a redundant regen costs one signed commit, a wrong
+/// skip strands the release (#529). A definitive answer, `Ok(false)`
+/// included, is never retried.
 ///
 /// `lookup` is [`commits_verified`] and `sleep` is [`std::thread::sleep`]
 /// in production, injected so the retry and fail-closed paths are testable
@@ -58,7 +60,7 @@ pub(super) fn mark_candidate_verified(
     prefix: &str,
     open: &mut [OpenPr],
     new_versions: &[String],
-    mut lookup: impl FnMut(&OpenPr) -> Result<bool>,
+    mut lookup: impl FnMut(&OpenPr) -> Result<bool, LookupError>,
     mut sleep: impl FnMut(Duration),
 ) {
     let Some(number) = dedup::candidate(prefix, open)
@@ -75,7 +77,13 @@ pub(super) fn mark_candidate_verified(
     pr.commits_verified = loop {
         match lookup(pr) {
             Ok(v) => break v,
-            Err(e) => match delays.next() {
+            Err(LookupError::Definitive(e)) => {
+                eprintln!(
+                    "scanner: {tool_id}: could not check the commit signatures of PR #{number}; not retrying, treating it as unsigned: {e:#}"
+                );
+                break false;
+            }
+            Err(LookupError::Transient(e)) => match delays.next() {
                 Some(&delay) => {
                     eprintln!(
                         "scanner: {tool_id}: could not check the commit signatures of PR #{number}; retrying in {delay:?}: {e:#}"
@@ -102,9 +110,25 @@ const LOOKUP_RETRY_DELAYS: &[Duration] = &[Duration::from_secs(2), Duration::fro
 /// A listing that reaches it may be truncated, so it is refused.
 const PR_COMMITS_LIMIT: usize = 250;
 
+/// Why a [`commits_verified`] lookup failed, which decides whether
+/// [`mark_candidate_verified`] retries it (#547).
+#[derive(Debug, thiserror::Error)]
+pub(super) enum LookupError {
+    /// The `gh` call itself failed: network, 5xx, rate limit. Worth a
+    /// retry. Auth and token-scope failures land here too: telling them
+    /// apart would mean matching `gh` stderr text, so that split waits for
+    /// the HTTP status codes of a direct API client (#532).
+    #[error(transparent)]
+    Transient(anyhow::Error),
+    /// `gh` answered, but [`parse_verified`] refused the answer. Asking
+    /// again gets the same refusal.
+    #[error(transparent)]
+    Definitive(anyhow::Error),
+}
+
 /// Whether every commit on `pr` carries a GitHub-verified signature.
-pub(super) fn commits_verified(repo_root: &Path, pr: &OpenPr) -> Result<bool> {
-    let out = gh(
+pub(super) fn commits_verified(repo_root: &Path, pr: &OpenPr) -> Result<bool, LookupError> {
+    let listing = gh(
         repo_root,
         &[
             "api",
@@ -113,8 +137,16 @@ pub(super) fn commits_verified(repo_root: &Path, pr: &OpenPr) -> Result<bool> {
             "--jq",
             r#".[] | "\(.sha) \(.commit.verification.verified)""#,
         ],
-    )?;
-    parse_verified(&out, &pr.head_oid)
+    );
+    classify(listing, &pr.head_oid)
+}
+
+/// Tag a failure from the `gh` call as [`LookupError::Transient`] and one
+/// from parsing its output as [`LookupError::Definitive`]. Split out of
+/// [`commits_verified`] so the tagging is testable without `gh`.
+fn classify(listing: Result<String>, head_oid: &str) -> Result<bool, LookupError> {
+    let out = listing.map_err(LookupError::Transient)?;
+    parse_verified(&out, head_oid).map_err(LookupError::Definitive)
 }
 
 /// Parse `<sha> <verified>` lines, one per commit, across every page. Verified only when every line says `true`. An error, so the
@@ -298,7 +330,7 @@ mod tests {
             &wanted(),
             |_| {
                 calls += 1;
-                anyhow::bail!("gh api: 502")
+                Err(LookupError::Transient(anyhow::anyhow!("gh api: 502")))
             },
             |d| slept.push(d),
         );
@@ -344,7 +376,9 @@ mod tests {
                 calls += 1;
                 asked.push(pr.number);
                 if calls <= LOOKUP_RETRY_DELAYS.len() {
-                    anyhow::bail!("gh api: 403 rate limited")
+                    return Err(LookupError::Transient(anyhow::anyhow!(
+                        "gh api: 403 rate limited"
+                    )));
                 }
                 Ok(true)
             },
@@ -405,7 +439,7 @@ mod tests {
             |_| {
                 calls += 1;
                 if calls == 1 {
-                    anyhow::bail!("gh api: 502")
+                    return Err(LookupError::Transient(anyhow::anyhow!("gh api: 502")));
                 }
                 Ok(false)
             },
@@ -465,5 +499,98 @@ mod tests {
             open.iter().all(|p| p.commits_verified),
             "no row is touched when the candidate is not covering"
         );
+    }
+
+    /// #547: a definitive lookup error is refused the same way on every
+    /// attempt, so it is not retried: one lookup, no sleep, and the row is
+    /// left unverified so `decide` regenerates it (#529).
+    #[test]
+    fn mark_candidate_verified_does_not_retry_a_definitive_lookup_error() {
+        let mut open = listing();
+        for pr in &mut open {
+            pr.commits_verified = true;
+        }
+        let mut calls = 0;
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |_| {
+                calls += 1;
+                Err(LookupError::Definitive(anyhow::anyhow!(
+                    "PR head is not among its listed commits"
+                )))
+            },
+            |_| panic!("a definitive lookup error must not be retried"),
+        );
+        assert_eq!(calls, 1);
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(!candidate.commits_verified, "fails toward a regen");
+    }
+
+    /// #547: a retry that hits a definitive error stops there: one sleep for
+    /// the transient failure before it, no further attempts, unverified.
+    #[test]
+    fn mark_candidate_verified_stops_at_a_definitive_error_after_a_retry() {
+        let mut open = listing();
+        for pr in &mut open {
+            pr.commits_verified = true;
+        }
+        let mut calls = 0;
+        let mut slept = Vec::new();
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |_| {
+                calls += 1;
+                if calls == 1 {
+                    return Err(LookupError::Transient(anyhow::anyhow!("gh api: 502")));
+                }
+                Err(LookupError::Definitive(anyhow::anyhow!(
+                    "no commits listed for the PR"
+                )))
+            },
+            |d| slept.push(d),
+        );
+        assert_eq!(calls, 2, "stops at the first definitive error");
+        assert_eq!(slept, &LOOKUP_RETRY_DELAYS[..1]);
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(!candidate.commits_verified);
+    }
+
+    /// #547: a failed `gh` call is transient; every `parse_verified`
+    /// refusal of a listing `gh` did return is definitive; a good listing
+    /// passes its answer through.
+    #[test]
+    fn classify_tags_gh_failures_transient_and_parse_refusals_definitive() {
+        assert!(matches!(
+            classify(Err(anyhow::anyhow!("gh api: 502")), "c0"),
+            Err(LookupError::Transient(_))
+        ));
+        let at_cap = commits(&vec![true; PR_COMMITS_LIMIT]);
+        for (out, head) in [
+            ("", "c0"),
+            ("c0 maybe\n", "c0"),
+            ("c0\n", "c0"),
+            ("c0 true\n", "elsewhere"),
+            (at_cap.as_str(), "c0"),
+        ] {
+            assert!(
+                matches!(
+                    classify(Ok(out.to_string()), head),
+                    Err(LookupError::Definitive(_))
+                ),
+                "listing {:?} with head {head} must be definitive",
+                &out[..out.len().min(40)]
+            );
+        }
+        assert!(matches!(classify(Ok(commits(&[true])), "c0"), Ok(true)));
+        assert!(matches!(
+            classify(Ok(commits(&[true, false])), "c0"),
+            Ok(false)
+        ));
     }
 }
