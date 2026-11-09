@@ -88,11 +88,18 @@ fn report_failure_with(
 fn find_open_issue(gh: &GitHub, title: &str) -> Result<Option<(u64, String)>> {
     let suffix = format!("issues?state=open&labels={FAILURE_LABEL}&per_page=100");
     let issues = gh.list(&suffix, OPEN_ISSUE_SCAN_LIMIT)?;
-    Ok(issues.iter().find_map(|i| {
-        let is_issue = i.get("pull_request").is_none();
-        (is_issue && i["title"].as_str() == Some(title))
-            .then(|| Some((i["number"].as_u64()?, i["html_url"].as_str()?.to_string())))?
-    }))
+    let Some(found) = issues
+        .iter()
+        .find(|i| i.get("pull_request").is_none() && i["title"].as_str() == Some(title))
+    else {
+        return Ok(None);
+    };
+    // A match we cannot act on is an error, never a miss: a miss files a
+    // duplicate of the very issue we found.
+    match (found["number"].as_u64(), found["html_url"].as_str()) {
+        (Some(n), Some(u)) => Ok(Some((n, u.to_string()))),
+        _ => anyhow::bail!("tracking issue {title:?} is listed without a number or html_url"),
+    }
 }
 
 /// A code fence longer than any backtick run in `text`, so the error
@@ -307,5 +314,49 @@ mod tests {
         let err =
             report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11)).unwrap_err();
         assert!(format!("{err:#}").contains("html_url"), "{err:#}");
+    }
+
+    /// A malformed match must not read as "no issue" and file a duplicate.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_malformed_match_is_an_error_not_a_duplicate() {
+        let server = MockServer::start().await;
+        listing(&server, json!([{"number": 9, "title": TITLE}])).await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let err =
+            report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11)).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("without a number or html_url"),
+            "{err:#}"
+        );
+    }
+
+    /// A failed comment is an error, not a fall-through to filing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_comment_files_nothing() {
+        let server = MockServer::start().await;
+        listing(
+            &server,
+            json!([{"number": 9, "title": TITLE, "html_url": "u9"}]),
+        )
+        .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/issues/9/comments"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/o/r/issues"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let err =
+            report_failure_with(&client_for(&server), "rust", "boom", at(2026, 5, 11)).unwrap_err();
+        assert!(format!("{err:#}").contains("503"), "{err:#}");
     }
 }
