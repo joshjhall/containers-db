@@ -234,8 +234,10 @@ fn token_from(get: impl Fn(&str) -> Option<String>) -> Result<String> {
 /// `GITHUB_GRAPHQL_URL` (defaulting to github.com and `{api}/graphql`),
 /// refused unless the token can safely go to both: `https` (plain `http`
 /// only to a loopback host, for tests), no userinfo, and one origin for
-/// the pair. Errors name the variable, never its value, which may carry
-/// credentials.
+/// the pair. Errors name the variable (and at most the scheme), never any
+/// part of its value, which may carry credentials. The pair comes back
+/// normalized (default port dropped, host lowercased) so it matches the
+/// canonical URLs the API echoes in pagination `Link` headers.
 fn endpoints_from(get: impl Fn(&str) -> Option<String>) -> Result<(String, String)> {
     let api = get("GITHUB_API_URL").unwrap_or_else(|| DEFAULT_API_URL.to_string());
     let api = api.trim_end_matches('/').to_string();
@@ -244,12 +246,13 @@ fn endpoints_from(get: impl Fn(&str) -> Option<String>) -> Result<(String, Strin
     let graphql_url = checked_endpoint("GITHUB_GRAPHQL_URL", &graphql)?;
     ensure!(
         api_url.origin() == graphql_url.origin(),
-        "GITHUB_GRAPHQL_URL ({}) is not on the same origin as GITHUB_API_URL ({}); \
-         refusing to send the token to it",
-        graphql_url.origin().ascii_serialization(),
-        api_url.origin().ascii_serialization(),
+        "GITHUB_GRAPHQL_URL is not on the same origin (scheme, host and port) as \
+         GITHUB_API_URL; refusing to send the token to it"
     );
-    Ok((api, graphql))
+    Ok((
+        api_url.as_str().trim_end_matches('/').to_string(),
+        graphql_url.into(),
+    ))
 }
 
 /// Parse `value` (from `var`) and check it is a safe place for the token.
@@ -268,7 +271,7 @@ fn checked_endpoint(var: &str, value: &str) -> Result<reqwest::Url> {
         "https" => {}
         "http" if is_loopback(&host) => {}
         scheme => bail!(
-            "{var} must use https (plain http only to a loopback host), got {scheme}://{host}; \
+            "{var} must use https (plain http only to a loopback host), got {scheme}; \
              refusing to send the token to it"
         ),
     }
@@ -641,6 +644,12 @@ mod tests {
                 "{base}: {err}"
             );
         }
+
+        // A token pasted into the host position is never echoed.
+        let pairs = [("GITHUB_API_URL", "http://ghp_l3aked/api/v3")];
+        let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+        assert!(err.contains("got http;"), "{err}");
+        assert!(!err.contains("ghp_l3aked"), "{err}");
     }
 
     #[test]
@@ -666,16 +675,27 @@ mod tests {
 
     #[test]
     fn endpoints_refuse_graphql_on_another_origin() {
-        for graphql in [
-            "https://evil.example/api/graphql",
-            "https://ghe.example:8443/api/graphql",
+        for (api, graphql) in [
+            (
+                "https://ghe.example/api/v3",
+                "https://evil.example/api/graphql",
+            ),
+            (
+                "https://ghe.example/api/v3",
+                "https://ghe.example:8443/api/graphql",
+            ),
+            // Scheme alone differs (both legal on their own: loopback http).
+            (
+                "https://localhost:8443/api",
+                "http://localhost:8443/graphql",
+            ),
         ] {
-            let pairs = [
-                ("GITHUB_API_URL", "https://ghe.example/api/v3"),
-                ("GITHUB_GRAPHQL_URL", graphql),
-            ];
+            let pairs = [("GITHUB_API_URL", api), ("GITHUB_GRAPHQL_URL", graphql)];
             let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
             assert!(err.contains("not on the same origin"), "{graphql}: {err}");
+            // Neither origin is echoed: the host is part of the value.
+            assert!(!err.contains("evil.example"), "{err}");
+            assert!(!err.contains("8443"), "{err}");
         }
     }
 
@@ -721,16 +741,17 @@ mod tests {
     }
 
     #[test]
-    fn endpoints_compare_origins_after_port_normalization() {
-        // An explicit default port is the same origin; the GraphQL value is
-        // passed through as given, trailing slash and all.
+    fn endpoints_come_back_normalized() {
+        // An explicit default port and a mixed-case host are the same origin,
+        // and come back canonical so `list()`'s pagination prefix check
+        // matches the `Link` URLs the API echoes.
         let pairs = [
-            ("GITHUB_API_URL", "https://ghe.example:443/api/v3"),
-            ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql/"),
+            ("GITHUB_API_URL", "https://GHE.example:443/api/v3"),
+            ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql"),
         ];
         let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
-        assert_eq!(api, "https://ghe.example:443/api/v3");
-        assert_eq!(graphql, "https://ghe.example/api/graphql/");
+        assert_eq!(api, "https://ghe.example/api/v3");
+        assert_eq!(graphql, "https://ghe.example/api/graphql");
     }
 
     #[test]
