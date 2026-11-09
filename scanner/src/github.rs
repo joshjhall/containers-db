@@ -700,6 +700,12 @@ mod tests {
             assert!(!err.contains("evil.example"), "{err}");
             assert!(!err.contains("8443"), "{err}");
         }
+
+        // A GraphQL override alone is checked against the github.com default.
+        let pairs = [("GITHUB_GRAPHQL_URL", "https://evil.example/graphql")];
+        let err = endpoints_from(env_of(&pairs)).unwrap_err().to_string();
+        assert!(err.contains("not on the same origin"), "{err}");
+        assert!(!err.contains("evil.example"), "{err}");
     }
 
     #[test]
