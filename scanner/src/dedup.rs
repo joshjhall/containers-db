@@ -173,6 +173,10 @@ pub fn decide(prefix: &str, open_prs: &[OpenPr], new_versions: &[String]) -> Dec
 /// Whether `pr`'s `## New versions` section lists every one of
 /// `new_versions`. Only a covering PR can be skipped, so only then do its
 /// commit signatures matter to [`decide`].
+///
+/// `new_versions` must be non-empty — an empty list is vacuously covered by
+/// any PR, even one with no `## New versions` section.
+/// [`crate::pr::deliver`] enforces this.
 pub fn covers(pr: &OpenPr, new_versions: &[String]) -> bool {
     let covered = parse_pr_versions(&pr.body);
     new_versions.iter().all(|v| covered.contains(v))
@@ -323,6 +327,11 @@ mod tests {
         assert!(covers(&p, &vs(&["1.99.0", "1.99.1"])));
         assert!(!covers(&p, &vs(&["1.99.1", "1.100.0"])));
         assert!(!covers(&pr(1, "scan/rust/x", &[]), &vs(&["1.99.1"])));
+        // An empty list is vacuously covered — even by a PR listing no
+        // versions, which the line above shows is otherwise not covering.
+        // `deliver` rejects an empty list before `covers` is reached.
+        assert!(covers(&p, &[]));
+        assert!(covers(&pr(1, "scan/rust/x", &[]), &[]));
     }
 
     #[test]
