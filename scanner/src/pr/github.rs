@@ -3,6 +3,7 @@
 //! `pr.rs` (#531); the seam a direct GitHub API client replaces (#532).
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 
@@ -42,16 +43,23 @@ pub(super) fn list_open_prs(repo_root: &Path) -> Result<Vec<OpenPr>> {
 /// signatures say, and a failed lookup would only log a misleading
 /// warning (#536).
 ///
-/// A failed lookup leaves the row unverified: a redundant regen costs one
-/// signed commit, a wrong skip strands the release (#529). `lookup` is
-/// [`commits_verified`] in production, injected so the fail-closed path is
-/// testable without `gh`.
+/// A failed lookup is retried after each of [`LOOKUP_RETRY_DELAYS`], so a
+/// transient `gh api` failure does not force-replace a good PR's branch
+/// every scan run (#535). Only when every attempt fails is the row left
+/// unverified: a redundant regen costs one signed commit, a wrong skip
+/// strands the release (#529). A definitive answer, `Ok(false)` included,
+/// is never retried.
+///
+/// `lookup` is [`commits_verified`] and `sleep` is [`std::thread::sleep`]
+/// in production, injected so the retry and fail-closed paths are testable
+/// without `gh` or real delays.
 pub(super) fn mark_candidate_verified(
     tool_id: &str,
     prefix: &str,
     open: &mut [OpenPr],
     new_versions: &[String],
-    lookup: impl FnOnce(&OpenPr) -> Result<bool>,
+    mut lookup: impl FnMut(&OpenPr) -> Result<bool>,
+    mut sleep: impl FnMut(Duration),
 ) {
     let Some(number) = dedup::candidate(prefix, open)
         .filter(|pr| dedup::covers(pr, new_versions))
@@ -62,16 +70,33 @@ pub(super) fn mark_candidate_verified(
     let Some(pr) = open.iter_mut().find(|pr| pr.number == number) else {
         return;
     };
-    pr.commits_verified = match lookup(pr) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!(
-                "scanner: {tool_id}: could not check the commit signatures of PR #{number}; treating it as unsigned: {e:#}"
-            );
-            false
+    let attempts = LOOKUP_RETRY_DELAYS.len() + 1;
+    let mut delays = LOOKUP_RETRY_DELAYS.iter();
+    pr.commits_verified = loop {
+        match lookup(pr) {
+            Ok(v) => break v,
+            Err(e) => match delays.next() {
+                Some(&delay) => {
+                    eprintln!(
+                        "scanner: {tool_id}: could not check the commit signatures of PR #{number}; retrying in {delay:?}: {e:#}"
+                    );
+                    sleep(delay);
+                }
+                None => {
+                    eprintln!(
+                        "scanner: {tool_id}: could not check the commit signatures of PR #{number} after {attempts} attempts; treating it as unsigned: {e:#}"
+                    );
+                    break false;
+                }
+            },
         }
     };
 }
+
+/// Waits between [`commits_verified`] attempts: one retry per entry, so
+/// the lookup runs at most `len() + 1` times and a persistent failure costs
+/// a scan run their sum before the fail-closed regen.
+const LOOKUP_RETRY_DELAYS: &[Duration] = &[Duration::from_secs(2), Duration::from_secs(5)];
 
 /// The most commits `pulls/{n}/commits` returns, however it is paginated.
 /// A listing that reaches it may be truncated, so it is refused.
@@ -235,10 +260,17 @@ mod tests {
     fn mark_candidate_verified_marks_only_the_candidate() {
         let mut open = listing();
         let mut asked = None;
-        mark_candidate_verified("rust", "scan/rust/", &mut open, &wanted(), |pr| {
-            asked = Some(pr.number);
-            Ok(true)
-        });
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |pr| {
+                asked = Some(pr.number);
+                Ok(true)
+            },
+            |_| panic!("a successful lookup must not sleep"),
+        );
         assert_eq!(asked, Some(398));
         let marked: Vec<u64> = open
             .iter()
@@ -248,17 +280,30 @@ mod tests {
         assert_eq!(marked, vec![398]);
     }
 
-    /// #529: a lookup that errors must leave the candidate unverified, so
-    /// `decide` regenerates it rather than skipping it.
+    /// #529, #535: a lookup that errors on every attempt must leave the
+    /// candidate unverified, so `decide` regenerates it rather than skipping
+    /// it, and must give up after the bounded number of attempts.
     #[test]
     fn mark_candidate_verified_fails_closed_on_lookup_error() {
         let mut open = listing();
         for pr in &mut open {
             pr.commits_verified = true;
         }
-        mark_candidate_verified("rust", "scan/rust/", &mut open, &wanted(), |_| {
-            anyhow::bail!("gh api: 502")
-        });
+        let mut calls = 0;
+        let mut slept = Vec::new();
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |_| {
+                calls += 1;
+                anyhow::bail!("gh api: 502")
+            },
+            |d| slept.push(d),
+        );
+        assert_eq!(calls, LOOKUP_RETRY_DELAYS.len() + 1, "retry is bounded");
+        assert_eq!(slept, LOOKUP_RETRY_DELAYS, "backs off before each retry");
         let candidate = open.iter().find(|p| p.number == 398).unwrap();
         assert!(!candidate.commits_verified);
         assert!(
@@ -269,6 +314,109 @@ mod tests {
         );
     }
 
+    /// The retry tests derive their expectations from the table, so pin the
+    /// table itself: #535 needs at least one retry, and a persistent failure
+    /// must not stall a scan run for long before the fail-closed regen.
+    #[test]
+    fn lookup_retry_delays_retry_at_least_once_within_a_bounded_cost() {
+        assert!(!LOOKUP_RETRY_DELAYS.is_empty(), "#535 needs a retry");
+        let total: Duration = LOOKUP_RETRY_DELAYS.iter().sum();
+        assert!(
+            total <= Duration::from_secs(10),
+            "retry cost per scan run is bounded, got {total:?}"
+        );
+    }
+
+    /// #535: a transient failure that clears on retry yields the true
+    /// answer, so a verified PR is not regenerated.
+    #[test]
+    fn mark_candidate_verified_retries_a_transient_lookup_error() {
+        let mut open = listing();
+        let mut calls = 0;
+        let mut asked = Vec::new();
+        let mut slept = Vec::new();
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |pr| {
+                calls += 1;
+                asked.push(pr.number);
+                if calls <= LOOKUP_RETRY_DELAYS.len() {
+                    anyhow::bail!("gh api: 403 rate limited")
+                }
+                Ok(true)
+            },
+            |d| slept.push(d),
+        );
+        assert!(calls >= 2, "the lookup was retried");
+        assert_eq!(calls, LOOKUP_RETRY_DELAYS.len() + 1);
+        assert_eq!(
+            asked,
+            vec![398; calls],
+            "every retry asks about the candidate"
+        );
+        assert_eq!(slept, LOOKUP_RETRY_DELAYS);
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(candidate.commits_verified, "the retried answer is recorded");
+    }
+
+    /// A definitive "unsigned" answer is a result, not a failure: it is
+    /// recorded at once, without retrying or sleeping.
+    #[test]
+    fn mark_candidate_verified_does_not_retry_an_unsigned_answer() {
+        let mut open = listing();
+        for pr in &mut open {
+            pr.commits_verified = true;
+        }
+        let mut calls = 0;
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |_| {
+                calls += 1;
+                Ok(false)
+            },
+            |_| panic!("an unsigned answer must not be retried"),
+        );
+        assert_eq!(calls, 1);
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(!candidate.commits_verified);
+    }
+
+    /// A retry that gets a definitive "unsigned" answer records it and
+    /// stops: one sleep, no further attempts, and the row stays unverified.
+    #[test]
+    fn mark_candidate_verified_records_an_unsigned_answer_after_a_retry() {
+        let mut open = listing();
+        for pr in &mut open {
+            pr.commits_verified = true;
+        }
+        let mut calls = 0;
+        let mut slept = Vec::new();
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |_| {
+                calls += 1;
+                if calls == 1 {
+                    anyhow::bail!("gh api: 502")
+                }
+                Ok(false)
+            },
+            |d| slept.push(d),
+        );
+        assert_eq!(calls, 2, "stops at the first definitive answer");
+        assert_eq!(slept, &LOOKUP_RETRY_DELAYS[..1]);
+        let candidate = open.iter().find(|p| p.number == 398).unwrap();
+        assert!(!candidate.commits_verified);
+    }
+
     #[test]
     fn mark_candidate_verified_skips_lookup_without_a_candidate() {
         // Start from `true` so the final assert can tell "left untouched"
@@ -277,9 +425,14 @@ mod tests {
             commits_verified: true,
             ..listing_pr(10, "scan/node/2026-10-16", &["1.0.0"])
         }];
-        mark_candidate_verified("rust", "scan/rust/", &mut open, &wanted(), |_| {
-            panic!("no candidate: lookup must not run")
-        });
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |_| panic!("no candidate: lookup must not run"),
+            |_| panic!("no candidate: sleep must not run"),
+        );
         assert!(
             open[0].commits_verified,
             "a non-candidate row is left untouched"
@@ -300,9 +453,14 @@ mod tests {
             pr.commits_verified = true;
         }
         let new_versions = vec!["1.0.0".to_string(), "1.0.1".to_string()];
-        mark_candidate_verified("rust", "scan/rust/", &mut open, &new_versions, |_| {
-            panic!("non-covering candidate: lookup must not run")
-        });
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &new_versions,
+            |_| panic!("non-covering candidate: lookup must not run"),
+            |_| panic!("non-covering candidate: sleep must not run"),
+        );
         assert!(
             open.iter().all(|p| p.commits_verified),
             "no row is touched when the candidate is not covering"
