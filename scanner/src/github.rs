@@ -72,8 +72,8 @@ impl GitHub {
         Ok(gh)
     }
 
-    /// A client against `api` (its GraphQL endpoint at `{api}/graphql`),
-    /// for tests that point it at a mock server.
+    /// A client against `api` (its GraphQL endpoint derived by
+    /// [`default_graphql_url`]), for tests that point it at a mock server.
     pub fn with_base(
         client: reqwest::Client,
         api: &str,
@@ -84,7 +84,7 @@ impl GitHub {
         let api = api.trim_end_matches('/').to_string();
         GitHub {
             client,
-            graphql_url: format!("{api}/graphql"),
+            graphql_url: default_graphql_url(&api),
             api,
             token,
             owner,
@@ -231,7 +231,8 @@ fn token_from(get: impl Fn(&str) -> Option<String>) -> Result<String> {
 }
 
 /// The REST and GraphQL endpoints from `GITHUB_API_URL` and
-/// `GITHUB_GRAPHQL_URL` (defaulting to github.com and `{api}/graphql`),
+/// `GITHUB_GRAPHQL_URL` (defaulting to github.com and
+/// [`default_graphql_url`]),
 /// refused unless the token can safely go to both: `https` (plain `http`
 /// only to a loopback host, for tests), no userinfo, and one origin for
 /// the pair. Errors name the variable (and at most the scheme), never any
@@ -241,18 +242,36 @@ fn token_from(get: impl Fn(&str) -> Option<String>) -> Result<String> {
 fn endpoints_from(get: impl Fn(&str) -> Option<String>) -> Result<(String, String)> {
     let api = get("GITHUB_API_URL").unwrap_or_else(|| DEFAULT_API_URL.to_string());
     let api = api.trim_end_matches('/').to_string();
-    let graphql = get("GITHUB_GRAPHQL_URL").unwrap_or_else(|| format!("{api}/graphql"));
     let api_url = checked_endpoint("GITHUB_API_URL", &api)?;
+    let api = api_url.as_str().trim_end_matches('/').to_string();
+    // Derive from the parsed form so the default sees the same normalized
+    // path (`\` separators, dot segments) that is returned for the API.
+    let graphql = get("GITHUB_GRAPHQL_URL").unwrap_or_else(|| default_graphql_url(&api));
     let graphql_url = checked_endpoint("GITHUB_GRAPHQL_URL", &graphql)?;
     ensure!(
         api_url.origin() == graphql_url.origin(),
         "GITHUB_GRAPHQL_URL is not on the same origin (scheme, host and port) as \
          GITHUB_API_URL; refusing to send the token to it"
     );
-    Ok((
-        api_url.as_str().trim_end_matches('/').to_string(),
-        graphql_url.into(),
-    ))
+    Ok((api, graphql_url.into()))
+}
+
+/// The GraphQL endpoint for the REST base `api` when none is configured.
+/// GitHub Enterprise Server serves REST at `/api/v3` but GraphQL at
+/// `/api/graphql`, so a trailing `/v3` path segment is swapped for
+/// `/graphql`; any other base (github.com, a mock server) gets
+/// `{api}/graphql`. Only the path is inspected, so a host named `v3`
+/// is left alone.
+fn default_graphql_url(api: &str) -> String {
+    let api = api.trim_end_matches('/');
+    let authority = api.find("://").map_or(0, |i| i + 3);
+    let path = api[authority..]
+        .find('/')
+        .map_or("", |i| &api[authority + i..]);
+    match path.strip_suffix("/v3") {
+        Some(_) => format!("{}graphql", &api[..api.len() - "v3".len()]),
+        None => format!("{api}/graphql"),
+    }
 }
 
 /// Parse `value` (from `var`) and check it is a safe place for the token.
@@ -608,6 +627,84 @@ mod tests {
     }
 
     #[test]
+    fn endpoints_derive_the_ghes_graphql_endpoint() {
+        for api in ["https://ghe.example/api/v3", "https://ghe.example/api/v3/"] {
+            let (api_out, graphql) = endpoints_from(env_of(&[("GITHUB_API_URL", api)])).unwrap();
+            assert_eq!(api_out, "https://ghe.example/api/v3", "{api}");
+            assert_eq!(graphql, "https://ghe.example/api/graphql", "{api}");
+        }
+    }
+
+    #[test]
+    fn endpoints_derive_graphql_from_the_normalized_api_path() {
+        for api in [
+            "https://ghe.example/api/v3/.",
+            "https://ghe.example/api/v3/x/..",
+            "https://ghe.example\\api\\v3",
+        ] {
+            let (api_out, graphql) = endpoints_from(env_of(&[("GITHUB_API_URL", api)])).unwrap();
+            assert_eq!(api_out, "https://ghe.example/api/v3", "{api}");
+            assert_eq!(graphql, "https://ghe.example/api/graphql", "{api}");
+        }
+    }
+
+    #[test]
+    fn endpoints_keep_an_explicit_graphql_url_over_the_derived_one() {
+        let (_, graphql) = endpoints_from(env_of(&[
+            ("GITHUB_API_URL", "https://ghe.example/api/v3"),
+            ("GITHUB_GRAPHQL_URL", "https://ghe.example/custom/graphql"),
+        ]))
+        .unwrap();
+        assert_eq!(graphql, "https://ghe.example/custom/graphql");
+    }
+
+    #[test]
+    fn with_base_derives_the_ghes_graphql_endpoint() {
+        let client = http_client(TIMEOUT, TlsRoots::None).unwrap();
+        let gh = GitHub::with_base(
+            client,
+            "https://ghe.example/api/v3/",
+            TOKEN.to_string(),
+            "o".to_string(),
+            "r".to_string(),
+        );
+        assert_eq!(gh.api, "https://ghe.example/api/v3");
+        assert_eq!(gh.graphql_url, "https://ghe.example/api/graphql");
+    }
+
+    #[test]
+    fn default_graphql_url_rewrites_only_a_trailing_v3_path_segment() {
+        for (api, want) in [
+            (
+                "https://ghe.example/api/v3",
+                "https://ghe.example/api/graphql",
+            ),
+            (
+                "https://ghe.example/api/v3/",
+                "https://ghe.example/api/graphql",
+            ),
+            ("https://api.github.com", "https://api.github.com/graphql"),
+            ("http://127.0.0.1:8080", "http://127.0.0.1:8080/graphql"),
+            // A host named `v3` is not a path segment.
+            ("https://v3", "https://v3/graphql"),
+            ("https://v3/", "https://v3/graphql"),
+            // The issue's rule: any trailing `/v3` segment, bare included.
+            ("https://ghe.example/v3", "https://ghe.example/graphql"),
+            // Only a whole trailing segment counts.
+            (
+                "https://ghe.example/api/xv3",
+                "https://ghe.example/api/xv3/graphql",
+            ),
+            (
+                "https://ghe.example/v3/api",
+                "https://ghe.example/v3/api/graphql",
+            ),
+        ] {
+            assert_eq!(default_graphql_url(api), want, "{api}");
+        }
+    }
+
+    #[test]
     fn endpoints_accept_plain_http_only_to_loopback() {
         for base in [
             "http://127.0.0.1:8080",
@@ -793,7 +890,7 @@ mod tests {
         let pairs = [("GITHUB_API_URL", "https://GHE.example:443/api/v3")];
         let (api, graphql) = endpoints_from(env_of(&pairs)).unwrap();
         assert_eq!(api, "https://ghe.example/api/v3");
-        assert_eq!(graphql, "https://ghe.example/api/v3/graphql");
+        assert_eq!(graphql, "https://ghe.example/api/graphql");
     }
 
     #[test]
