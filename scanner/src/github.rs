@@ -945,6 +945,19 @@ mod tests {
         assert_eq!(gh.graphql_url, "https://api.github.com/graphql");
     }
 
+    /// Every token variable set but empty (a CI step exporting a missing
+    /// secret) fails closed through discovery, never an empty bearer.
+    #[test]
+    fn discovery_with_only_empty_tokens_fails_closed() {
+        let env = [
+            ("GH_TOKEN", ""),
+            ("GITHUB_TOKEN", ""),
+            ("GITHUB_REPOSITORY", "o/r"),
+        ];
+        let err = GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap_err();
+        assert!(format!("{err:#}").contains("no GitHub token"), "{err:#}");
+    }
+
     #[test]
     fn with_base_derives_the_ghes_graphql_endpoint() {
         let client = http_client(TIMEOUT, TlsRoots::None).unwrap();
