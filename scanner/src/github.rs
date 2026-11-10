@@ -59,7 +59,7 @@ impl GitHub {
     /// and the endpoints from `GITHUB_API_URL`/`GITHUB_GRAPHQL_URL`
     /// (Actions sets all three) or github.com.
     pub fn discover(repo_root: &Path) -> Result<Self> {
-        Self::discover_with(|k: &str| non_empty(std::env::var(k).ok()), repo_root)
+        Self::discover_with(env_getter(|k| std::env::var(k).ok()), repo_root)
     }
 
     /// [`Self::discover`] with every variable read through `get` (unset
@@ -339,11 +339,12 @@ fn is_loopback(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
-/// An env value as [`GitHub::discover`] reads it: empty is the same as
-/// unset, so `GITHUB_REPOSITORY=` falls back to `origin` instead of
-/// failing to split.
-fn non_empty(v: Option<String>) -> Option<String> {
-    v.filter(|v| !v.is_empty())
+/// The getter [`GitHub::discover`] hands to `discover_with`: `raw` with an
+/// empty value read as unset, so `GITHUB_REPOSITORY=` falls back to
+/// `origin` instead of failing to split. Tests wrap a fixed env in it, so
+/// they exercise the same filter production does.
+fn env_getter(raw: impl Fn(&str) -> Option<String>) -> impl Fn(&str) -> Option<String> {
+    move |k| raw(k).filter(|v| !v.is_empty())
 }
 
 fn origin_url(repo_root: &Path) -> Result<String> {
@@ -919,15 +920,14 @@ mod tests {
 
     /// `discover`'s getter reads an empty variable as unset, so an empty
     /// `GITHUB_REPOSITORY` falls back to `origin` rather than failing.
+    /// Without the filter `discover_with` would split `""` and error.
     #[test]
     fn an_empty_env_value_reads_as_unset() {
-        assert_eq!(non_empty(Some(String::new())), None);
-        assert_eq!(non_empty(None), None);
-        assert_eq!(non_empty(Some("o/r".into())), Some("o/r".into()));
-
         let dir = repo_with_origin(Some("https://github.com/a/b.git"));
         let env = [("GH_TOKEN", TOKEN), ("GITHUB_REPOSITORY", "")];
-        let get = |k: &str| non_empty(env_of(&env)(k));
+        let get = env_getter(env_of(&env));
+        assert_eq!(get("GITHUB_REPOSITORY"), None);
+        assert_eq!(get("GH_TOKEN").as_deref(), Some(TOKEN));
         let gh = GitHub::discover_with(get, dir.path()).unwrap();
         assert_eq!((gh.owner(), gh.repo()), ("a", "b"));
     }
