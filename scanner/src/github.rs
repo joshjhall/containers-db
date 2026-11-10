@@ -258,17 +258,18 @@ fn endpoints_from(get: impl Fn(&str) -> Option<String>) -> Result<(String, Strin
 
 /// The GraphQL endpoint for the REST base `api` when none is configured.
 /// GitHub Enterprise Server serves REST at `/api/v3` but GraphQL at
-/// `/api/graphql`, so a trailing `/v3` path segment is swapped for
-/// `/graphql`; any other base (github.com, a mock server) gets
-/// `{api}/graphql`. Only the path is inspected, so a host named `v3`
-/// is left alone.
+/// `/api/graphql`, so a path ending in the two segments `/api/v3` has
+/// its `v3` swapped for `graphql`. Any other base gets `{api}/graphql`:
+/// github.com, a mock server, or a proxy that mounts the API at a bare
+/// `/v3`. Only the path is inspected, so a host named `api` or `v3` is
+/// left alone.
 fn default_graphql_url(api: &str) -> String {
     let api = api.trim_end_matches('/');
     let authority = api.find("://").map_or(0, |i| i + 3);
     let path = api[authority..]
         .find('/')
         .map_or("", |i| &api[authority + i..]);
-    match path.strip_suffix("/v3") {
+    match path.strip_suffix("/api/v3") {
         Some(_) => format!("{}graphql", &api[..api.len() - "v3".len()]),
         None => format!("{api}/graphql"),
     }
@@ -673,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn default_graphql_url_rewrites_only_a_trailing_v3_path_segment() {
+    fn default_graphql_url_rewrites_only_a_trailing_api_v3_path() {
         for (api, want) in [
             (
                 "https://ghe.example/api/v3",
@@ -688,12 +689,24 @@ mod tests {
             // A host named `v3` is not a path segment.
             ("https://v3", "https://v3/graphql"),
             ("https://v3/", "https://v3/graphql"),
-            // The issue's rule: any trailing `/v3` segment, bare included.
-            ("https://ghe.example/v3", "https://ghe.example/graphql"),
-            // Only a whole trailing segment counts.
+            // A host named `api` is not a path segment either.
+            ("https://api/v3", "https://api/v3/graphql"),
+            // A bare `/v3` (a proxy or mock mounting the API there) is not
+            // GHES, so it nests rather than becoming a sibling path.
+            ("https://ghe.example/v3", "https://ghe.example/v3/graphql"),
+            // GHES behind a path prefix still rewrites.
+            (
+                "https://proxy.example/ghe/api/v3",
+                "https://proxy.example/ghe/api/graphql",
+            ),
+            // Only whole trailing segments count.
             (
                 "https://ghe.example/api/xv3",
                 "https://ghe.example/api/xv3/graphql",
+            ),
+            (
+                "https://ghe.example/xapi/v3",
+                "https://ghe.example/xapi/v3/graphql",
             ),
             (
                 "https://ghe.example/v3/api",
