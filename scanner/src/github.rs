@@ -890,10 +890,15 @@ mod tests {
         dir
     }
 
+    /// An origin no plausible `url.<base>.insteadOf` rule rewrites, so
+    /// `git remote get-url` returns it verbatim whatever the host's
+    /// global git config says.
+    const ORIGIN: &str = "https://example.invalid/a/b.git";
+
     #[test]
     fn origin_url_reads_the_origin_remote() {
-        let dir = repo_with_origin(Some("git@github.com:a/b.git"));
-        assert_eq!(origin_url(dir.path()).unwrap(), "git@github.com:a/b.git");
+        let dir = repo_with_origin(Some(ORIGIN));
+        assert_eq!(origin_url(dir.path()).unwrap(), ORIGIN);
     }
 
     #[test]
@@ -905,7 +910,7 @@ mod tests {
 
     #[test]
     fn discover_falls_back_to_origin_without_github_repository() {
-        let dir = repo_with_origin(Some("https://github.com/a/b.git"));
+        let dir = repo_with_origin(Some(ORIGIN));
         let env = [("GH_TOKEN", TOKEN)];
         let gh = GitHub::discover_with(env_of(&env), dir.path()).unwrap();
         assert_eq!((gh.owner(), gh.repo()), ("a", "b"));
@@ -913,7 +918,7 @@ mod tests {
 
     #[test]
     fn discover_prefers_github_repository_over_origin() {
-        let dir = repo_with_origin(Some("https://github.com/a/b.git"));
+        let dir = repo_with_origin(Some(ORIGIN));
         let gh = GitHub::discover_with(env_of(&DISCOVER_BASE), dir.path()).unwrap();
         assert_eq!((gh.owner(), gh.repo()), ("o", "r"));
     }
@@ -923,7 +928,7 @@ mod tests {
     /// Without the filter `discover_with` would split `""` and error.
     #[test]
     fn an_empty_env_value_reads_as_unset() {
-        let dir = repo_with_origin(Some("https://github.com/a/b.git"));
+        let dir = repo_with_origin(Some(ORIGIN));
         let env = [("GH_TOKEN", TOKEN), ("GITHUB_REPOSITORY", "")];
         let get = env_getter(env_of(&env));
         assert_eq!(get("GITHUB_REPOSITORY"), None);
