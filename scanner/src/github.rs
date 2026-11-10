@@ -484,6 +484,33 @@ mod tests {
         assert_eq!(v, Value::Null);
     }
 
+    /// #550: only a status GitHub actually returned is an
+    /// [`HttpStatusError`]. A request that never got an answer must not
+    /// downcast to one, or a caller could read it as a permanent refusal.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_transport_failure_is_not_an_http_status_error() {
+        // Bind then drop a listener: the port is free, so connecting is
+        // refused rather than answered.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let gh = GitHub::with_base(
+            http_client(TIMEOUT, TlsRoots::None).unwrap(),
+            &format!("http://127.0.0.1:{port}"),
+            TOKEN.to_string(),
+            "o".to_string(),
+            "r".to_string(),
+        );
+        let err = gh.list("pulls", 10).unwrap_err();
+        assert!(
+            err.downcast_ref::<reqwest::Error>().is_some(),
+            "expected a transport error, got: {err:#}"
+        );
+        assert!(err.downcast_ref::<HttpStatusError>().is_none(), "{err:#}");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn error_names_status_and_never_the_token() {
         let server = MockServer::start().await;
