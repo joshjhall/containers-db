@@ -393,7 +393,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "containers-common"
 version = "0.1.0"
-source = "git+https://github.com/joshjhall/containers?rev=1853ba6a563eb001c08d520b037fa7e147fac988#1853ba6a563eb001c08d520b037fa7e147fac988"
+source = "git+https://github.com/joshjhall/containers?rev=6f9816882c0f359674dc35cdae2a10614f16d8b2#6f9816882c0f359674dc35cdae2a10614f16d8b2"
 dependencies = [
  "indexmap",
  "minijinja",
@@ -1754,7 +1754,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a253edfdea34032da21af84e16fcc94f4c7a6ba237f9f3bc2dbf43cea8535c44"
 dependencies = [
  "annotate-snippets",
- "base64 0.23.1",
+ "base64 0.22.1",
  "encoding_rs_io",
  "granit-parser",
  "nohash-hasher",
