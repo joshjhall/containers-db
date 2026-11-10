@@ -59,16 +59,15 @@ impl GitHub {
     /// and the endpoints from `GITHUB_API_URL`/`GITHUB_GRAPHQL_URL`
     /// (Actions sets all three) or github.com.
     pub fn discover(repo_root: &Path) -> Result<Self> {
-        Self::discover_with(
-            |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty()),
-            repo_root,
-        )
+        Self::discover_with(|k| std::env::var(k).ok(), repo_root)
     }
 
-    /// [`Self::discover`] with every variable read through `get` (unset
-    /// and empty both `None`), so tests can drive it without touching
-    /// the process environment.
-    fn discover_with(get: impl Fn(&str) -> Option<String>, repo_root: &Path) -> Result<Self> {
+    /// [`Self::discover`] with every variable read through `raw`, so tests
+    /// can drive it without touching the process environment. An empty
+    /// value is read as unset here, not by the caller, so every path into
+    /// discovery gets the same filter.
+    fn discover_with(raw: impl Fn(&str) -> Option<String>, repo_root: &Path) -> Result<Self> {
+        let get = env_getter(raw);
         let token = token_from(&get)?;
         let (owner, repo) = match get("GITHUB_REPOSITORY") {
             Some(nwo) => split_owner_repo(&nwo)?,
@@ -340,6 +339,12 @@ fn is_loopback(host: &str) -> bool {
             .trim_end_matches(']')
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// `raw` with an empty value read as unset, so `GITHUB_REPOSITORY=` falls
+/// back to `origin` and an empty `GH_TOKEN` defers to `GITHUB_TOKEN`.
+fn env_getter(raw: impl Fn(&str) -> Option<String>) -> impl Fn(&str) -> Option<String> {
+    move |k| raw(k).filter(|v| !v.is_empty())
 }
 
 fn origin_url(repo_root: &Path) -> Result<String> {
@@ -615,6 +620,87 @@ mod tests {
         assert!(format!("{err:#}").contains("nope"), "{err:#}");
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn graphql_returns_the_parsed_body_on_success() {
+        let server = MockServer::start().await;
+        let answer = json!({"data": {"repository": {"id": "R_1"}}});
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_json(json!({"query": "q"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&answer))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let v = client_for(&server).graphql(&json!({"query": "q"})).unwrap();
+        assert_eq!(v, answer);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rest_invalid_json_is_an_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let err = client_for(&server)
+            .rest(Method::GET, "pulls", None)
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("parsing JSON"), "{err:#}");
+    }
+
+    /// A page that comes back empty ends the listing even when it still
+    /// carries a `next` link; following it could loop forever.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_stops_on_an_empty_page() {
+        let server = MockServer::start().await;
+        let page = |n: u32| format!("{}/repos/o/r/pulls?page={n}", server.uri());
+        let next = |n: u32| format!(r#"<{}>; rel="next""#, page(n));
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .and(query_param("page", "3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"n": 9}])))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .and(query_param("page", "2"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([]))
+                    .insert_header("link", next(3)),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"n": 1}]))
+                    .insert_header("link", next(2)),
+            )
+            .mount(&server)
+            .await;
+        let rows = client_for(&server).list("pulls", 100).unwrap();
+        assert_eq!(rows, [json!({"n": 1})]);
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2, "page 3 must not be fetched");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_stops_without_a_link_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"n": 1}, {"n": 2}])))
+            .mount(&server)
+            .await;
+        let rows = client_for(&server).list("pulls", 100).unwrap();
+        assert_eq!(rows, [json!({"n": 1}), json!({"n": 2})]);
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
     #[test]
     fn calls_outside_a_runtime_error_instead_of_panicking() {
         let gh = GitHub::with_base(
@@ -778,6 +864,98 @@ mod tests {
         ]);
         let err = GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap_err();
         assert!(format!("{err:#}").contains("same origin"), "{err:#}");
+    }
+
+    /// A fresh repo with `origin` set to `url`, or none when `url` is
+    /// `None`. Panics if an inherited `GIT_DIR` (e.g. from a pre-push hook)
+    /// would point `git` at a different repo.
+    fn repo_with_origin(url: Option<&str>) -> tempfile::TempDir {
+        assert!(
+            std::env::var_os("GIT_DIR").is_none() && std::env::var_os("GIT_WORK_TREE").is_none(),
+            "unset GIT_DIR/GIT_WORK_TREE: the temp-repo tests would act on another repo"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let st = Command::new("git")
+                .current_dir(dir.path())
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(st.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        if let Some(url) = url {
+            git(&["remote", "add", "origin", url]);
+        }
+        dir
+    }
+
+    /// An origin no plausible `url.<base>.insteadOf` rule rewrites, so
+    /// `git remote get-url` returns it verbatim whatever the host's
+    /// global git config says.
+    const ORIGIN: &str = "https://example.invalid/a/b.git";
+
+    #[test]
+    fn origin_url_reads_the_origin_remote() {
+        let dir = repo_with_origin(Some(ORIGIN));
+        assert_eq!(origin_url(dir.path()).unwrap(), ORIGIN);
+    }
+
+    #[test]
+    fn origin_url_without_an_origin_points_at_github_repository() {
+        let dir = repo_with_origin(None);
+        let err = origin_url(dir.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("GITHUB_REPOSITORY"), "{err:#}");
+    }
+
+    #[test]
+    fn discover_falls_back_to_origin_without_github_repository() {
+        let dir = repo_with_origin(Some(ORIGIN));
+        let env = [("GH_TOKEN", TOKEN)];
+        let gh = GitHub::discover_with(env_of(&env), dir.path()).unwrap();
+        assert_eq!((gh.owner(), gh.repo()), ("a", "b"));
+    }
+
+    #[test]
+    fn discover_prefers_github_repository_over_origin() {
+        let dir = repo_with_origin(Some(ORIGIN));
+        let gh = GitHub::discover_with(env_of(&DISCOVER_BASE), dir.path()).unwrap();
+        assert_eq!((gh.owner(), gh.repo()), ("o", "r"));
+    }
+
+    /// Discovery reads an empty variable as unset, fed the raw env as
+    /// `discover` feeds it: an empty `GITHUB_REPOSITORY` falls back to
+    /// `origin`, an empty `GH_TOKEN` defers to `GITHUB_TOKEN`, and an empty
+    /// `GITHUB_API_URL` keeps the github.com default. Without the filter
+    /// each would fail (split `""`, send an empty bearer, parse `""`).
+    #[test]
+    fn discovery_reads_an_empty_env_value_as_unset() {
+        let dir = repo_with_origin(Some(ORIGIN));
+        let env = [
+            ("GH_TOKEN", ""),
+            ("GITHUB_TOKEN", TOKEN),
+            ("GITHUB_REPOSITORY", ""),
+            ("GITHUB_API_URL", ""),
+            ("GITHUB_GRAPHQL_URL", ""),
+        ];
+        let gh = GitHub::discover_with(env_of(&env), dir.path()).unwrap();
+        assert_eq!((gh.owner(), gh.repo()), ("a", "b"));
+        assert_eq!(gh.token, TOKEN);
+        assert_eq!(gh.api, "https://api.github.com");
+        assert_eq!(gh.graphql_url, "https://api.github.com/graphql");
+    }
+
+    /// Every token variable set but empty (a CI step exporting a missing
+    /// secret) fails closed through discovery, never an empty bearer.
+    #[test]
+    fn discovery_with_only_empty_tokens_fails_closed() {
+        let env = [
+            ("GH_TOKEN", ""),
+            ("GITHUB_TOKEN", ""),
+            ("GITHUB_REPOSITORY", "o/r"),
+        ];
+        let err = GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap_err();
+        assert!(format!("{err:#}").contains("no GitHub token"), "{err:#}");
     }
 
     #[test]
