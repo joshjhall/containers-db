@@ -14,7 +14,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
-use reqwest::{Method, RequestBuilder, Response, header};
+use reqwest::{Method, RequestBuilder, Response, StatusCode, header};
 use serde_json::Value;
 
 use crate::adapters::{TlsRoots, http_client};
@@ -193,9 +193,23 @@ impl GitHub {
     }
 }
 
+/// A request GitHub answered with a non-2xx status. It travels inside the
+/// `anyhow::Error` the client returns, so a caller that must tell a
+/// permanent refusal from a retryable one can `downcast_ref` it rather than
+/// parse the message (#550).
+#[derive(Debug, thiserror::Error)]
+#[error("{method} {url} returned {status}: {body}")]
+pub struct HttpStatusError {
+    pub method: Method,
+    pub url: String,
+    pub status: StatusCode,
+    /// The response body, truncated to [`ERROR_BODY_CHARS`].
+    pub body: String,
+}
+
 /// Send `req`, turning a transport failure or a non-2xx status into an
-/// error naming the request. The token is a header, so it is never in
-/// the message; the body is truncated.
+/// error naming the request; the latter is an [`HttpStatusError`]. The
+/// token is a header, so it is never in the message; the body is truncated.
 async fn send(req: RequestBuilder, method: &Method, url: &str) -> Result<Response> {
     let resp = req
         .send()
@@ -206,8 +220,13 @@ async fn send(req: RequestBuilder, method: &Method, url: &str) -> Result<Respons
         return Ok(resp);
     }
     let body = resp.text().await.unwrap_or_default();
-    let body: String = body.chars().take(ERROR_BODY_CHARS).collect();
-    bail!("{method} {url} returned {status}: {body}")
+    Err(HttpStatusError {
+        method: method.clone(),
+        url: url.to_string(),
+        status,
+        body: body.chars().take(ERROR_BODY_CHARS).collect(),
+    }
+    .into())
 }
 
 /// Run `fut` to completion from synchronous code inside a multi-thread
@@ -477,6 +496,10 @@ mod tests {
             gh.rest(Method::GET, "pulls", None).unwrap_err(),
             gh.list("pulls", 10).unwrap_err(),
         ] {
+            let typed = err
+                .downcast_ref::<HttpStatusError>()
+                .expect("a non-2xx status is a typed HttpStatusError (#550)");
+            assert_eq!(typed.status, StatusCode::FORBIDDEN);
             let msg = format!("{err:#}");
             assert!(msg.contains("403"), "{msg}");
             assert!(msg.contains("Bad credentials"), "{msg}");

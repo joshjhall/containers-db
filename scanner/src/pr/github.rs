@@ -5,10 +5,11 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use reqwest::StatusCode;
 use serde_json::Value;
 
 use crate::dedup::{self, OpenPr};
-use crate::github::GitHub;
+use crate::github::{GitHub, HttpStatusError};
 
 /// Upper bound on listed open PRs. Hitting it errors rather than risk
 /// missing the tool's scan PR and opening a duplicate.
@@ -101,12 +102,18 @@ const PR_COMMITS_LIMIT: usize = 250;
 /// [`mark_candidate_verified`] retries it (#547).
 #[derive(Debug, thiserror::Error)]
 pub(super) enum LookupError {
-    /// The request itself failed: network, 5xx, rate limit. Worth a
-    /// retry. Auth and token-scope failures land here too: a 403 is also
-    /// GitHub's rate-limit status, so status alone cannot tell them apart.
+    /// The request failed in a way that may pass on a retry: transport
+    /// errors, 5xx, 429, and 403. A 403 stays here even when it is a
+    /// token-scope failure, because it is also GitHub's rate-limit status
+    /// and status alone cannot tell them apart. Any failure that is not an
+    /// [`HttpStatusError`] defaults here too.
     #[error(transparent)]
     Transient(anyhow::Error),
-    /// GitHub answered, but [`parse_verified`] refused the answer. Treated as
+    /// The answer will not change on a retry, so the lookup is not retried.
+    /// Either GitHub refused the request with a permanent status
+    /// ([`PERMANENT_STATUSES`]: bad credentials, a missing PR, an
+    /// unprocessable request; #550), or GitHub answered and
+    /// [`parse_verified`] refused the answer. A refused answer is treated as
     /// final by design: a malformed or capped listing comes back the same,
     /// and the rarer cases that might not (an empty listing, a head that a
     /// lagging listing omits) cost only a redundant regen, not a stranded
@@ -135,11 +142,31 @@ fn listing_lines(rows: &[Value]) -> String {
         .collect()
 }
 
-/// Tag a failure of the request as [`LookupError::Transient`] and one
-/// from parsing its answer as [`LookupError::Definitive`]. Split out of
-/// [`commits_verified`] so the tagging is testable without the API.
+/// Statuses a retry cannot change: 401 bad credentials, 404 no such PR,
+/// 422 unprocessable. 403 is deliberately absent (see
+/// [`LookupError::Transient`]).
+const PERMANENT_STATUSES: &[StatusCode] = &[
+    StatusCode::UNAUTHORIZED,
+    StatusCode::NOT_FOUND,
+    StatusCode::UNPROCESSABLE_ENTITY,
+];
+
+/// Tag a request GitHub refused with a [`PERMANENT_STATUSES`] status, and
+/// any refusal of its answer by [`parse_verified`], as
+/// [`LookupError::Definitive`]. Tag every other request failure as
+/// [`LookupError::Transient`]. Split out of [`commits_verified`] so the
+/// tagging is testable without the API.
 fn classify(listing: Result<String>, head_oid: &str) -> Result<bool, LookupError> {
-    let out = listing.map_err(LookupError::Transient)?;
+    let out = listing.map_err(|e| {
+        let permanent = e
+            .downcast_ref::<HttpStatusError>()
+            .is_some_and(|h| PERMANENT_STATUSES.contains(&h.status));
+        if permanent {
+            LookupError::Definitive(e)
+        } else {
+            LookupError::Transient(e)
+        }
+    })?;
     parse_verified(&out, head_oid).map_err(LookupError::Definitive)
 }
 
@@ -567,7 +594,9 @@ mod tests {
     #[test]
     fn classify_tags_request_failures_transient_and_parse_refusals_definitive() {
         assert!(matches!(
-            classify(Err(anyhow::anyhow!("GET …: 502")), "c0"),
+            // An untyped failure (transport, or anything not an
+            // `HttpStatusError`) carries no status, so it stays transient.
+            classify(Err(anyhow::anyhow!("GET …: connection reset")), "c0"),
             Err(LookupError::Transient(_))
         ));
         let at_cap = commits(&vec![true; PR_COMMITS_LIMIT]);
@@ -680,17 +709,60 @@ mod tests {
         ));
     }
 
+    /// #550: a status a retry can change is transient, and a permanent
+    /// one is definitive. 403 stays transient because it is also GitHub's
+    /// rate-limit status.
     #[tokio::test(flavor = "multi_thread")]
-    async fn commits_verified_tags_a_failed_request_transient() {
+    async fn commits_verified_classifies_a_failed_request_by_status() {
+        for (status, definitive) in [
+            (502, false),
+            (500, false),
+            (429, false),
+            (403, false),
+            (401, true),
+            (404, true),
+            (422, true),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(status))
+                .mount(&server)
+                .await;
+            let pr = open_pr_fixture(398, "scan/rust/x");
+            let got = commits_verified(&client_for(&server), &pr);
+            match (definitive, &got) {
+                (true, Err(LookupError::Definitive(_)))
+                | (false, Err(LookupError::Transient(_))) => {}
+                _ => panic!("status {status}: want definitive={definitive}, got {got:?}"),
+            }
+        }
+    }
+
+    /// #550 acceptance: a 404 from `pulls/{n}/commits` is asked once, with
+    /// no retry sleeps, and leaves the candidate unverified.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_404_signature_lookup_is_not_retried() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(502))
+            .and(path("/repos/o/r/pulls/398/commits"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("Not Found"))
+            .expect(1)
             .mount(&server)
             .await;
-        let pr = open_pr_fixture(398, "scan/rust/x");
-        assert!(matches!(
-            commits_verified(&client_for(&server), &pr),
-            Err(LookupError::Transient(_))
-        ));
+        let gh = client_for(&server);
+        let mut open = vec![listing_pr(398, "scan/rust/2026-10-16", &["1.0.0"])];
+        open[0].commits_verified = true;
+        let mut slept = Vec::new();
+        mark_candidate_verified(
+            "rust",
+            "scan/rust/",
+            &mut open,
+            &wanted(),
+            |pr| commits_verified(&gh, pr),
+            |d| slept.push(d),
+        );
+        assert!(slept.is_empty(), "a 404 must not back off: {slept:?}");
+        assert!(!open[0].commits_verified, "a failed lookup is unsigned");
+        server.verify().await;
     }
 }
