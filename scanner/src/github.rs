@@ -636,6 +636,20 @@ mod tests {
     }
 
     #[test]
+    fn with_base_derives_the_ghes_graphql_endpoint() {
+        let client = http_client(TIMEOUT, TlsRoots::None).unwrap();
+        let gh = GitHub::with_base(
+            client,
+            "https://ghe.example/api/v3/",
+            TOKEN.to_string(),
+            "o".to_string(),
+            "r".to_string(),
+        );
+        assert_eq!(gh.api, "https://ghe.example/api/v3");
+        assert_eq!(gh.graphql_url, "https://ghe.example/api/graphql");
+    }
+
+    #[test]
     fn default_graphql_url_rewrites_only_a_trailing_v3_path_segment() {
         for (api, want) in [
             (
