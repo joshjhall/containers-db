@@ -59,13 +59,22 @@ impl GitHub {
     /// and the endpoints from `GITHUB_API_URL`/`GITHUB_GRAPHQL_URL`
     /// (Actions sets all three) or github.com.
     pub fn discover(repo_root: &Path) -> Result<Self> {
-        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-        let token = token_from(env)?;
-        let (owner, repo) = match env("GITHUB_REPOSITORY") {
+        Self::discover_with(
+            |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty()),
+            repo_root,
+        )
+    }
+
+    /// [`Self::discover`] with every variable read through `get` (unset
+    /// and empty both `None`), so tests can drive it without touching
+    /// the process environment.
+    fn discover_with(get: impl Fn(&str) -> Option<String>, repo_root: &Path) -> Result<Self> {
+        let token = token_from(&get)?;
+        let (owner, repo) = match get("GITHUB_REPOSITORY") {
             Some(nwo) => split_owner_repo(&nwo)?,
             None => split_owner_repo(&origin_url(repo_root)?)?,
         };
-        let (api, graphql) = endpoints_from(env)?;
+        let (api, graphql) = endpoints_from(&get)?;
         let client = http_client(TIMEOUT, TlsRoots::System)?;
         let mut gh = Self::with_base(client, &api, token, owner, repo);
         gh.graphql_url = graphql;
@@ -657,6 +666,68 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(graphql, "https://ghe.example/custom/graphql");
+    }
+
+    /// An env that resolves the repository without running git, so only
+    /// the endpoint variables decide whether `discover_with` succeeds.
+    const DISCOVER_BASE: [(&str, &str); 2] = [("GH_TOKEN", TOKEN), ("GITHUB_REPOSITORY", "o/r")];
+
+    fn discover_env<'a>(extra: &'a [(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+        DISCOVER_BASE.iter().chain(extra).copied().collect()
+    }
+
+    /// `repo_root` is never read when `GITHUB_REPOSITORY` is set; a path
+    /// that does not exist makes any fallback to `git` fail loudly.
+    const NO_REPO: &str = "/nonexistent/discover-test-repo";
+
+    #[test]
+    fn discover_refuses_a_plain_http_non_loopback_api_url() {
+        let env = discover_env(&[("GITHUB_API_URL", "http://ghe.example/api/v3")]);
+        let err = GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("GITHUB_API_URL"), "{msg}");
+        assert!(!msg.contains("ghe.example"), "{msg}");
+
+        // The same env with https constructs, so the scheme alone failed it.
+        let env = discover_env(&[("GITHUB_API_URL", "https://ghe.example/api/v3")]);
+        GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap();
+    }
+
+    #[test]
+    fn discover_wires_the_validated_ghes_endpoints_into_the_client() {
+        let env = discover_env(&[
+            ("GITHUB_API_URL", "https://GHE.example:443/api/v3/"),
+            ("GITHUB_GRAPHQL_URL", "https://ghe.example/api/graphql"),
+        ]);
+        let gh = GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap();
+        // Normalized by `endpoints_from` (host lowercased, default port
+        // and trailing slash dropped), not the raw env value.
+        assert_eq!(gh.api, "https://ghe.example/api/v3");
+        assert_eq!(gh.graphql_url, "https://ghe.example/api/graphql");
+        assert_eq!((gh.owner(), gh.repo()), ("o", "r"));
+        assert_eq!(gh.token, TOKEN);
+    }
+
+    #[test]
+    fn discover_keeps_an_explicit_graphql_url_over_the_derived_one() {
+        // `with_base` alone would derive `/api/graphql`; only the
+        // validated pair from `endpoints_from` carries the custom path.
+        let env = discover_env(&[
+            ("GITHUB_API_URL", "https://ghe.example/api/v3"),
+            ("GITHUB_GRAPHQL_URL", "https://ghe.example/custom/graphql"),
+        ]);
+        let gh = GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap();
+        assert_eq!(gh.graphql_url, "https://ghe.example/custom/graphql");
+    }
+
+    #[test]
+    fn discover_refuses_a_cross_origin_graphql_url() {
+        let env = discover_env(&[
+            ("GITHUB_API_URL", "https://ghe.example/api/v3"),
+            ("GITHUB_GRAPHQL_URL", "https://evil.example/api/graphql"),
+        ]);
+        let err = GitHub::discover_with(env_of(&env), Path::new(NO_REPO)).unwrap_err();
+        assert!(format!("{err:#}").contains("same origin"), "{err:#}");
     }
 
     #[test]
