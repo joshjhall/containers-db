@@ -662,6 +662,80 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-10T02:15:56.14561703Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42720971265",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-amd64",
+      "image_digest": "sha256:bf15cd3d27369435a73c42dd27b324b765a77b1a1937a386fbf2d35107a90b17",
+      "duration_seconds": 71.297722562,
+      "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "arm64",
+      "tested_at": "2026-11-10T02:14:44.610023381Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42720971265",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-arm64",
+      "image_digest": "sha256:3fa7fc5451c4de16b7fac6a1d6f07958e9257d3eedda744b730fcaf01a1a000b",
+      "duration_seconds": 10.627105311,
+      "version_output": "v25.6.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.24.04.2"
+        },
+        {
+          "tool": "libatomic",
+          "package": "libatomic1",
+          "version": "14.2.0-4ubuntu2~24.04.1"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-10T02:15:55.912713151Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42720971265",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:0c8e4f5979b1018269b14bc169707ccf5eb8d5e1a591894f3384307e8eb1c06d",
+      "duration_seconds": 38.613918142,
+      "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "arm64",
+      "tested_at": "2026-11-10T02:14:42.89034962Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42720971265",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-arm64",
+      "image_digest": "sha256:d34d0604d88351268d3a865f71e6588507704dfa8da08571ec84d315209d525a",
+      "duration_seconds": 9.254429795,
+      "version_output": "v25.6.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.26.04.2"
+        },
+        {
+          "tool": "libatomic",
+          "package": "libatomic1",
+          "version": "16-20260322-1ubuntu1"
+        }
+      ],
+      "verification_tier": 1
     }
   ]
 }
