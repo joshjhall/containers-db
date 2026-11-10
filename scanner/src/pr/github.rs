@@ -731,7 +731,8 @@ mod tests {
     /// `n` verified commit rows served 100 per page, chained by `Link`
     /// as GitHub paginates them, so the cap is reached through
     /// [`GitHub::list`] and not handed to the parser in one piece.
-    async fn lookup_paged(n: usize, head: &str) -> Result<bool, LookupError> {
+    /// Returns the lookup and how many pages were fetched.
+    async fn lookup_paged(n: usize, head: &str) -> (Result<bool, LookupError>, usize) {
         let server = MockServer::start().await;
         let rows = api_commits(&vec![Some(true); n]);
         let rows = rows.as_array().unwrap();
@@ -765,7 +766,8 @@ mod tests {
             head_oid: head.into(),
             ..open_pr_fixture(398, "scan/rust/x")
         };
-        commits_verified(&client_for(&server), &pr)
+        let got = commits_verified(&client_for(&server), &pr);
+        (got, server.received_requests().await.unwrap().len())
     }
 
     /// A PR at the 250-commit cap may hide unsigned commits past it, so a
@@ -774,10 +776,26 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn commits_verified_refuses_a_rest_listing_at_the_cap() {
         let under = PR_COMMITS_LIMIT - 1;
-        let got = lookup_paged(under, &format!("c{}", under - 1)).await;
+        let (got, _) = lookup_paged(under, &format!("c{}", under - 1)).await;
         assert!(matches!(got, Ok(true)), "{got:?}");
 
-        let got = lookup_paged(PR_COMMITS_LIMIT, &format!("c{}", PR_COMMITS_LIMIT - 1)).await;
+        let (got, _) = lookup_paged(PR_COMMITS_LIMIT, &format!("c{}", PR_COMMITS_LIMIT - 1)).await;
+        assert_cap_refusal(got);
+    }
+
+    /// Past the cap GitHub keeps offering `next`: the listing must stop
+    /// at the cap (page 4 is never fetched) and still be refused, rather
+    /// than ending only because the link chain ran out.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn commits_verified_stops_listing_at_the_cap_and_refuses() {
+        // 350 rows: four pages, each but the last linking `next`, so only
+        // the cap (not the end of the chain) can stop the listing at 300.
+        let (got, fetched) = lookup_paged(PR_COMMITS_LIMIT + 100, "c0").await;
+        assert_cap_refusal(got);
+        assert_eq!(fetched, 3, "pages past the cap must not be fetched");
+    }
+
+    fn assert_cap_refusal(got: Result<bool, LookupError>) {
         match got {
             Err(LookupError::Definitive(e)) => {
                 assert!(format!("{e:#}").contains("API cap"), "{e:#}")

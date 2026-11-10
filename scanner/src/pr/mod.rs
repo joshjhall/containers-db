@@ -1273,12 +1273,13 @@ pub(super) mod tests {
             assert!(format!("{err:#}").contains("no html_url"), "{err:#}");
         }
 
-        async fn update(answer: serde_json::Value) -> Result<String> {
+        /// Returns the update and the bare `origin`, for asserting the push.
+        async fn update(answer: serde_json::Value) -> (Result<String>, tempfile::TempDir, OpenPr) {
             let (dir, origin, pr) = clone_with_open_scan_pr();
             let want = json!({"title": TITLE, "body": BODY});
             let server = serve("PATCH", "/repos/o/r/pulls/398", want, answer).await;
             let remote = BareRemote::new(origin.path());
-            update_pr_with(
+            let got = update_pr_with(
                 dir.path(),
                 &client_for(&server),
                 &remote,
@@ -1286,17 +1287,26 @@ pub(super) mod tests {
                 &pr,
                 TITLE,
                 BODY,
-            )
+            );
+            (got, origin, pr)
         }
 
         #[tokio::test(flavor = "multi_thread")]
         async fn update_pr_patches_the_pr_and_returns_its_html_url() {
-            assert_eq!(update(json!({"html_url": URL})).await.unwrap(), URL);
+            let (got, origin, pr) = update(json!({"html_url": URL})).await;
+            assert_eq!(got.unwrap(), URL);
+            let o = origin.path();
+            assert_ne!(
+                rev(o, &pr.head),
+                pr.head_oid,
+                "the regenerated branch is pushed"
+            );
+            assert_eq!(rev(o, &format!("{}^", pr.head)), rev(o, "main"));
         }
 
         #[tokio::test(flavor = "multi_thread")]
         async fn update_pr_without_html_url_is_an_error() {
-            let err = update(json!({"number": 398})).await.unwrap_err();
+            let err = update(json!({"number": 398})).await.0.unwrap_err();
             assert!(format!("{err:#}").contains("no html_url"), "{err:#}");
         }
     }
