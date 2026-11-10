@@ -630,6 +630,126 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T20:51:17.145231248Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42695185989",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-arm64",
+      "image_digest": "sha256:35b80761e988c9ed5f3b37d7f2d582dbb1ac808a737a240c3625f41eabfd5877",
+      "duration_seconds": 5.240464023,
+      "version_output": "v24.14.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T20:52:19.858242224Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42695185989",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-arm64",
+      "image_digest": "sha256:a404fdb1370c22a5658dfd502ee0bbba16649f20843da1d168103dc78f3f14a1",
+      "duration_seconds": 5.286433996,
+      "version_output": "v24.14.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419+deb13u1"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T20:51:14.02092452Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42695185989",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-amd64",
+      "image_digest": "sha256:213908595011c991850ff95ce52b3542a2bc7517937275d3947a072146e3a375",
+      "duration_seconds": 4.381985693,
+      "version_output": "v24.14.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-100.3.el10_2"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T20:53:56.609661797Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42695185989",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-arm64",
+      "image_digest": "sha256:799c290292f6506ebfc3aa532b88e12ab608d3cbc838b83f1abe2442b4e3fe2f",
+      "duration_seconds": 3.799884543,
+      "version_output": "v24.14.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-100.3.el10_2"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-11-09T20:54:06.057580516Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42695185989",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:c50e52ce1ad9ee5877f5325f8a564780a6c7c401cc42ef5bc6e6b3fef71aa838",
+      "duration_seconds": 5.016015682,
+      "version_output": "v24.14.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-90.3.el9_8"
+        }
+      ],
+      "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "arm64",
+      "tested_at": "2026-11-09T20:54:16.330420217Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/42695185989",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-arm64",
+      "image_digest": "sha256:4adb162e02ba5df826d2cd53d8997be92e4269a377d0b3adb01cddea6d5dfa58",
+      "duration_seconds": 4.906048063,
+      "version_output": "v24.14.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-90.3.el9_8"
+        }
+      ],
+      "verification_tier": 1
     }
   ]
 }
