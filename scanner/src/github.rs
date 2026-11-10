@@ -59,13 +59,15 @@ impl GitHub {
     /// and the endpoints from `GITHUB_API_URL`/`GITHUB_GRAPHQL_URL`
     /// (Actions sets all three) or github.com.
     pub fn discover(repo_root: &Path) -> Result<Self> {
-        Self::discover_with(env_getter(|k| std::env::var(k).ok()), repo_root)
+        Self::discover_with(|k| std::env::var(k).ok(), repo_root)
     }
 
-    /// [`Self::discover`] with every variable read through `get` (unset
-    /// and empty both `None`), so tests can drive it without touching
-    /// the process environment.
-    fn discover_with(get: impl Fn(&str) -> Option<String>, repo_root: &Path) -> Result<Self> {
+    /// [`Self::discover`] with every variable read through `raw`, so tests
+    /// can drive it without touching the process environment. An empty
+    /// value is read as unset here, not by the caller, so every path into
+    /// discovery gets the same filter.
+    fn discover_with(raw: impl Fn(&str) -> Option<String>, repo_root: &Path) -> Result<Self> {
+        let get = env_getter(raw);
         let token = token_from(&get)?;
         let (owner, repo) = match get("GITHUB_REPOSITORY") {
             Some(nwo) => split_owner_repo(&nwo)?,
@@ -339,10 +341,8 @@ fn is_loopback(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
-/// The getter [`GitHub::discover`] hands to `discover_with`: `raw` with an
-/// empty value read as unset, so `GITHUB_REPOSITORY=` falls back to
-/// `origin` instead of failing to split. Tests wrap a fixed env in it, so
-/// they exercise the same filter production does.
+/// `raw` with an empty value read as unset, so `GITHUB_REPOSITORY=` falls
+/// back to `origin` and an empty `GH_TOKEN` defers to `GITHUB_TOKEN`.
 fn env_getter(raw: impl Fn(&str) -> Option<String>) -> impl Fn(&str) -> Option<String> {
     move |k| raw(k).filter(|v| !v.is_empty())
 }
@@ -923,18 +923,26 @@ mod tests {
         assert_eq!((gh.owner(), gh.repo()), ("o", "r"));
     }
 
-    /// `discover`'s getter reads an empty variable as unset, so an empty
-    /// `GITHUB_REPOSITORY` falls back to `origin` rather than failing.
-    /// Without the filter `discover_with` would split `""` and error.
+    /// Discovery reads an empty variable as unset, fed the raw env as
+    /// `discover` feeds it: an empty `GITHUB_REPOSITORY` falls back to
+    /// `origin`, an empty `GH_TOKEN` defers to `GITHUB_TOKEN`, and an empty
+    /// `GITHUB_API_URL` keeps the github.com default. Without the filter
+    /// each would fail (split `""`, send an empty bearer, parse `""`).
     #[test]
-    fn an_empty_env_value_reads_as_unset() {
+    fn discovery_reads_an_empty_env_value_as_unset() {
         let dir = repo_with_origin(Some(ORIGIN));
-        let env = [("GH_TOKEN", TOKEN), ("GITHUB_REPOSITORY", "")];
-        let get = env_getter(env_of(&env));
-        assert_eq!(get("GITHUB_REPOSITORY"), None);
-        assert_eq!(get("GH_TOKEN").as_deref(), Some(TOKEN));
-        let gh = GitHub::discover_with(get, dir.path()).unwrap();
+        let env = [
+            ("GH_TOKEN", ""),
+            ("GITHUB_TOKEN", TOKEN),
+            ("GITHUB_REPOSITORY", ""),
+            ("GITHUB_API_URL", ""),
+            ("GITHUB_GRAPHQL_URL", ""),
+        ];
+        let gh = GitHub::discover_with(env_of(&env), dir.path()).unwrap();
         assert_eq!((gh.owner(), gh.repo()), ("a", "b"));
+        assert_eq!(gh.token, TOKEN);
+        assert_eq!(gh.api, "https://api.github.com");
+        assert_eq!(gh.graphql_url, "https://api.github.com/graphql");
     }
 
     #[test]
