@@ -122,16 +122,28 @@ pub fn open_pr(
     body: &str,
     base: &str,
 ) -> Result<String> {
+    let remote = ApiRemote::discover(gh)?;
+    open_pr_with(repo_root, gh, &remote, tool_id, branch, title, body, base)
+}
+
+/// [`open_pr`] publishing through a given `remote`, so a test can drive
+/// the PR write against a bare repo and a mock API.
+#[allow(clippy::too_many_arguments)]
+fn open_pr_with(
+    repo_root: &Path,
+    gh: &GitHub,
+    remote: &dyn Remote,
+    tool_id: &str,
+    branch: &str,
+    title: &str,
+    body: &str,
+    base: &str,
+) -> Result<String> {
     git(repo_root, &["checkout", "-b", branch])?;
     git(repo_root, &["add", &format!("tools/{tool_id}")])?;
     let message = commit_message_from_title(title);
     git(repo_root, &["commit", "-m", &message])?;
-    publish::publish_head(
-        repo_root,
-        &ApiRemote::discover(gh)?,
-        Target::New(branch),
-        &message,
-    )?;
+    publish::publish_head(repo_root, remote, Target::New(branch), &message)?;
     let pr = serde_json::json!({"base": base, "head": branch, "title": title, "body": body});
     html_url(&gh.rest(reqwest::Method::POST, "pulls", Some(&pr))?)
 }
@@ -434,7 +446,22 @@ fn update_pr(
     title: &str,
     body: &str,
 ) -> Result<String> {
-    push_regenerated(repo_root, &ApiRemote::discover(gh)?, tool_id, pr, title)?;
+    let remote = ApiRemote::discover(gh)?;
+    update_pr_with(repo_root, gh, &remote, tool_id, pr, title, body)
+}
+
+/// [`update_pr`] publishing through a given `remote`, so a test can drive
+/// the PR edit against a bare repo and a mock API.
+fn update_pr_with(
+    repo_root: &Path,
+    gh: &GitHub,
+    remote: &dyn Remote,
+    tool_id: &str,
+    pr: &OpenPr,
+    title: &str,
+    body: &str,
+) -> Result<String> {
+    push_regenerated(repo_root, remote, tool_id, pr, title)?;
     let edit = serde_json::json!({"title": title, "body": body});
     let path = format!("pulls/{}", pr.number);
     html_url(&gh.rest(reqwest::Method::PATCH, &path, Some(&edit))?)
@@ -1173,6 +1200,104 @@ pub(super) mod tests {
                 matches!(&d, Delivery::Updated(url) if url == "https://example/pull/398"),
                 "{d:?}"
             );
+        }
+    }
+
+    /// The PR writes against a mock API, publishing to a bare `origin`:
+    /// the request bodies must carry GitHub's field names exactly (a
+    /// misnamed one would not match and the mock answers 404), and a
+    /// response without `html_url` is an error, never an empty URL.
+    mod pr_writes_api {
+        use super::*;
+        use crate::github::testing::client_for;
+        use serde_json::json;
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const TITLE: &str = "feat(rust): add upstream versions 2.0.0";
+        const BODY: &str = "the body";
+        const URL: &str = "https://github.example/o/r/pull/9";
+
+        async fn serve(
+            verb: &str,
+            p: &str,
+            want: serde_json::Value,
+            answer: serde_json::Value,
+        ) -> MockServer {
+            let server = MockServer::start().await;
+            Mock::given(method(verb))
+                .and(path(p))
+                .and(body_json(want))
+                .respond_with(ResponseTemplate::new(201).set_body_json(answer))
+                .expect(1)
+                .mount(&server)
+                .await;
+            server
+        }
+
+        async fn open(answer: serde_json::Value) -> (Result<String>, tempfile::TempDir) {
+            let (dir, origin, _) = clone_with_open_scan_pr();
+            let want =
+                json!({"base": "main", "head": "scan/rust/new", "title": TITLE, "body": BODY});
+            let server = serve("POST", "/repos/o/r/pulls", want, answer).await;
+            let remote = BareRemote::new(origin.path());
+            let got = open_pr_with(
+                dir.path(),
+                &client_for(&server),
+                &remote,
+                "rust",
+                "scan/rust/new",
+                TITLE,
+                BODY,
+                "main",
+            );
+            (got, origin)
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_posts_the_pr_and_returns_its_html_url() {
+            let (got, origin) = open(json!({"number": 9, "html_url": URL})).await;
+            assert_eq!(got.unwrap(), URL);
+            assert!(
+                BareRemote::new(origin.path())
+                    .head("scan/rust/new")
+                    .is_some(),
+                "the branch is published before the PR is opened"
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_without_html_url_is_an_error() {
+            let (got, _origin) = open(json!({"number": 9, "url": URL})).await;
+            let err = got.unwrap_err();
+            assert!(format!("{err:#}").contains("no html_url"), "{err:#}");
+        }
+
+        async fn update(answer: serde_json::Value) -> Result<String> {
+            let (dir, origin, pr) = clone_with_open_scan_pr();
+            let want = json!({"title": TITLE, "body": BODY});
+            let server = serve("PATCH", "/repos/o/r/pulls/398", want, answer).await;
+            let remote = BareRemote::new(origin.path());
+            update_pr_with(
+                dir.path(),
+                &client_for(&server),
+                &remote,
+                "rust",
+                &pr,
+                TITLE,
+                BODY,
+            )
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_patches_the_pr_and_returns_its_html_url() {
+            assert_eq!(update(json!({"html_url": URL})).await.unwrap(), URL);
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_without_html_url_is_an_error() {
+            let err = update(json!({"number": 398})).await.unwrap_err();
+            assert!(format!("{err:#}").contains("no html_url"), "{err:#}");
         }
     }
 }

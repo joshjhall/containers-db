@@ -728,6 +728,64 @@ mod tests {
         ));
     }
 
+    /// `n` verified commit rows served 100 per page, chained by `Link`
+    /// as GitHub paginates them, so the cap is reached through
+    /// [`GitHub::list`] and not handed to the parser in one piece.
+    async fn lookup_paged(n: usize, head: &str) -> Result<bool, LookupError> {
+        let server = MockServer::start().await;
+        let rows = api_commits(&vec![Some(true); n]);
+        let rows = rows.as_array().unwrap();
+        let p = "/repos/o/r/pulls/398/commits";
+        let pages: Vec<_> = rows.chunks(100).collect();
+        // Most specific first: the unpaged mock below matches every page.
+        for (i, chunk) in pages.iter().enumerate().skip(1).rev() {
+            let mut resp = ResponseTemplate::new(200).set_body_json(chunk);
+            if i + 1 < pages.len() {
+                let next = format!("{}{p}?per_page=100&page={}", server.uri(), i + 2);
+                resp = resp.insert_header("link", format!(r#"<{next}>; rel="next""#));
+            }
+            Mock::given(method("GET"))
+                .and(path(p))
+                .and(query_param("page", (i + 1).to_string()))
+                .respond_with(resp)
+                .mount(&server)
+                .await;
+        }
+        let next = format!("{}{p}?per_page=100&page=2", server.uri());
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(pages[0])
+                    .insert_header("link", format!(r#"<{next}>; rel="next""#)),
+            )
+            .mount(&server)
+            .await;
+        let pr = OpenPr {
+            head_oid: head.into(),
+            ..open_pr_fixture(398, "scan/rust/x")
+        };
+        commits_verified(&client_for(&server), &pr)
+    }
+
+    /// A PR at the 250-commit cap may hide unsigned commits past it, so a
+    /// fully verified listing that fills the cap is refused for good; one
+    /// commit fewer is trusted.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn commits_verified_refuses_a_rest_listing_at_the_cap() {
+        let under = PR_COMMITS_LIMIT - 1;
+        let got = lookup_paged(under, &format!("c{}", under - 1)).await;
+        assert!(matches!(got, Ok(true)), "{got:?}");
+
+        let got = lookup_paged(PR_COMMITS_LIMIT, &format!("c{}", PR_COMMITS_LIMIT - 1)).await;
+        match got {
+            Err(LookupError::Definitive(e)) => {
+                assert!(format!("{e:#}").contains("API cap"), "{e:#}")
+            }
+            other => panic!("expected a definitive refusal, got {other:?}"),
+        }
+    }
+
     /// #550: a status a retry can change is transient, and a permanent
     /// one is definitive. 403 stays transient because it is also GitHub's
     /// rate-limit status.
