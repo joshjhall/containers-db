@@ -185,22 +185,47 @@ pub fn deliver(repo_root: &Path, req: &PrRequest) -> Result<Delivery> {
         "scanner: {tool_id}: deliver called with no new versions; the caller must return NoChange first"
     );
     let gh = GitHub::discover(repo_root)?;
-    let mut open = list_open_prs(&gh)?;
+    deliver_via(
+        repo_root,
+        &gh,
+        tool_id,
+        prefix,
+        new_versions,
+        |pr| update_pr(repo_root, &gh, tool_id, pr, title, body),
+        || open_pr(repo_root, &gh, tool_id, branch, title, body, "main"),
+    )
+}
+
+/// The decision half of [`deliver`] against a given client: list the open
+/// PRs, look up the candidate's commit signatures, then [`dedup::decide`].
+/// The PR writes are injected so a test can drive the lookup-before-decide
+/// wiring against a mock API (#533); without the lookup every covering PR
+/// would read unsigned and be regenerated every run.
+fn deliver_via(
+    repo_root: &Path,
+    gh: &GitHub,
+    tool_id: &str,
+    prefix: &str,
+    new_versions: &[String],
+    update: impl FnOnce(&OpenPr) -> Result<String>,
+    open: impl FnOnce() -> Result<String>,
+) -> Result<Delivery> {
+    let mut open_prs = list_open_prs(gh)?;
     mark_candidate_verified(
         tool_id,
         prefix,
-        &mut open,
+        &mut open_prs,
         new_versions,
-        |pr| commits_verified(&gh, pr),
+        |pr| commits_verified(gh, pr),
         std::thread::sleep,
     );
     deliver_with(
         repo_root,
         tool_id,
-        &dedup::decide(prefix, &open, new_versions),
+        &dedup::decide(prefix, &open_prs, new_versions),
         |line| println!("{line}"),
-        |pr| update_pr(repo_root, &gh, tool_id, pr, title, body),
-        || open_pr(repo_root, &gh, tool_id, branch, title, body, "main"),
+        update,
+        open,
     )
 }
 
@@ -1042,5 +1067,112 @@ pub(super) mod tests {
         );
         assert!(!body.contains("## Upstream"));
         assert!(body.contains("`score`: `maintained`"));
+    }
+
+    /// Drive [`deliver_via`] against a mock API: open PR #398 on
+    /// `scan/rust/old` (head `h1`) already lists `2.0.0`, and its commit
+    /// listing answers with `commits`. Pins that the signature lookup runs
+    /// before `decide` (#533): without it the PR reads unsigned and is
+    /// regenerated on every run.
+    mod deliver_via_api {
+        use super::*;
+        use crate::github::testing::client_for;
+        use serde_json::json;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const VERSION: &str = "2.0.0";
+
+        async fn server_with_covering_pr(commits: ResponseTemplate) -> MockServer {
+            let server = MockServer::start().await;
+            let body = pr_body(
+                "rust",
+                &[VERSION.to_string()],
+                None,
+                Score::Active,
+                &ActivitySignals::default(),
+                7,
+            );
+            let pr = json!({
+                "number": 398,
+                "body": body,
+                "head": {"ref": "scan/rust/old", "sha": "h1", "repo": {"full_name": "o/r"}},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+            });
+            Mock::given(method("GET"))
+                .and(path("/repos/o/r/pulls"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([pr])))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/repos/o/r/pulls/398/commits"))
+                .respond_with(commits)
+                .expect(1)
+                .mount(&server)
+                .await;
+            server
+        }
+
+        fn commits(verified: bool) -> ResponseTemplate {
+            ResponseTemplate::new(200).set_body_json(
+                json!([{"sha": "h1", "commit": {"verification": {"verified": verified}}}]),
+            )
+        }
+
+        fn deliver_rust(
+            p: &Path,
+            server: &MockServer,
+            update: impl FnOnce(&OpenPr) -> Result<String>,
+        ) -> Result<Delivery> {
+            deliver_via(
+                p,
+                &client_for(server),
+                "rust",
+                "scan/rust/",
+                &[VERSION.to_string()],
+                update,
+                never_open,
+            )
+        }
+
+        /// The update must target the listed PR at its listed head.
+        fn update_398(pr: &OpenPr) -> Result<String> {
+            assert_eq!((pr.number, pr.head_oid.as_str()), (398, "h1"));
+            Ok("https://example/pull/398".to_string())
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_covering_pr_with_verified_commits_is_skipped() {
+            let server = server_with_covering_pr(commits(true)).await;
+            let dir = repo_with_generated_rust();
+            let d = deliver_rust(dir.path(), &server, never_update).unwrap();
+            assert!(matches!(d, Delivery::Skipped(398)), "{d:?}");
+            assert_clean_at_main(dir.path());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_covering_pr_with_an_unsigned_commit_is_updated() {
+            let server = server_with_covering_pr(commits(false)).await;
+            let dir = repo_with_generated_rust();
+            let d = deliver_rust(dir.path(), &server, update_398).unwrap();
+            assert!(
+                matches!(&d, Delivery::Updated(url) if url == "https://example/pull/398"),
+                "{d:?}"
+            );
+        }
+
+        /// A failed lookup fails closed into a regen, never a skip. A 404 is
+        /// definitive, so it is asked once and no retry delay is slept.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_covering_pr_whose_lookup_fails_is_updated() {
+            let server = server_with_covering_pr(ResponseTemplate::new(404)).await;
+            let dir = repo_with_generated_rust();
+            let d = deliver_rust(dir.path(), &server, update_398).unwrap();
+            assert!(
+                matches!(&d, Delivery::Updated(url) if url == "https://example/pull/398"),
+                "{d:?}"
+            );
+        }
     }
 }
