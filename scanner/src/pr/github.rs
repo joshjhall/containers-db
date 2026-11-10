@@ -599,6 +599,25 @@ mod tests {
             classify(Err(anyhow::anyhow!("GET …: connection reset")), "c0"),
             Err(LookupError::Transient(_))
         ));
+        // #550: a typed status decides, and a `.context()` layer added on
+        // the way up must not hide it.
+        let refused = |status| -> Result<String> {
+            Err(anyhow::Error::from(HttpStatusError {
+                method: reqwest::Method::GET,
+                url: "https://api.test/repos/o/r/pulls/1/commits".into(),
+                status,
+                body: String::new(),
+            })
+            .context("listing the PR's commits"))
+        };
+        assert!(matches!(
+            classify(refused(StatusCode::NOT_FOUND), "c0"),
+            Err(LookupError::Definitive(_))
+        ));
+        assert!(matches!(
+            classify(refused(StatusCode::FORBIDDEN), "c0"),
+            Err(LookupError::Transient(_))
+        ));
         let at_cap = commits(&vec![true; PR_COMMITS_LIMIT]);
         for (out, head) in [
             ("", "c0"),
