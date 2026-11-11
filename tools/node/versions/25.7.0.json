@@ -723,6 +723,55 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "amd64",
+      "tested_at": "2026-11-11T14:59:18.19162104Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/43023950113",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
+      "image_digest": "sha256:97d1c2a91e6a0c0d5b1aa6917df1932114a553015837e5a4b635d65af9cca959",
+      "duration_seconds": 7511.239344936,
+      "version_output": "v25.7.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "removed_build_dependencies": [
+        "g++",
+        "make",
+        "linux-headers",
+        "python3"
+      ],
+      "verification_tier": 1
     }
   ]
 }
