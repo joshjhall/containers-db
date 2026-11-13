@@ -615,6 +615,55 @@
       "image_digest": "sha256:f4a72b50104d3ab3370d0ee4c2d5194adf927519df99ed4dd01630d62f4fc9b7",
       "duration_seconds": 197.970063368,
       "error_class": "install_method"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "arm64",
+      "tested_at": "2026-11-13T14:32:52.759373711Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/43432342301",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-arm64",
+      "image_digest": "sha256:f14e8971c803cad21bc1eabbd11ca5a00deba96331fee136b05d4b8d2cb63069",
+      "duration_seconds": 4401.970211201,
+      "version_output": "v21.2.0",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gxx",
+          "package": "g++"
+        },
+        {
+          "tool": "make",
+          "package": "make"
+        },
+        {
+          "tool": "linux_headers",
+          "package": "linux-headers"
+        },
+        {
+          "tool": "python3",
+          "package": "python3"
+        },
+        {
+          "tool": "libstdcxx",
+          "package": "libstdc++"
+        },
+        {
+          "tool": "libgcc",
+          "package": "libgcc"
+        }
+      ],
+      "removed_build_dependencies": [
+        "g++",
+        "make",
+        "linux-headers",
+        "python3"
+      ],
+      "verification_tier": 1
     }
   ]
 }
