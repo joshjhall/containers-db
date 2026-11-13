@@ -735,6 +735,43 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-13T13:20:11.604319322Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/43432342301",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:1d02aa399025a6fa9d7d06497ec983a6bf6094f45e7ba18796c179c9cf18a5d4",
+      "duration_seconds": 7.341960662,
+      "error_class": "validate"
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "arm64",
+      "tested_at": "2026-11-13T14:37:45.681667533Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/43432342301",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-arm64",
+      "image_digest": "sha256:799c290292f6506ebfc3aa532b88e12ab608d3cbc838b83f1abe2442b4e3fe2f",
+      "duration_seconds": 4.889173373,
+      "version_output": "v26.11.1",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-100.3.el10_2"
+        },
+        {
+          "tool": "libatomic",
+          "package": "libatomic",
+          "version": "14.4.1-5.el10_3"
+        }
+      ],
+      "verification_tier": 1
     }
   ]
 }
