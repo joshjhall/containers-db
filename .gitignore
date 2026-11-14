@@ -13,3 +13,6 @@ scanner/target/
 # Claude Code per-session state and local settings
 .claude/memory/tmp/
 .claude/settings.local.json
+
+# Local git worktrees (per-issue branches, golems)
+.worktrees/
