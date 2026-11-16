@@ -10,10 +10,18 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs for the same PR so stale heads stop holding runners.
+# Non-PR runs (main pushes, manual dispatch) get a unique group via run_id:
+# a shared group would let a newer queued run replace a pending one even with
+# cancel-in-progress false, and main runs must never be cancelled.
+concurrency:
+  group: validate-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate-schemas:
     name: ajv + Rust validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -271,7 +279,7 @@ jobs:
   # invalidating the floor.
   msrv:
     name: MSRV check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout

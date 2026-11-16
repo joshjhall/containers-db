@@ -57,7 +57,7 @@ jobs:
     # into a later run's build (#416). Build scripts and proc-macros of the
     # locked dependencies still run here.
     name: Build scanner
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       # `deliver` checks the binary it downloads against this (#427).
@@ -104,7 +104,7 @@ jobs:
     # which has no cargo cache and no token (#416).
     name: Scan and validate
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -186,7 +186,7 @@ jobs:
     name: Open scan PRs
     needs: [build, stage]
     if: ${{ inputs.dry_run != true }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
