@@ -35,6 +35,21 @@ use chrono::{DateTime, NaiveDate, Utc};
 use clap::Parser;
 use serde_json::Value;
 
+/// A `git` command. Under test it ignores the host's global and system
+/// config (`~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`,
+/// `/etc/gitconfig`), whose `commit.gpgsign`, `core.hooksPath` or
+/// `init.templateDir` would otherwise reach the temp-repo fixtures (#588).
+/// The variables go on the child only, so the inherited-env guard
+/// (`github::testing::assert_no_inherited_git_env`) still holds.
+pub(crate) fn git_command() -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new("git");
+    #[cfg(test)]
+    cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    cmd
+}
+
 use crate::activity::compute_tier;
 use crate::adapter::{Adapter, ToolIndex, UpstreamVersion};
 use crate::stage::{Activity, Failure, Kind, Manifest, Plan, Schemas};
@@ -444,7 +459,7 @@ mod tests {
     use serde_json::json;
 
     fn git(p: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
+        let out = crate::git_command()
             .current_dir(p)
             .args(args)
             .output()

@@ -8,7 +8,6 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -496,7 +495,7 @@ fn commit_message_from_title(title: &str) -> String {
 }
 
 fn git(repo_root: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
+    let output = crate::git_command()
         .current_dir(repo_root)
         .args(args)
         .output()
@@ -532,6 +531,97 @@ pub(super) mod tests {
         git(p, &["add", "a"]).unwrap();
         git(p, &["commit", "-q", "-m", "init"]).unwrap();
         dir
+    }
+
+    /// A `HOME` whose global git config (both `~/.gitconfig` and
+    /// `$XDG_CONFIG_HOME/git/config`) fails every commit: signing through
+    /// a `gpg.program` that always exits 1, and a `pre-commit` hook that
+    /// does too. Returns `(home, xdg_config_home)`.
+    fn hostile_home(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let home = root.join("home");
+        let xdg = home.join("xdg");
+        let hooks = root.join("hooks");
+        std::fs::create_dir_all(xdg.join("git")).unwrap();
+        std::fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config = format!(
+            "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n[core]\n\thooksPath = {}\n",
+            hooks.display()
+        );
+        std::fs::write(home.join(".gitconfig"), &config).unwrap();
+        std::fs::write(xdg.join("git/config"), &config).unwrap();
+        (home, xdg)
+    }
+
+    /// Run the `#[ignore]`d test `name` in a child whose `HOME` holds a
+    /// global git config that fails every commit.
+    fn run_under_hostile_home(name: &str) {
+        let root = tempfile::tempdir().unwrap();
+        let (home, xdg) = hostile_home(root.path());
+        let path = std::path::PathBuf::from(std::env::var_os("PATH").unwrap());
+        crate::tests::run_with_env(name, &path, &[("HOME", &home), ("XDG_CONFIG_HOME", &xdg)]);
+    }
+
+    /// The fixtures ignore the host's global and system git config (#588):
+    /// under a `HOME` whose config fails every commit, `temp_repo` and
+    /// `clone_with_open_scan_pr` still build their repos.
+    #[test]
+    fn fixtures_ignore_a_hostile_global_git_config() {
+        run_under_hostile_home("pr::tests::hostile_home_fixtures_still_commit");
+    }
+
+    #[test]
+    #[ignore = "run by fixtures_ignore_a_hostile_global_git_config"]
+    fn hostile_home_fixtures_still_commit() {
+        if !crate::tests::in_child() {
+            return;
+        }
+        let dir = temp_repo();
+        assert_eq!(
+            git(dir.path(), &["rev-list", "--count", "HEAD"])
+                .unwrap()
+                .trim(),
+            "1"
+        );
+        let (dir, _origin, pr) = clone_with_open_scan_pr();
+        assert_eq!(rev(dir.path(), &pr.head), pr.head_oid);
+    }
+
+    /// The control for the test above: the same hostile `HOME` does fail
+    /// a commit made by a plain `git`, so that test cannot pass because
+    /// the config was never read.
+    #[test]
+    fn a_plain_git_reads_the_hostile_global_config() {
+        run_under_hostile_home("pr::tests::hostile_home_fails_a_plain_commit");
+    }
+
+    #[test]
+    #[ignore = "run by a_plain_git_reads_the_hostile_global_config"]
+    fn hostile_home_fails_a_plain_commit() {
+        if !crate::tests::in_child() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        let plain = |args: &[&str]| {
+            std::process::Command::new("git")
+                .current_dir(p)
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        assert!(plain(&["init", "-q", "-b", "main"]).status.success());
+        std::fs::write(p.join("a"), "a").unwrap();
+        assert!(plain(&["add", "a"]).status.success());
+        let out = plain(&["commit", "-q", "-m", "init"]);
+        assert!(
+            !out.status.success(),
+            "the hostile config was not read: {out:?}"
+        );
     }
 
     fn current_branch(p: &Path) -> String {
@@ -1392,7 +1482,7 @@ pub(super) mod tests {
         fn scan_tree(p: &Path) -> String {
             let index = tempfile::tempdir().unwrap();
             let run = |args: &[&str]| {
-                let out = Command::new("git")
+                let out = crate::git_command()
                     .current_dir(p)
                     .env("GIT_INDEX_FILE", index.path().join("index"))
                     .args(args)
