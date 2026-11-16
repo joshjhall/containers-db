@@ -1307,10 +1307,10 @@ pub(super) mod tests {
         }
 
         /// Returns the update and the bare `origin`, for asserting the push.
-        async fn update(answer: serde_json::Value) -> (Result<String>, tempfile::TempDir, OpenPr) {
+        async fn update(answer: ResponseTemplate) -> (Result<String>, tempfile::TempDir, OpenPr) {
             let (dir, origin, pr) = clone_with_open_scan_pr();
             let want = json!({"title": TITLE, "body": BODY});
-            let server = serve("PATCH", "/repos/o/r/pulls/398", want, created(answer)).await;
+            let server = serve("PATCH", "/repos/o/r/pulls/398", want, answer).await;
             let remote = BareRemote::new(origin.path());
             let got = update_pr_with(
                 dir.path(),
@@ -1326,7 +1326,7 @@ pub(super) mod tests {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn update_pr_patches_the_pr_and_returns_its_html_url() {
-            let (got, origin, pr) = update(json!({"html_url": URL})).await;
+            let (got, origin, pr) = update(created(json!({"html_url": URL}))).await;
             assert_eq!(got.unwrap(), URL);
             let o = origin.path();
             assert_ne!(
@@ -1339,8 +1339,30 @@ pub(super) mod tests {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn update_pr_without_html_url_is_an_error() {
-            let err = update(json!({"number": 398})).await.0.unwrap_err();
+            let err = update(created(json!({"number": 398}))).await.0.unwrap_err();
             assert!(format!("{err:#}").contains("no html_url"), "{err:#}");
+        }
+
+        /// The regenerated branch is pushed, then GitHub refuses the PR
+        /// edit: an error naming the status, never a URL.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_with_a_rejected_pr_write_is_an_error() {
+            let refused = ResponseTemplate::new(422).set_body_json(json!({"message": "nope"}));
+            let (got, origin, pr) = update(refused).await;
+            let err = got.unwrap_err();
+            let status = err
+                .downcast_ref::<crate::github::HttpStatusError>()
+                .map(|e| e.status);
+            assert_eq!(
+                status,
+                Some(reqwest::StatusCode::UNPROCESSABLE_ENTITY),
+                "{err:#}"
+            );
+            assert_ne!(
+                rev(origin.path(), &pr.head),
+                pr.head_oid,
+                "the failure is the PR edit, after the branch was pushed"
+            );
         }
     }
 

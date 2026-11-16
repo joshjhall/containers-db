@@ -448,32 +448,39 @@ pub(crate) mod testing {
         )
     }
 
-    /// Variables through which an inherited environment (e.g. a git hook,
-    /// or `git -c` exporting `GIT_CONFIG_PARAMETERS`) would point the
-    /// temp-repo fixtures' `git` at another repo, index or config.
+    /// Variables through which an inherited environment (e.g. a git hook)
+    /// would point the temp-repo fixtures' `git` at another repo, index or
+    /// object store. Config injection is refused by prefix instead.
     const INHERITED_GIT_ENV: &[&str] = &[
         "GIT_DIR",
         "GIT_WORK_TREE",
         "GIT_INDEX_FILE",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_CONFIG_COUNT",
-        "GIT_CONFIG_GLOBAL",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
     ];
 
-    /// Panic, naming the variable, if the test process inherited any of
-    /// [`INHERITED_GIT_ENV`]: the temp-repo tests would act on another
-    /// repo or with config they did not set. Refused rather than cleared,
-    /// so a misconfigured hook is surfaced instead of silently masked.
-    pub(crate) fn assert_no_inherited_git_env() {
-        assert_hermetic(|k| std::env::var_os(k).is_some());
+    /// Every config-injecting variable starts with this: `GIT_CONFIG`
+    /// itself, `_GLOBAL`, `_SYSTEM`, `_NOSYSTEM`, `_PARAMETERS` (set by
+    /// `git -c`), and `_COUNT` with its `_KEY_<n>`/`_VALUE_<n>` pairs.
+    const GIT_CONFIG_PREFIX: &str = "GIT_CONFIG";
+
+    fn redirects_git(name: &str) -> bool {
+        INHERITED_GIT_ENV.contains(&name) || name.starts_with(GIT_CONFIG_PREFIX)
     }
 
-    fn assert_hermetic(is_set: impl Fn(&str) -> bool) {
-        let set: Vec<&str> = INHERITED_GIT_ENV
-            .iter()
-            .copied()
-            .filter(|k| is_set(k))
-            .collect();
+    /// Panic, naming the variables, if the test process inherited any that
+    /// [`redirects_git`]: the temp-repo tests would act on another repo or
+    /// with config they did not set. Refused rather than cleared, so a
+    /// misconfigured hook is surfaced instead of silently masked.
+    pub(crate) fn assert_no_inherited_git_env() {
+        assert_hermetic(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok()));
+    }
+
+    fn assert_hermetic(names: impl IntoIterator<Item = String>) {
+        let mut set: Vec<String> = names.into_iter().filter(|k| redirects_git(k)).collect();
+        set.sort();
         assert!(
             set.is_empty(),
             "unset {}: the temp-repo tests would act on another repo or config",
@@ -483,12 +490,29 @@ pub(crate) mod testing {
 
     #[test]
     fn hermeticity_guard_names_each_inherited_variable() {
-        for var in INHERITED_GIT_ENV {
-            let err = std::panic::catch_unwind(|| assert_hermetic(|k| k == *var)).unwrap_err();
+        let config = [
+            "GIT_CONFIG",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+        ];
+        for var in INHERITED_GIT_ENV.iter().chain(&config) {
+            let err = std::panic::catch_unwind(|| assert_hermetic([var.to_string()])).unwrap_err();
             let msg = err.downcast_ref::<String>().unwrap();
             assert!(msg.starts_with(&format!("unset {var}:")), "{msg}");
         }
-        assert_hermetic(|_| false);
+    }
+
+    /// Git variables that do not redirect the fixtures (identity, editor,
+    /// keys a devcontainer exports) must not trip the guard.
+    #[test]
+    fn hermeticity_guard_ignores_unrelated_variables() {
+        let benign = ["GIT_EDITOR", "GIT_USER_NAME", "GIT_AUTH_SSH_KEY", "PATH"];
+        assert_hermetic(benign.map(String::from));
     }
 }
 
