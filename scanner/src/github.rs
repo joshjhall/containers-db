@@ -479,6 +479,13 @@ pub(crate) mod testing {
     /// [`redirects_git`]: the temp-repo tests would act on another repo or
     /// with config they did not set. Refused rather than cleared, so a
     /// misconfigured hook is surfaced instead of silently masked.
+    ///
+    /// This includes `GIT_CONFIG_PARAMETERS`, which git exports to hooks
+    /// under `git -c ...` (#590). It carries the outer command's config
+    /// (`core.hooksPath`, `init.templateDir`, ...), and `temp_repo` runs
+    /// git through the production `pr::git`, so the fixtures cannot strip
+    /// it per-`Command`. A hook that runs these tests clears it instead:
+    /// `env -u GIT_CONFIG_PARAMETERS -u GIT_DIR ... cargo test`.
     pub(crate) fn assert_no_inherited_git_env() {
         assert_hermetic(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok()));
     }
@@ -489,8 +496,13 @@ pub(crate) mod testing {
         assert!(
             set.is_empty(),
             "unset {}: the temp-repo tests would act on another repo or config \
-             (a hook run under `git -c ...` exports GIT_CONFIG_PARAMETERS)",
-            set.join("/")
+             (a hook run under `git -c ...` exports GIT_CONFIG_PARAMETERS); \
+             run them as `env {} cargo test`",
+            set.join("/"),
+            set.iter()
+                .map(|k| format!("-u {k}"))
+                .collect::<Vec<_>>()
+                .join(" ")
         );
     }
 
@@ -510,7 +522,27 @@ pub(crate) mod testing {
             let err = std::panic::catch_unwind(|| assert_hermetic([var.to_string()])).unwrap_err();
             let msg = err.downcast_ref::<String>().unwrap();
             assert!(msg.starts_with(&format!("unset {var}:")), "{msg}");
+            assert!(
+                msg.ends_with(&format!("`env -u {var} cargo test`")),
+                "{msg}"
+            );
         }
+    }
+
+    /// Several offenders are named sorted, and the remedy unsets each one.
+    #[test]
+    fn hermeticity_guard_remedy_unsets_every_variable_sorted() {
+        let names = ["GIT_DIR", "GIT_CONFIG_PARAMETERS"].map(String::from);
+        let err = std::panic::catch_unwind(|| assert_hermetic(names)).unwrap_err();
+        let msg = err.downcast_ref::<String>().unwrap();
+        assert!(
+            msg.starts_with("unset GIT_CONFIG_PARAMETERS/GIT_DIR:"),
+            "{msg}"
+        );
+        assert!(
+            msg.ends_with("`env -u GIT_CONFIG_PARAMETERS -u GIT_DIR cargo test`"),
+            "{msg}"
+        );
     }
 
     /// Git variables that do not redirect the fixtures (identity, editor,
