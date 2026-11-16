@@ -593,6 +593,29 @@ mod tests {
         );
     }
 
+    /// A failing git command surfaces through `run` with the exact command
+    /// it ran and git's own stderr, so a broken label or a dropped stderr in
+    /// the failure branch is caught.
+    #[test]
+    fn rev_of_a_missing_ref_names_the_git_command_in_the_error() {
+        assert!(
+            std::env::var_os("GIT_DIR").is_none(),
+            "unset GIT_DIR: the temp-repo tests would act on another repo"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        let err = rev(p, "no-such-ref").unwrap_err().to_string();
+        assert!(
+            err.starts_with("`git rev-parse --verify no-such-ref` failed: "),
+            "unexpected error label: {err}"
+        );
+        assert!(
+            err.contains("Needed a single revision"),
+            "git's stderr missing from error: {err}"
+        );
+    }
+
     #[test]
     fn new_branch_gets_a_remote_commit_with_the_local_tree() {
         let (dir, origin) = repo_with_scan_commit();
