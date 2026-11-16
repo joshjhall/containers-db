@@ -529,6 +529,22 @@ pub(crate) mod testing {
         }
     }
 
+    /// Several offenders are named sorted, and the remedy unsets each one.
+    #[test]
+    fn hermeticity_guard_remedy_unsets_every_variable_sorted() {
+        let names = ["GIT_DIR", "GIT_CONFIG_PARAMETERS"].map(String::from);
+        let err = std::panic::catch_unwind(|| assert_hermetic(names)).unwrap_err();
+        let msg = err.downcast_ref::<String>().unwrap();
+        assert!(
+            msg.starts_with("unset GIT_CONFIG_PARAMETERS/GIT_DIR:"),
+            "{msg}"
+        );
+        assert!(
+            msg.ends_with("`env -u GIT_CONFIG_PARAMETERS -u GIT_DIR cargo test`"),
+            "{msg}"
+        );
+    }
+
     /// Git variables that do not redirect the fixtures (identity, editor,
     /// keys a devcontainer exports) must not trip the guard.
     #[test]
