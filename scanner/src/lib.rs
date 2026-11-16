@@ -460,6 +460,43 @@ mod tests {
     use chrono::TimeZone;
     use serde_json::json;
 
+    /// Every `git` the scanner spawns goes through [`git_command`], so a
+    /// fixture cannot quietly regain the host's global config (#588).
+    /// The only bare spawns allowed are the builder itself and the
+    /// hostile-config control, which must read that config.
+    #[test]
+    fn git_is_only_spawned_through_git_command() {
+        let needle = ["Command::new(", "\"git\")"].concat();
+        let allowed = [("lib.rs", 1), ("pr/mod.rs", 1)];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![root.clone()];
+        let mut found = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let n = std::fs::read_to_string(&path)
+                        .unwrap()
+                        .matches(&needle)
+                        .count();
+                    if n > 0 {
+                        let rel = path
+                            .strip_prefix(&root)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned();
+                        found.push((rel, n));
+                    }
+                }
+            }
+        }
+        found.sort();
+        let want: Vec<(String, usize)> = allowed.iter().map(|(f, n)| (f.to_string(), *n)).collect();
+        assert_eq!(found, want, "spawn git through crate::git_command()");
+    }
+
     fn git(p: &Path, args: &[&str]) -> String {
         let out = crate::git_command()
             .current_dir(p)
