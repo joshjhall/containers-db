@@ -617,6 +617,71 @@ mod tests {
         );
     }
 
+    /// An empty repository for the `run` error-path tests below.
+    fn empty_repo() -> tempfile::TempDir {
+        assert!(
+            std::env::var_os("GIT_DIR").is_none(),
+            "unset GIT_DIR: the temp-repo tests would act on another repo"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        dir
+    }
+
+    /// A git that cannot be started (here: its cwd does not exist) is
+    /// reported with the spawn label and the exact command line.
+    #[test]
+    fn spawn_failure_names_the_git_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run(&dir.path().join("missing"), &["status"], None).unwrap_err();
+        assert_eq!(err.to_string(), "running `git status`");
+    }
+
+    /// `Some(input)` is piped to git: the blob id is that of `hello`, not
+    /// of the empty input git would see if the bytes were dropped.
+    #[test]
+    fn stdin_reaches_git() {
+        let dir = empty_repo();
+        let out = run(dir.path(), &["hash-object", "--stdin"], Some(b"hello")).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap().trim(),
+            "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
+        );
+    }
+
+    /// A git that reads stdin and rejects it fails with the command label
+    /// and git's stderr. Empty input to `mktree` succeeds, so this failure
+    /// also shows the bytes were delivered.
+    #[test]
+    fn stdin_command_failure_names_the_command() {
+        let dir = empty_repo();
+        let err = run(dir.path(), &["mktree"], Some(b"not a tree entry\n"))
+            .unwrap_err()
+            .to_string();
+        let stderr = err
+            .strip_prefix("`git mktree` failed: ")
+            .unwrap_or_else(|| panic!("unexpected error label: {err}"));
+        // Only non-emptiness: git localises its messages.
+        assert!(
+            !stderr.trim().is_empty(),
+            "git's stderr missing from error: {err}"
+        );
+    }
+
+    /// Input larger than the pipe buffer, given to a git that never reads
+    /// stdin, fails the write with EPIPE once git exits; that error must
+    /// surface with the stdin label rather than be swallowed.
+    ///
+    /// The "waiting for" label stays untested: `wait_with_output` on a
+    /// spawned child only fails on an OS fault this test cannot provoke.
+    #[test]
+    fn unread_stdin_names_the_write_in_the_error() {
+        let dir = empty_repo();
+        let input = vec![0u8; 1 << 20];
+        let err = run(dir.path(), &["--version"], Some(&input)).unwrap_err();
+        assert_eq!(err.to_string(), "writing stdin of `git --version`");
+    }
+
     #[test]
     fn new_branch_gets_a_remote_commit_with_the_local_tree() {
         let (dir, origin) = repo_with_scan_commit();
