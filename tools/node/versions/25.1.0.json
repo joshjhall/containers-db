@@ -796,6 +796,18 @@
       "image_digest": "sha256:ffa9e1f0234969143ea46b69ea103cb5cc2c8c728aaeea72d07af9f8aea5f4f3",
       "duration_seconds": 7.333193488,
       "error_class": "validate"
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-16T22:05:50.840167184Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/43966224706",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:87863239159f3715e5118705a99dc88772b55aedc370fcfe2c09c7ff24282e86",
+      "duration_seconds": 5.657436915,
+      "error_class": "validate"
     }
   ]
 }
