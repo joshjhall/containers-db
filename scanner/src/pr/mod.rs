@@ -1475,6 +1475,17 @@ pub(super) mod tests {
             main: &str,
             commit: ResponseTemplate,
         ) {
+            publish_mocks_deleting(server, branch, main, commit, ResponseTemplate::new(204)).await;
+        }
+
+        /// [`publish_mocks`] with the staging DELETE answering `delete`.
+        async fn publish_mocks_deleting(
+            server: &MockServer,
+            branch: &str,
+            main: &str,
+            commit: ResponseTemplate,
+            delete: ResponseTemplate,
+        ) {
             expect_graphql(
                 server,
                 json!({"o": "o", "n": "r"}),
@@ -1515,7 +1526,7 @@ pub(super) mod tests {
                         .strip_prefix("/repos/o/r/git/refs/heads/")
                         .is_some_and(|n| is_staging_for(n, &staging_branch))
                 })
-                .respond_with(ResponseTemplate::new(204))
+                .respond_with(delete)
                 .expect(1)
                 .mount(server)
                 .await;
@@ -1523,11 +1534,27 @@ pub(super) mod tests {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn open_pr_discovers_the_repo_and_publishes_a_signed_branch() {
+            open_publishes(ResponseTemplate::new(204)).await;
+        }
+
+        /// The staging cleanup is best effort: a DELETE GitHub refuses
+        /// leaves clutter, not a failed PR. The PR is still written once
+        /// and its URL returned.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_with_a_failed_staging_delete_still_returns_the_pr() {
+            open_publishes(ResponseTemplate::new(500)).await;
+        }
+
+        /// A full open: discovery, signed publish, the PR POSTed exactly
+        /// once and its URL returned, with the staging DELETE answering
+        /// `delete`.
+        async fn open_publishes(delete: ResponseTemplate) {
             let (dir, _origin, _) = clone_with_open_scan_pr();
             let p = dir.path();
             let (main, tree) = (rev(p, "main"), scan_tree(p));
             let server = MockServer::start().await;
-            publish_mocks(&server, "scan/rust/new", &main, signed_with(&tree)).await;
+            publish_mocks_deleting(&server, "scan/rust/new", &main, signed_with(&tree), delete)
+                .await;
             expect_graphql(
                 &server,
                 json!({"i": {"repositoryId": "R_1", "name": "refs/heads/scan/rust/new", "oid": SIGNED}}),
@@ -1558,11 +1585,26 @@ pub(super) mod tests {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn update_pr_discovers_the_repo_and_moves_the_branch_on_its_lease() {
+            update_publishes(ResponseTemplate::new(204)).await;
+        }
+
+        /// The same best-effort cleanup on an update: a refused staging
+        /// DELETE does not fail it, and the PR is still PATCHed once.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_with_a_failed_staging_delete_still_returns_the_pr() {
+            update_publishes(ResponseTemplate::new(500)).await;
+        }
+
+        /// A full update: discovery, signed publish, the branch moved on
+        /// its lease, the PR PATCHed exactly once and its URL returned,
+        /// with the staging DELETE answering `delete`.
+        async fn update_publishes(delete: ResponseTemplate) {
             let (dir, _origin, pr) = clone_with_open_scan_pr();
             let p = dir.path();
             let (main, tree) = (rev(p, "main"), scan_tree(p));
             let server = MockServer::start().await;
-            publish_mocks(&server, "scan/rust/old", &main, signed_with(&tree)).await;
+            publish_mocks_deleting(&server, "scan/rust/old", &main, signed_with(&tree), delete)
+                .await;
             expect_graphql(
                 &server,
                 json!({"i": {"repositoryId": "R_1", "refUpdates": [{
