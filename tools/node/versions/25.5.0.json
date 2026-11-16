@@ -736,6 +736,30 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-16T22:38:53.804825631Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/43971332065",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:87863239159f3715e5118705a99dc88772b55aedc370fcfe2c09c7ff24282e86",
+      "duration_seconds": 7.383142266,
+      "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-16T22:37:52.993783861Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/43971332065",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:ffa9e1f0234969143ea46b69ea103cb5cc2c8c728aaeea72d07af9f8aea5f4f3",
+      "duration_seconds": 8.667219295,
+      "error_class": "validate"
     }
   ]
 }
