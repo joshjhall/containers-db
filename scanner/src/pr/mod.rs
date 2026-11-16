@@ -1631,23 +1631,31 @@ pub(super) mod tests {
             ResponseTemplate::new(200).set_body_json(json!({"errors": [{"message": "nope"}]}))
         }
 
+        /// Whether an error is the failure a test provoked.
+        type IsExpected = fn(&anyhow::Error) -> bool;
+
+        /// The two ways discovery fails, each with the check that the
+        /// error is that failure: a refused request surfaces as a typed
+        /// [`crate::github::HttpStatusError`], a GraphQL `errors` payload
+        /// as its own message.
+        fn discovery_failures() -> [(ResponseTemplate, IsExpected); 2] {
+            [
+                (ResponseTemplate::new(500), |e| {
+                    e.downcast_ref::<crate::github::HttpStatusError>()
+                        .is_some_and(|h| h.status == 500)
+                }),
+                (graphql_errors(), |e| {
+                    format!("{e:#}").contains("GraphQL errors")
+                }),
+            ]
+        }
+
         /// A failed discovery — the API refusing outright, or answering with
         /// GraphQL `errors` — is an error before any git or API write: no
         /// branch is cut and discovery is the only request sent.
         #[tokio::test(flavor = "multi_thread")]
         async fn open_pr_with_a_failed_discovery_writes_nothing() {
-            for (answer, is_expected) in [
-                (
-                    ResponseTemplate::new(500),
-                    (|e: &anyhow::Error| {
-                        e.downcast_ref::<crate::github::HttpStatusError>()
-                            .is_some_and(|h| h.status == 500)
-                    }) as fn(&anyhow::Error) -> bool,
-                ),
-                (graphql_errors(), |e: &anyhow::Error| {
-                    format!("{e:#}").contains("GraphQL errors")
-                }),
-            ] {
+            for (answer, is_expected) in discovery_failures() {
                 let (dir, _origin, _) = clone_with_open_scan_pr();
                 let server = discover_fails(answer).await;
                 let got = open_pr(
@@ -1671,20 +1679,22 @@ pub(super) mod tests {
         /// reset, and no request follows discovery.
         #[tokio::test(flavor = "multi_thread")]
         async fn update_pr_with_a_failed_discovery_writes_nothing() {
-            let (dir, _origin, pr) = clone_with_open_scan_pr();
-            let p = dir.path();
-            let server = discover_fails(graphql_errors()).await;
-            let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
-            let err = got.unwrap_err();
-            assert!(format!("{err:#}").contains("GraphQL errors"), "{err:#}");
-            let sent = server.received_requests().await.unwrap();
-            assert_eq!(sent.len(), 1, "only discovery was sent: {sent:?}");
-            assert_eq!(
-                current_branch(p),
-                "main",
-                "the PR branch was not checked out"
-            );
-            assert_eq!(rev(p, &pr.head), pr.head_oid, "the PR branch was not reset");
+            for (answer, is_expected) in discovery_failures() {
+                let (dir, _origin, pr) = clone_with_open_scan_pr();
+                let p = dir.path();
+                let server = discover_fails(answer).await;
+                let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
+                let err = got.unwrap_err();
+                assert!(is_expected(&err), "{err:#}");
+                let sent = server.received_requests().await.unwrap();
+                assert_eq!(sent.len(), 1, "only discovery was sent: {sent:?}");
+                assert_eq!(
+                    current_branch(p),
+                    "main",
+                    "the PR branch was not checked out"
+                );
+                assert_eq!(rev(p, &pr.head), pr.head_oid, "the PR branch was not reset");
+            }
         }
 
         /// A tree no local commit has: the remote "signed" something else.
@@ -1696,6 +1706,22 @@ pub(super) mod tests {
             Mock::given(method("POST"))
                 .and(path("/repos/o/r/pulls"))
                 .respond_with(ResponseTemplate::new(201))
+                .expect(0)
+                .mount(server)
+                .await;
+        }
+
+        /// The PR's branch may not be moved, and the PR may not be edited.
+        async fn refuse_update_writes(server: &MockServer) {
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_string_contains("updateRefs"))
+                .respond_with(ok(json!({})))
+                .expect(0)
+                .mount(server)
+                .await;
+            Mock::given(method("PATCH"))
+                .respond_with(ResponseTemplate::new(200))
                 .expect(0)
                 .mount(server)
                 .await;
@@ -1748,18 +1774,7 @@ pub(super) mod tests {
             let main = rev(p, "main");
             let server = MockServer::start().await;
             publish_mocks(&server, "scan/rust/old", &main, signed_with(OTHER_TREE)).await;
-            Mock::given(method("POST"))
-                .and(path("/graphql"))
-                .and(body_string_contains("updateRefs"))
-                .respond_with(ok(json!({})))
-                .expect(0)
-                .mount(&server)
-                .await;
-            Mock::given(method("PATCH"))
-                .respond_with(ResponseTemplate::new(200))
-                .expect(0)
-                .mount(&server)
-                .await;
+            refuse_update_writes(&server).await;
             let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
             let err = got.unwrap_err();
             assert!(
@@ -1787,6 +1802,24 @@ pub(super) mod tests {
                 BODY,
                 "main",
             );
+            let err = got.unwrap_err();
+            assert!(
+                format!("{err:#}").contains("creating the signed commit"),
+                "{err:#}"
+            );
+        }
+
+        /// The same for an update: a failed commit moves no branch, edits
+        /// no PR, and still deletes the staging branch.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_with_a_failed_commit_writes_no_pr_and_cleans_up() {
+            let (dir, _origin, pr) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let main = rev(p, "main");
+            let server = MockServer::start().await;
+            publish_mocks(&server, "scan/rust/old", &main, graphql_errors()).await;
+            refuse_update_writes(&server).await;
+            let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
             let err = got.unwrap_err();
             assert!(
                 format!("{err:#}").contains("creating the signed commit"),
