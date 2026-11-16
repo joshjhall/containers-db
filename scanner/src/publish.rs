@@ -606,12 +606,13 @@ mod tests {
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"]);
         let err = rev(p, "no-such-ref").unwrap_err().to_string();
+        let stderr = err
+            .strip_prefix("`git rev-parse --verify no-such-ref` failed: ")
+            .unwrap_or_else(|| panic!("unexpected error label: {err}"));
+        // Only non-emptiness: git localises its messages, so their wording
+        // depends on the host's LANG.
         assert!(
-            err.starts_with("`git rev-parse --verify no-such-ref` failed: "),
-            "unexpected error label: {err}"
-        );
-        assert!(
-            err.contains("Needed a single revision"),
+            !stderr.trim().is_empty(),
             "git's stderr missing from error: {err}"
         );
     }
