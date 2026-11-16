@@ -35,6 +35,23 @@ use chrono::{DateTime, NaiveDate, Utc};
 use clap::Parser;
 use serde_json::Value;
 
+/// A `git` command. Under test it ignores the host's global and system
+/// config (`~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`,
+/// `/etc/gitconfig`), whose `commit.gpgsign`, `core.hooksPath` or
+/// `init.templateDir` would otherwise reach the temp-repo fixtures (#588).
+/// The variables go on the child only, so the inherited-env guard
+/// (`github::testing::assert_no_inherited_git_env`) still holds.
+/// `GIT_CONFIG_GLOBAL` needs git 2.32+; an older git ignores it and the
+/// hostile-config test in `pr::tests` fails rather than passing silently.
+pub(crate) fn git_command() -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new("git");
+    #[cfg(test)]
+    cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    cmd
+}
+
 use crate::activity::compute_tier;
 use crate::adapter::{Adapter, ToolIndex, UpstreamVersion};
 use crate::stage::{Activity, Failure, Kind, Manifest, Plan, Schemas};
@@ -443,8 +460,47 @@ mod tests {
     use chrono::TimeZone;
     use serde_json::json;
 
+    /// No source file spawns `git` by passing the `"git"` literal to
+    /// `Command::new`, except the builder itself and the hostile-config
+    /// control, which must read the host config, so a fixture cannot
+    /// quietly regain the host's global config (#588). The match is
+    /// textual: a program name passed through a variable or const is not
+    /// caught.
+    #[test]
+    fn git_is_only_spawned_through_git_command() {
+        let needle = ["Command::new(", "\"git\")"].concat();
+        let allowed = [("lib.rs", 1), ("pr/mod.rs", 1)];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![root.clone()];
+        let mut found = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let n = std::fs::read_to_string(&path)
+                        .unwrap()
+                        .matches(&needle)
+                        .count();
+                    if n > 0 {
+                        let rel = path
+                            .strip_prefix(&root)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned();
+                        found.push((rel, n));
+                    }
+                }
+            }
+        }
+        found.sort();
+        let want: Vec<(String, usize)> = allowed.iter().map(|(f, n)| (f.to_string(), *n)).collect();
+        assert_eq!(found, want, "spawn git through crate::git_command()");
+    }
+
     fn git(p: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
+        let out = crate::git_command()
             .current_dir(p)
             .args(args)
             .output()

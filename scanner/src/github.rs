@@ -10,7 +10,6 @@
 
 use std::future::Future;
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -348,7 +347,7 @@ fn env_getter(raw: impl Fn(&str) -> Option<String>) -> impl Fn(&str) -> Option<S
 }
 
 fn origin_url(repo_root: &Path) -> Result<String> {
-    let out = Command::new("git")
+    let out = crate::git_command()
         .current_dir(repo_root)
         .args(["remote", "get-url", "origin"])
         .output()
@@ -978,7 +977,7 @@ mod tests {
         super::testing::assert_no_inherited_git_env();
         let dir = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
-            let st = Command::new("git")
+            let st = crate::git_command()
                 .current_dir(dir.path())
                 .args(args)
                 .status()

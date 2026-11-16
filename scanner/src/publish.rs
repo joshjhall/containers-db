@@ -13,7 +13,7 @@
 //! the PRs were listed, so a push that raced in since then survives.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine as _;
@@ -335,12 +335,12 @@ fn rev(repo_root: &Path, spec: &str) -> Result<String> {
 }
 
 fn git_bytes(repo_root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    run("git", repo_root, args, None)
+    run(repo_root, args, None)
 }
 
-fn run(program: &str, cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
-    let shown = || format!("`{program} {}`", args.join(" "));
-    let mut child = Command::new(program)
+fn run(cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
+    let shown = || format!("`git {}`", args.join(" "));
+    let mut child = crate::git_command()
         .current_dir(cwd)
         .args(args)
         .stdin(if stdin.is_some() {
@@ -398,7 +398,7 @@ pub(crate) mod testing {
         }
 
         fn git(&self, args: &[&str], stdin: Option<&[u8]>, index: Option<&Path>) -> Result<String> {
-            let mut cmd = Command::new("git");
+            let mut cmd = crate::git_command();
             cmd.arg("--git-dir")
                 .arg(&self.git_dir)
                 .args(args)
