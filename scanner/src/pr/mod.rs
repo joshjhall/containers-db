@@ -1383,11 +1383,25 @@ pub(super) mod tests {
         const URL: &str = "https://github.example/o/r/pull/9";
         const SIGNED: &str = "5160ed0000000000000000000000000000000000";
 
-        /// The tree the scan commit will have: `tools/rust/` staged on top
-        /// of the clone's index, which `checkout -b`/`-B` from `main` keep.
+        /// The tree the scan commit will have: `main` plus `tools/rust/`.
+        /// Built on a throwaway index, so the clone's own stays unstaged —
+        /// as `deliver` hands it over — and the wrapper's `git add` is what
+        /// the tree check actually exercises.
         fn scan_tree(p: &Path) -> String {
-            git(p, &["add", "tools/rust"]).unwrap();
-            git(p, &["write-tree"]).unwrap().trim().to_string()
+            let index = tempfile::tempdir().unwrap();
+            let run = |args: &[&str]| {
+                let out = Command::new("git")
+                    .current_dir(p)
+                    .env("GIT_INDEX_FILE", index.path().join("index"))
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "git {args:?}");
+                String::from_utf8(out.stdout).unwrap()
+            };
+            run(&["read-tree", "main"]);
+            run(&["add", "tools/rust"]);
+            run(&["write-tree"]).trim().to_string()
         }
 
         fn ok(data: serde_json::Value) -> ResponseTemplate {
@@ -1531,6 +1545,35 @@ pub(super) mod tests {
             let err = got.unwrap_err();
             assert!(format!("{err:#}").contains("no repository id"), "{err:#}");
             assert_eq!(current_branch(dir.path()), "main", "no branch was cut");
+        }
+
+        /// Discovery runs first for an update too: the PR's branch is not
+        /// reset locally, and no PR edit is sent.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_without_a_repo_id_writes_nothing() {
+            let (dir, _origin, pr) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let server = MockServer::start().await;
+            expect_graphql(
+                &server,
+                json!({"o": "o", "n": "r"}),
+                ok(json!({"repository": null})),
+            )
+            .await;
+            Mock::given(method("PATCH"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
+            let err = got.unwrap_err();
+            assert!(format!("{err:#}").contains("no repository id"), "{err:#}");
+            assert_eq!(
+                current_branch(p),
+                "main",
+                "the PR branch was not checked out"
+            );
+            assert_eq!(rev(p, &pr.head), pr.head_oid, "the PR branch was not reset");
         }
     }
 }
