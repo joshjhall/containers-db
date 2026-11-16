@@ -1375,7 +1375,9 @@ pub(super) mod tests {
         use super::*;
         use crate::github::testing::client_for;
         use serde_json::json;
-        use wiremock::matchers::{body_json, body_partial_json, method, path, path_regex};
+        use wiremock::matchers::{
+            body_json, body_partial_json, body_string_contains, method, path,
+        };
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         const TITLE: &str = "feat(rust): add upstream versions 2.0.0";
@@ -1423,29 +1425,96 @@ pub(super) mod tests {
                 .await;
         }
 
-        /// Repository-id discovery, the staging branch at `main`, the signed
-        /// commit answering with `tree`, and the staging cleanup.
-        async fn publish_mocks(server: &MockServer, main: &str, tree: &str) {
+        /// A `createCommitOnBranch` answer: the signed commit with `tree`.
+        fn signed_with(tree: &str) -> ResponseTemplate {
+            ok(json!({"createCommitOnBranch": {"commit": {"oid": SIGNED, "tree": {"oid": tree}}}}))
+        }
+
+        /// True when `name` has the shape [`publish::publish_head`] gives a
+        /// staging branch: `scanner-staging/<branch>/` plus 12 hex digits.
+        /// The shape only gates the mocks; [`assert_staging_named_for`]
+        /// pins which commit the digits come from.
+        fn is_staging_for(name: &str, branch: &str) -> bool {
+            name.strip_prefix(&format!("scanner-staging/{branch}/"))
+                .is_some_and(|sha| {
+                    sha.len() == 12 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                })
+        }
+
+        /// The one staging branch created and the one deleted are both
+        /// named for the local commit published from `branch`, which the
+        /// wrapper leaves checked out whether or not the publish succeeded.
+        async fn assert_staging_named_for(server: &MockServer, p: &Path, branch: &str) {
+            let want = format!("scanner-staging/{branch}/{}", &rev(p, branch)[..12]);
+            let sent = server.received_requests().await.unwrap();
+            let created: Vec<String> = sent
+                .iter()
+                .filter_map(|r| {
+                    let body: serde_json::Value = serde_json::from_slice(&r.body).ok()?;
+                    let name = body["variables"]["i"]["name"].as_str()?;
+                    name.strip_prefix("refs/heads/")
+                        .filter(|n| n.starts_with("scanner-staging/"))
+                        .map(str::to_string)
+                })
+                .collect();
+            let deleted: Vec<&str> = sent
+                .iter()
+                .filter(|r| r.method == "DELETE")
+                .filter_map(|r| r.url.path().strip_prefix("/repos/o/r/git/refs/heads/"))
+                .collect();
+            assert_eq!(deleted, [want.as_str()], "staging branch deleted");
+            assert_eq!(created, [want], "staging branch created");
+        }
+
+        /// Repository-id discovery, the staging branch for `branch` at
+        /// `main` (its name pinned at creation), the signed commit answering
+        /// `commit`, and the staging cleanup.
+        async fn publish_mocks(
+            server: &MockServer,
+            branch: &str,
+            main: &str,
+            commit: ResponseTemplate,
+        ) {
             expect_graphql(
                 server,
                 json!({"o": "o", "n": "r"}),
                 ok(json!({"repository": {"id": "R_1"}})),
             )
             .await;
-            expect_graphql(
-                server,
-                json!({"i": {"repositoryId": "R_1", "oid": main}}),
-                ok(json!({})),
-            )
-            .await;
+            let staging_branch = branch.to_string();
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_partial_json(
+                    json!({"variables": {"i": {"repositoryId": "R_1", "oid": main}}}),
+                ))
+                .and(move |req: &wiremock::Request| {
+                    let body: serde_json::Value = match serde_json::from_slice(&req.body) {
+                        Ok(v) => v,
+                        Err(_) => return false,
+                    };
+                    body["variables"]["i"]["name"]
+                        .as_str()
+                        .and_then(|n| n.strip_prefix("refs/heads/"))
+                        .is_some_and(|n| is_staging_for(n, &staging_branch))
+                })
+                .respond_with(ok(json!({})))
+                .expect(1)
+                .mount(server)
+                .await;
             expect_graphql(
                 server,
                 json!({"i": {"expectedHeadOid": main, "message": {"headline": TITLE}}}),
-                ok(json!({"createCommitOnBranch": {"commit": {"oid": SIGNED, "tree": {"oid": tree}}}})),
+                commit,
             )
             .await;
+            let staging_branch = branch.to_string();
             Mock::given(method("DELETE"))
-                .and(path_regex(r"^/repos/o/r/git/refs/heads/scanner-staging/"))
+                .and(move |req: &wiremock::Request| {
+                    req.url
+                        .path()
+                        .strip_prefix("/repos/o/r/git/refs/heads/")
+                        .is_some_and(|n| is_staging_for(n, &staging_branch))
+                })
                 .respond_with(ResponseTemplate::new(204))
                 .expect(1)
                 .mount(server)
@@ -1458,7 +1527,7 @@ pub(super) mod tests {
             let p = dir.path();
             let (main, tree) = (rev(p, "main"), scan_tree(p));
             let server = MockServer::start().await;
-            publish_mocks(&server, &main, &tree).await;
+            publish_mocks(&server, "scan/rust/new", &main, signed_with(&tree)).await;
             expect_graphql(
                 &server,
                 json!({"i": {"repositoryId": "R_1", "name": "refs/heads/scan/rust/new", "oid": SIGNED}}),
@@ -1484,6 +1553,7 @@ pub(super) mod tests {
                 "main",
             );
             assert_eq!(got.unwrap(), URL);
+            assert_staging_named_for(&server, p, "scan/rust/new").await;
         }
 
         #[tokio::test(flavor = "multi_thread")]
@@ -1492,7 +1562,7 @@ pub(super) mod tests {
             let p = dir.path();
             let (main, tree) = (rev(p, "main"), scan_tree(p));
             let server = MockServer::start().await;
-            publish_mocks(&server, &main, &tree).await;
+            publish_mocks(&server, "scan/rust/old", &main, signed_with(&tree)).await;
             expect_graphql(
                 &server,
                 json!({"i": {"repositoryId": "R_1", "refUpdates": [{
@@ -1513,6 +1583,7 @@ pub(super) mod tests {
                 .await;
             let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
             assert_eq!(got.unwrap(), URL);
+            assert_staging_named_for(&server, p, &pr.head).await;
         }
 
         /// Discovery runs first: without a repository id nothing is
@@ -1574,6 +1645,218 @@ pub(super) mod tests {
                 "the PR branch was not checked out"
             );
             assert_eq!(rev(p, &pr.head), pr.head_oid, "the PR branch was not reset");
+        }
+
+        /// A server answering repository-id discovery with `answer` and
+        /// nothing else: any request past discovery is unmatched.
+        async fn discover_fails(answer: ResponseTemplate) -> MockServer {
+            let server = MockServer::start().await;
+            expect_graphql(&server, json!({"o": "o", "n": "r"}), answer).await;
+            server
+        }
+
+        fn graphql_errors() -> ResponseTemplate {
+            ResponseTemplate::new(200).set_body_json(json!({"errors": [{"message": "nope"}]}))
+        }
+
+        /// Whether an error is the failure a test provoked.
+        type IsExpected = fn(&anyhow::Error) -> bool;
+
+        /// The two ways discovery fails, each with the check that the
+        /// error is that failure: a refused request surfaces as a typed
+        /// [`crate::github::HttpStatusError`], a GraphQL `errors` payload
+        /// as its own message.
+        fn discovery_failures() -> [(ResponseTemplate, IsExpected); 2] {
+            [
+                (ResponseTemplate::new(500), |e| {
+                    e.downcast_ref::<crate::github::HttpStatusError>()
+                        .is_some_and(|h| h.status == 500)
+                }),
+                (graphql_errors(), |e| {
+                    format!("{e:#}").contains("GraphQL errors")
+                }),
+            ]
+        }
+
+        /// A failed discovery — the API refusing outright, or answering with
+        /// GraphQL `errors` — is an error before any git or API write: no
+        /// branch is cut and discovery is the only request sent.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_with_a_failed_discovery_writes_nothing() {
+            for (answer, is_expected) in discovery_failures() {
+                let (dir, _origin, _) = clone_with_open_scan_pr();
+                let server = discover_fails(answer).await;
+                let got = open_pr(
+                    dir.path(),
+                    &client_for(&server),
+                    "rust",
+                    "scan/rust/new",
+                    TITLE,
+                    BODY,
+                    "main",
+                );
+                let err = got.unwrap_err();
+                assert!(is_expected(&err), "{err:#}");
+                let sent = server.received_requests().await.unwrap();
+                assert_eq!(sent.len(), 1, "only discovery was sent: {sent:?}");
+                assert_eq!(current_branch(dir.path()), "main", "no branch was cut");
+            }
+        }
+
+        /// The same for an update: the PR branch is neither checked out nor
+        /// reset, and no request follows discovery.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_with_a_failed_discovery_writes_nothing() {
+            for (answer, is_expected) in discovery_failures() {
+                let (dir, _origin, pr) = clone_with_open_scan_pr();
+                let p = dir.path();
+                let server = discover_fails(answer).await;
+                let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
+                let err = got.unwrap_err();
+                assert!(is_expected(&err), "{err:#}");
+                let sent = server.received_requests().await.unwrap();
+                assert_eq!(sent.len(), 1, "only discovery was sent: {sent:?}");
+                assert_eq!(
+                    current_branch(p),
+                    "main",
+                    "the PR branch was not checked out"
+                );
+                assert_eq!(rev(p, &pr.head), pr.head_oid, "the PR branch was not reset");
+            }
+        }
+
+        /// A tree no local commit has: the remote "signed" something else.
+        const OTHER_TREE: &str = "0000000000000000000000000000000000000000";
+
+        /// No branch may point at a signed commit, and no PR may be opened.
+        async fn refuse_open_writes(server: &MockServer) {
+            expect_graphql_never(server, json!({"i": {"name": "refs/heads/scan/rust/new"}})).await;
+            Mock::given(method("POST"))
+                .and(path("/repos/o/r/pulls"))
+                .respond_with(ResponseTemplate::new(201))
+                .expect(0)
+                .mount(server)
+                .await;
+        }
+
+        /// The PR's branch may not be moved, and the PR may not be edited.
+        async fn refuse_update_writes(server: &MockServer) {
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_string_contains("updateRefs"))
+                .respond_with(ok(json!({})))
+                .expect(0)
+                .mount(server)
+                .await;
+            Mock::given(method("PATCH"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(0)
+                .mount(server)
+                .await;
+        }
+
+        /// GraphQL `variables` the mock must never see.
+        async fn expect_graphql_never(server: &MockServer, vars: serde_json::Value) {
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_partial_json(json!({ "variables": vars })))
+                .respond_with(ok(json!({})))
+                .expect(0)
+                .mount(server)
+                .await;
+        }
+
+        /// A signed commit whose tree differs from the local one is never
+        /// published: no branch, no PR, and the staging branch is still
+        /// deleted (`publish_mocks` expects the DELETE once).
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_with_a_mismatched_tree_writes_no_pr_and_cleans_up() {
+            let (dir, _origin, _) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let main = rev(p, "main");
+            let server = MockServer::start().await;
+            publish_mocks(&server, "scan/rust/new", &main, signed_with(OTHER_TREE)).await;
+            refuse_open_writes(&server).await;
+            let got = open_pr(
+                p,
+                &client_for(&server),
+                "rust",
+                "scan/rust/new",
+                TITLE,
+                BODY,
+                "main",
+            );
+            let err = got.unwrap_err();
+            assert!(
+                format!("{err:#}").contains("refusing to publish"),
+                "{err:#}"
+            );
+            assert_staging_named_for(&server, p, "scan/rust/new").await;
+        }
+
+        /// The same refusal on an update: the PR's branch is not moved and
+        /// the PR is not edited, and the staging branch is still deleted.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_with_a_mismatched_tree_writes_no_pr_and_cleans_up() {
+            let (dir, _origin, pr) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let main = rev(p, "main");
+            let server = MockServer::start().await;
+            publish_mocks(&server, "scan/rust/old", &main, signed_with(OTHER_TREE)).await;
+            refuse_update_writes(&server).await;
+            let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
+            let err = got.unwrap_err();
+            assert!(
+                format!("{err:#}").contains("refusing to publish"),
+                "{err:#}"
+            );
+            assert_staging_named_for(&server, p, &pr.head).await;
+        }
+
+        /// A GraphQL error from `createCommitOnBranch` is an error with no
+        /// branch or PR written, and the staging branch is still deleted.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_with_a_failed_commit_writes_no_pr_and_cleans_up() {
+            let (dir, _origin, _) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let main = rev(p, "main");
+            let server = MockServer::start().await;
+            publish_mocks(&server, "scan/rust/new", &main, graphql_errors()).await;
+            refuse_open_writes(&server).await;
+            let got = open_pr(
+                p,
+                &client_for(&server),
+                "rust",
+                "scan/rust/new",
+                TITLE,
+                BODY,
+                "main",
+            );
+            let err = got.unwrap_err();
+            assert!(
+                format!("{err:#}").contains("creating the signed commit"),
+                "{err:#}"
+            );
+            assert_staging_named_for(&server, p, "scan/rust/new").await;
+        }
+
+        /// The same for an update: a failed commit moves no branch, edits
+        /// no PR, and still deletes the staging branch.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_with_a_failed_commit_writes_no_pr_and_cleans_up() {
+            let (dir, _origin, pr) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let main = rev(p, "main");
+            let server = MockServer::start().await;
+            publish_mocks(&server, "scan/rust/old", &main, graphql_errors()).await;
+            refuse_update_writes(&server).await;
+            let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
+            let err = got.unwrap_err();
+            assert!(
+                format!("{err:#}").contains("creating the signed commit"),
+                "{err:#}"
+            );
+            assert_staging_named_for(&server, p, &pr.head).await;
         }
     }
 }
