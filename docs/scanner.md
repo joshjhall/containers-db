@@ -67,14 +67,18 @@ SSL_CERT_FILE=/path/to/empty-file SSL_CERT_DIR=/path/to/empty-dir \
 redirects git is set, rather than clearing it (#590). Git exports these
 to hooks — `GIT_CONFIG_PARAMETERS` whenever the command ran as
 `git -c ...` — so a git hook (see #559) that runs the suite must unset
-them first:
+them first. For a hook run as `git -c ...`:
 
 ```sh
 env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-  -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT cargo test -p scanner
+  -u GIT_CONFIG_PARAMETERS cargo test -p scanner
 ```
 
-The panic message lists the exact `env -u` flags for what it found.
+That sample is not exhaustive: the guard also refuses `GIT_CONFIG_COUNT`
+with its `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` pairs,
+`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM`. The
+panic message prints the exact `env -u` flags for every variable it
+found, so copy those.
 
 **The crypto provider is `aws-lc-rs`**, reqwest's default for `rustls`.
 Building it compiles `aws-lc-sys`, which needs a C toolchain (`cc`) and,
