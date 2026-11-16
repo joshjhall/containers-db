@@ -606,10 +606,14 @@ pub(super) mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
+        // No system config, so a failure can only come from the global one
+        // under test; and the hooks are off, so it can only be the signing.
         let plain = |args: &[&str]| {
             std::process::Command::new("git")
                 .current_dir(p)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
                 .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(["-c", "core.hooksPath=/dev/null"])
                 .args(args)
                 .output()
                 .unwrap()
@@ -618,10 +622,33 @@ pub(super) mod tests {
         std::fs::write(p.join("a"), "a").unwrap();
         assert!(plain(&["add", "a"]).status.success());
         let out = plain(&["commit", "-q", "-m", "init"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            !out.status.success(),
-            "the hostile config was not read: {out:?}"
+            !out.status.success() && stderr.contains("gpg failed to sign"),
+            "the hostile global config's signing was not applied: {out:?}"
         );
+    }
+
+    /// `git_command` carries both halves of the isolation, so every
+    /// caller routed through it ignores the global AND the system config
+    /// (the system half cannot be planted without root, so it is pinned
+    /// here rather than exercised).
+    #[test]
+    fn git_command_ignores_global_and_system_config() {
+        let cmd = crate::git_command();
+        let envs: Vec<_> = cmd
+            .get_envs()
+            .map(|(k, v)| (k.to_os_string(), v.map(|v| v.to_os_string())))
+            .collect();
+        for (key, want) in [
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+        ] {
+            assert!(
+                envs.contains(&(key.into(), Some(want.into()))),
+                "{key}={want} missing: {envs:?}"
+            );
+        }
     }
 
     fn current_branch(p: &Path) -> String {

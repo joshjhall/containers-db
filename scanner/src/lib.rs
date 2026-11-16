@@ -41,6 +41,8 @@ use serde_json::Value;
 /// `init.templateDir` would otherwise reach the temp-repo fixtures (#588).
 /// The variables go on the child only, so the inherited-env guard
 /// (`github::testing::assert_no_inherited_git_env`) still holds.
+/// `GIT_CONFIG_GLOBAL` needs git 2.32+; an older git ignores it and the
+/// hostile-config test in `pr::tests` fails rather than passing silently.
 pub(crate) fn git_command() -> std::process::Command {
     #[allow(unused_mut)]
     let mut cmd = std::process::Command::new("git");
