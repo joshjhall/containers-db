@@ -518,13 +518,11 @@ pub(super) mod tests {
     use chrono::TimeZone;
 
     /// Temp repo on `main` with one commit. Hermetic: explicit identity,
-    /// no global config needed. Panics if an inherited `GIT_DIR` (e.g. from
-    /// a pre-push hook) would point `git` at a different repo.
+    /// no global config needed. Panics if an inherited git variable (e.g.
+    /// `GIT_DIR` from a pre-push hook) would point `git` at a different repo
+    /// or config.
     fn temp_repo() -> tempfile::TempDir {
-        assert!(
-            std::env::var_os("GIT_DIR").is_none() && std::env::var_os("GIT_WORK_TREE").is_none(),
-            "unset GIT_DIR/GIT_WORK_TREE: the temp-repo tests would act on another repo"
-        );
+        crate::github::testing::assert_no_inherited_git_env();
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"]).unwrap();
@@ -1222,24 +1220,30 @@ pub(super) mod tests {
             verb: &str,
             p: &str,
             want: serde_json::Value,
-            answer: serde_json::Value,
+            answer: ResponseTemplate,
         ) -> MockServer {
             let server = MockServer::start().await;
             Mock::given(method(verb))
                 .and(path(p))
                 .and(body_json(want))
-                .respond_with(ResponseTemplate::new(201).set_body_json(answer))
+                .respond_with(answer)
                 .expect(1)
                 .mount(&server)
                 .await;
             server
         }
 
-        async fn open(answer: serde_json::Value) -> (Result<String>, tempfile::TempDir) {
+        fn created(answer: serde_json::Value) -> ResponseTemplate {
+            ResponseTemplate::new(201).set_body_json(answer)
+        }
+
+        fn open_want() -> serde_json::Value {
+            json!({"base": "main", "head": "scan/rust/new", "title": TITLE, "body": BODY})
+        }
+
+        async fn open(answer: ResponseTemplate) -> (Result<String>, tempfile::TempDir) {
             let (dir, origin, _) = clone_with_open_scan_pr();
-            let want =
-                json!({"base": "main", "head": "scan/rust/new", "title": TITLE, "body": BODY});
-            let server = serve("POST", "/repos/o/r/pulls", want, answer).await;
+            let server = serve("POST", "/repos/o/r/pulls", open_want(), answer).await;
             let remote = BareRemote::new(origin.path());
             let got = open_pr_with(
                 dir.path(),
@@ -1256,28 +1260,57 @@ pub(super) mod tests {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn open_pr_posts_the_pr_and_returns_its_html_url() {
-            let (got, origin) = open(json!({"number": 9, "html_url": URL})).await;
+            let (got, origin) = open(created(json!({"number": 9, "html_url": URL}))).await;
             assert_eq!(got.unwrap(), URL);
+            let o = origin.path();
+            assert_eq!(
+                rev(o, "scan/rust/new^"),
+                rev(o, "main"),
+                "the published commit sits directly on main"
+            );
+            let tree = git(o, &["ls-tree", "-r", "--name-only", "scan/rust/new"]).unwrap();
             assert!(
-                BareRemote::new(origin.path())
-                    .head("scan/rust/new")
-                    .is_some(),
-                "the branch is published before the PR is opened"
+                tree.lines().any(|l| l == "tools/rust/versions/2.0.0.json"),
+                "the tip carries the regenerated files: {tree}"
             );
         }
 
         #[tokio::test(flavor = "multi_thread")]
         async fn open_pr_without_html_url_is_an_error() {
-            let (got, _origin) = open(json!({"number": 9, "url": URL})).await;
+            let (got, _origin) = open(created(json!({"number": 9, "url": URL}))).await;
             let err = got.unwrap_err();
             assert!(format!("{err:#}").contains("no html_url"), "{err:#}");
+        }
+
+        /// The branch publishes, then GitHub refuses the PR (e.g. 422 for
+        /// an existing PR on that head): an error naming the status, never
+        /// a URL.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_with_a_rejected_pr_write_is_an_error() {
+            let refused = ResponseTemplate::new(422).set_body_json(json!({"message": "nope"}));
+            let (got, origin) = open(refused).await;
+            let err = got.unwrap_err();
+            let status = err
+                .downcast_ref::<crate::github::HttpStatusError>()
+                .map(|e| e.status);
+            assert_eq!(
+                status,
+                Some(reqwest::StatusCode::UNPROCESSABLE_ENTITY),
+                "{err:#}"
+            );
+            assert!(
+                BareRemote::new(origin.path())
+                    .head("scan/rust/new")
+                    .is_some(),
+                "the failure is the PR write, after the branch published"
+            );
         }
 
         /// Returns the update and the bare `origin`, for asserting the push.
         async fn update(answer: serde_json::Value) -> (Result<String>, tempfile::TempDir, OpenPr) {
             let (dir, origin, pr) = clone_with_open_scan_pr();
             let want = json!({"title": TITLE, "body": BODY});
-            let server = serve("PATCH", "/repos/o/r/pulls/398", want, answer).await;
+            let server = serve("PATCH", "/repos/o/r/pulls/398", want, created(answer)).await;
             let remote = BareRemote::new(origin.path());
             let got = update_pr_with(
                 dir.path(),
@@ -1308,6 +1341,174 @@ pub(super) mod tests {
         async fn update_pr_without_html_url_is_an_error() {
             let err = update(json!({"number": 398})).await.0.unwrap_err();
             assert!(format!("{err:#}").contains("no html_url"), "{err:#}");
+        }
+    }
+
+    /// The public [`open_pr`]/[`update_pr`] wrappers, publishing through
+    /// [`ApiRemote::discover`] against a mock GraphQL API. These pin the
+    /// discover → publish → PR-write wiring (repository id, staging branch,
+    /// signed commit, lease); what lands in git is pinned by the `_with`
+    /// tests above against a bare remote.
+    mod pr_wrappers_api {
+        use super::*;
+        use crate::github::testing::client_for;
+        use serde_json::json;
+        use wiremock::matchers::{body_json, body_partial_json, method, path, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const TITLE: &str = "feat(rust): add upstream versions 2.0.0";
+        const BODY: &str = "the body";
+        const URL: &str = "https://github.example/o/r/pull/9";
+        const SIGNED: &str = "5160ed0000000000000000000000000000000000";
+
+        /// The tree the scan commit will have: `tools/rust/` staged on top
+        /// of the clone's index, which `checkout -b`/`-B` from `main` keep.
+        fn scan_tree(p: &Path) -> String {
+            git(p, &["add", "tools/rust"]).unwrap();
+            git(p, &["write-tree"]).unwrap().trim().to_string()
+        }
+
+        fn ok(data: serde_json::Value) -> ResponseTemplate {
+            ResponseTemplate::new(200).set_body_json(json!({ "data": data }))
+        }
+
+        /// GraphQL `variables` the mock must see exactly once.
+        async fn expect_graphql(
+            server: &MockServer,
+            vars: serde_json::Value,
+            answer: ResponseTemplate,
+        ) {
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_partial_json(json!({ "variables": vars })))
+                .respond_with(answer)
+                .expect(1)
+                .mount(server)
+                .await;
+        }
+
+        /// Repository-id discovery, the staging branch at `main`, the signed
+        /// commit answering with `tree`, and the staging cleanup.
+        async fn publish_mocks(server: &MockServer, main: &str, tree: &str) {
+            expect_graphql(
+                server,
+                json!({"o": "o", "n": "r"}),
+                ok(json!({"repository": {"id": "R_1"}})),
+            )
+            .await;
+            expect_graphql(
+                server,
+                json!({"i": {"repositoryId": "R_1", "oid": main}}),
+                ok(json!({})),
+            )
+            .await;
+            expect_graphql(
+                server,
+                json!({"i": {"expectedHeadOid": main, "message": {"headline": TITLE}}}),
+                ok(json!({"createCommitOnBranch": {"commit": {"oid": SIGNED, "tree": {"oid": tree}}}})),
+            )
+            .await;
+            Mock::given(method("DELETE"))
+                .and(path_regex(r"^/repos/o/r/git/refs/heads/scanner-staging/"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(server)
+                .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_discovers_the_repo_and_publishes_a_signed_branch() {
+            let (dir, _origin, _) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let (main, tree) = (rev(p, "main"), scan_tree(p));
+            let server = MockServer::start().await;
+            publish_mocks(&server, &main, &tree).await;
+            expect_graphql(
+                &server,
+                json!({"i": {"repositoryId": "R_1", "name": "refs/heads/scan/rust/new", "oid": SIGNED}}),
+                ok(json!({})),
+            )
+            .await;
+            Mock::given(method("POST"))
+                .and(path("/repos/o/r/pulls"))
+                .and(body_json(
+                    json!({"base": "main", "head": "scan/rust/new", "title": TITLE, "body": BODY}),
+                ))
+                .respond_with(ResponseTemplate::new(201).set_body_json(json!({"html_url": URL})))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let got = open_pr(
+                p,
+                &client_for(&server),
+                "rust",
+                "scan/rust/new",
+                TITLE,
+                BODY,
+                "main",
+            );
+            assert_eq!(got.unwrap(), URL);
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_discovers_the_repo_and_moves_the_branch_on_its_lease() {
+            let (dir, _origin, pr) = clone_with_open_scan_pr();
+            let p = dir.path();
+            let (main, tree) = (rev(p, "main"), scan_tree(p));
+            let server = MockServer::start().await;
+            publish_mocks(&server, &main, &tree).await;
+            expect_graphql(
+                &server,
+                json!({"i": {"repositoryId": "R_1", "refUpdates": [{
+                    "name": "refs/heads/scan/rust/old",
+                    "beforeOid": pr.head_oid,
+                    "afterOid": SIGNED,
+                    "force": true,
+                }]}}),
+                ok(json!({})),
+            )
+            .await;
+            Mock::given(method("PATCH"))
+                .and(path("/repos/o/r/pulls/398"))
+                .and(body_json(json!({"title": TITLE, "body": BODY})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"html_url": URL})))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
+            assert_eq!(got.unwrap(), URL);
+        }
+
+        /// Discovery runs first: without a repository id nothing is
+        /// committed or published, and no PR is written.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_without_a_repo_id_writes_nothing() {
+            let (dir, _origin, _) = clone_with_open_scan_pr();
+            let server = MockServer::start().await;
+            expect_graphql(
+                &server,
+                json!({"o": "o", "n": "r"}),
+                ok(json!({"repository": null})),
+            )
+            .await;
+            Mock::given(method("POST"))
+                .and(path("/repos/o/r/pulls"))
+                .respond_with(ResponseTemplate::new(201))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let got = open_pr(
+                dir.path(),
+                &client_for(&server),
+                "rust",
+                "scan/rust/new",
+                TITLE,
+                BODY,
+                "main",
+            );
+            let err = got.unwrap_err();
+            assert!(format!("{err:#}").contains("no repository id"), "{err:#}");
+            assert_eq!(current_branch(dir.path()), "main", "no branch was cut");
         }
     }
 }

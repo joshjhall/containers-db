@@ -447,6 +447,49 @@ pub(crate) mod testing {
             "r".to_string(),
         )
     }
+
+    /// Variables through which an inherited environment (e.g. a git hook,
+    /// or `git -c` exporting `GIT_CONFIG_PARAMETERS`) would point the
+    /// temp-repo fixtures' `git` at another repo, index or config.
+    const INHERITED_GIT_ENV: &[&str] = &[
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_GLOBAL",
+    ];
+
+    /// Panic, naming the variable, if the test process inherited any of
+    /// [`INHERITED_GIT_ENV`]: the temp-repo tests would act on another
+    /// repo or with config they did not set. Refused rather than cleared,
+    /// so a misconfigured hook is surfaced instead of silently masked.
+    pub(crate) fn assert_no_inherited_git_env() {
+        assert_hermetic(|k| std::env::var_os(k).is_some());
+    }
+
+    fn assert_hermetic(is_set: impl Fn(&str) -> bool) {
+        let set: Vec<&str> = INHERITED_GIT_ENV
+            .iter()
+            .copied()
+            .filter(|k| is_set(k))
+            .collect();
+        assert!(
+            set.is_empty(),
+            "unset {}: the temp-repo tests would act on another repo or config",
+            set.join("/")
+        );
+    }
+
+    #[test]
+    fn hermeticity_guard_names_each_inherited_variable() {
+        for var in INHERITED_GIT_ENV {
+            let err = std::panic::catch_unwind(|| assert_hermetic(|k| k == *var)).unwrap_err();
+            let msg = err.downcast_ref::<String>().unwrap();
+            assert!(msg.starts_with(&format!("unset {var}:")), "{msg}");
+        }
+        assert_hermetic(|_| false);
+    }
 }
 
 #[cfg(test)]
@@ -867,13 +910,10 @@ mod tests {
     }
 
     /// A fresh repo with `origin` set to `url`, or none when `url` is
-    /// `None`. Panics if an inherited `GIT_DIR` (e.g. from a pre-push hook)
-    /// would point `git` at a different repo.
+    /// `None`. Panics if an inherited git variable (e.g. `GIT_DIR` from a
+    /// pre-push hook) would point `git` at a different repo or config.
     fn repo_with_origin(url: Option<&str>) -> tempfile::TempDir {
-        assert!(
-            std::env::var_os("GIT_DIR").is_none() && std::env::var_os("GIT_WORK_TREE").is_none(),
-            "unset GIT_DIR/GIT_WORK_TREE: the temp-repo tests would act on another repo"
-        );
+        super::testing::assert_no_inherited_git_env();
         let dir = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
             let st = Command::new("git")
