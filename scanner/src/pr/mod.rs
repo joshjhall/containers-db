@@ -544,7 +544,7 @@ pub(super) mod tests {
         std::fs::create_dir_all(xdg.join("git")).unwrap();
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("pre-commit");
-        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::write(&hook, "#!/bin/sh\necho hostile-pre-commit >&2\nexit 1\n").unwrap();
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
         let config = format!(
@@ -590,9 +590,10 @@ pub(super) mod tests {
         assert_eq!(rev(dir.path(), &pr.head), pr.head_oid);
     }
 
-    /// The control for the test above: the same hostile `HOME` does fail
-    /// a commit made by a plain `git`, so that test cannot pass because
-    /// the config was never read.
+    /// The control for the test above: the same hostile `HOME` fails a
+    /// commit made by a plain `git` through EACH of its two mechanisms, so
+    /// that test cannot pass because the config, or either half of it, was
+    /// never read.
     #[test]
     fn a_plain_git_reads_the_hostile_global_config() {
         run_under_hostile_home("pr::tests::hostile_home_fails_a_plain_commit");
@@ -607,25 +608,36 @@ pub(super) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
         // No system config, so a failure can only come from the global one
-        // under test; and the hooks are off, so it can only be the signing.
-        let plain = |args: &[&str]| {
+        // under test; `off` disables the other mechanism, so each commit
+        // below can fail for exactly one reason.
+        let plain = |off: &[&str], args: &[&str]| {
             std::process::Command::new("git")
                 .current_dir(p)
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-                .args(["-c", "core.hooksPath=/dev/null"])
+                .args(off)
                 .args(args)
                 .output()
                 .unwrap()
         };
-        assert!(plain(&["init", "-q", "-b", "main"]).status.success());
+        assert!(plain(&[], &["init", "-q", "-b", "main"]).status.success());
         std::fs::write(p.join("a"), "a").unwrap();
-        assert!(plain(&["add", "a"]).status.success());
-        let out = plain(&["commit", "-q", "-m", "init"]);
+        assert!(plain(&[], &["add", "a"]).status.success());
+
+        let hooks_off = ["-c", "core.hooksPath=/dev/null"];
+        let out = plain(&hooks_off, &["commit", "-q", "-m", "init"]);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             !out.status.success() && stderr.contains("gpg failed to sign"),
             "the hostile global config's signing was not applied: {out:?}"
+        );
+
+        let signing_off = ["-c", "commit.gpgsign=false"];
+        let out = plain(&signing_off, &["commit", "-q", "-m", "init"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("hostile-pre-commit"),
+            "the hostile global config's hooksPath was not applied: {out:?}"
         );
     }
 

@@ -460,10 +460,12 @@ mod tests {
     use chrono::TimeZone;
     use serde_json::json;
 
-    /// Every `git` the scanner spawns goes through [`git_command`], so a
-    /// fixture cannot quietly regain the host's global config (#588).
-    /// The only bare spawns allowed are the builder itself and the
-    /// hostile-config control, which must read that config.
+    /// No source file spawns `git` by passing the `"git"` literal to
+    /// `Command::new`, except the builder itself and the hostile-config
+    /// control, which must read the host config, so a fixture cannot
+    /// quietly regain the host's global config (#588). The match is
+    /// textual: a program name passed through a variable or const is not
+    /// caught.
     #[test]
     fn git_is_only_spawned_through_git_command() {
         let needle = ["Command::new(", "\"git\")"].concat();
