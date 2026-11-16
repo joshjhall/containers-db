@@ -1430,14 +1430,40 @@ pub(super) mod tests {
             ok(json!({"createCommitOnBranch": {"commit": {"oid": SIGNED, "tree": {"oid": tree}}}}))
         }
 
-        /// True when `name` is `scanner-staging/<branch>/` plus the 12 hex
-        /// digits of the local commit's short sha, the shape
-        /// [`publish::publish_head`] names its staging branch.
+        /// True when `name` has the shape [`publish::publish_head`] gives a
+        /// staging branch: `scanner-staging/<branch>/` plus 12 hex digits.
+        /// The shape only gates the mocks; [`assert_staging_named_for`]
+        /// pins which commit the digits come from.
         fn is_staging_for(name: &str, branch: &str) -> bool {
             name.strip_prefix(&format!("scanner-staging/{branch}/"))
                 .is_some_and(|sha| {
                     sha.len() == 12 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
                 })
+        }
+
+        /// The one staging branch created and the one deleted are both
+        /// named for the local commit published from `branch`, which the
+        /// wrapper leaves checked out whether or not the publish succeeded.
+        async fn assert_staging_named_for(server: &MockServer, p: &Path, branch: &str) {
+            let want = format!("scanner-staging/{branch}/{}", &rev(p, branch)[..12]);
+            let sent = server.received_requests().await.unwrap();
+            let created: Vec<String> = sent
+                .iter()
+                .filter_map(|r| {
+                    let body: serde_json::Value = serde_json::from_slice(&r.body).ok()?;
+                    let name = body["variables"]["i"]["name"].as_str()?;
+                    name.strip_prefix("refs/heads/")
+                        .filter(|n| n.starts_with("scanner-staging/"))
+                        .map(str::to_string)
+                })
+                .collect();
+            let deleted: Vec<&str> = sent
+                .iter()
+                .filter(|r| r.method == "DELETE")
+                .filter_map(|r| r.url.path().strip_prefix("/repos/o/r/git/refs/heads/"))
+                .collect();
+            assert_eq!(deleted, [want.as_str()], "staging branch deleted");
+            assert_eq!(created, [want], "staging branch created");
         }
 
         /// Repository-id discovery, the staging branch for `branch` at
@@ -1527,6 +1553,7 @@ pub(super) mod tests {
                 "main",
             );
             assert_eq!(got.unwrap(), URL);
+            assert_staging_named_for(&server, p, "scan/rust/new").await;
         }
 
         #[tokio::test(flavor = "multi_thread")]
@@ -1556,6 +1583,7 @@ pub(super) mod tests {
                 .await;
             let got = update_pr(p, &client_for(&server), "rust", &pr, TITLE, BODY);
             assert_eq!(got.unwrap(), URL);
+            assert_staging_named_for(&server, p, &pr.head).await;
         }
 
         /// Discovery runs first: without a repository id nothing is
@@ -1763,6 +1791,7 @@ pub(super) mod tests {
                 format!("{err:#}").contains("refusing to publish"),
                 "{err:#}"
             );
+            assert_staging_named_for(&server, p, "scan/rust/new").await;
         }
 
         /// The same refusal on an update: the PR's branch is not moved and
@@ -1781,6 +1810,7 @@ pub(super) mod tests {
                 format!("{err:#}").contains("refusing to publish"),
                 "{err:#}"
             );
+            assert_staging_named_for(&server, p, &pr.head).await;
         }
 
         /// A GraphQL error from `createCommitOnBranch` is an error with no
@@ -1807,6 +1837,7 @@ pub(super) mod tests {
                 format!("{err:#}").contains("creating the signed commit"),
                 "{err:#}"
             );
+            assert_staging_named_for(&server, p, "scan/rust/new").await;
         }
 
         /// The same for an update: a failed commit moves no branch, edits
@@ -1825,6 +1856,7 @@ pub(super) mod tests {
                 format!("{err:#}").contains("creating the signed commit"),
                 "{err:#}"
             );
+            assert_staging_named_for(&server, p, &pr.head).await;
         }
     }
 }
