@@ -1704,11 +1704,11 @@ pub(super) mod tests {
         /// Whether an error is the failure a test provoked.
         type IsExpected = fn(&anyhow::Error) -> bool;
 
-        /// The two ways discovery fails, each with the check that the
+        /// The two ways a GraphQL call fails, each with the check that the
         /// error is that failure: a refused request surfaces as a typed
         /// [`crate::github::HttpStatusError`], a GraphQL `errors` payload
         /// as its own message.
-        fn discovery_failures() -> [(ResponseTemplate, IsExpected); 2] {
+        fn graphql_failures() -> [(ResponseTemplate, IsExpected); 2] {
             [
                 (ResponseTemplate::new(500), |e| {
                     e.downcast_ref::<crate::github::HttpStatusError>()
@@ -1725,7 +1725,7 @@ pub(super) mod tests {
         /// branch is cut and discovery is the only request sent.
         #[tokio::test(flavor = "multi_thread")]
         async fn open_pr_with_a_failed_discovery_writes_nothing() {
-            for (answer, is_expected) in discovery_failures() {
+            for (answer, is_expected) in graphql_failures() {
                 let (dir, _origin, _) = clone_with_open_scan_pr();
                 let server = discover_fails(answer).await;
                 let got = open_pr(
@@ -1749,7 +1749,7 @@ pub(super) mod tests {
         /// reset, and no request follows discovery.
         #[tokio::test(flavor = "multi_thread")]
         async fn update_pr_with_a_failed_discovery_writes_nothing() {
-            for (answer, is_expected) in discovery_failures() {
+            for (answer, is_expected) in graphql_failures() {
                 let (dir, _origin, pr) = clone_with_open_scan_pr();
                 let p = dir.path();
                 let server = discover_fails(answer).await;
@@ -1764,6 +1764,90 @@ pub(super) mod tests {
                     "the PR branch was not checked out"
                 );
                 assert_eq!(rev(p, &pr.head), pr.head_oid, "the PR branch was not reset");
+            }
+        }
+
+        /// A server where discovery succeeds and the staging-branch
+        /// `createRef` answers `answer`. Nothing may follow a failed
+        /// create: no signed commit and no staging cleanup.
+        async fn create_fails(answer: ResponseTemplate) -> MockServer {
+            let server = MockServer::start().await;
+            expect_graphql(
+                &server,
+                json!({"o": "o", "n": "r"}),
+                ok(json!({"repository": {"id": "R_1"}})),
+            )
+            .await;
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_string_contains("createRef"))
+                .and(body_string_contains("refs/heads/scanner-staging/"))
+                .respond_with(answer)
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/graphql"))
+                .and(body_string_contains("createCommitOnBranch"))
+                .respond_with(ok(json!({})))
+                .expect(0)
+                .mount(&server)
+                .await;
+            Mock::given(method("DELETE"))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(0)
+                .mount(&server)
+                .await;
+            server
+        }
+
+        /// The staging branch is created before anything is committed, so
+        /// a failed create is an error that stops the publish outright: no
+        /// commit, no cleanup (there is nothing to clean), and no branch
+        /// or PR written. Only discovery and the create are sent.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn open_pr_with_a_failed_staging_create_writes_nothing() {
+            for (answer, is_expected) in graphql_failures() {
+                let (dir, _origin, _) = clone_with_open_scan_pr();
+                let server = create_fails(answer).await;
+                refuse_open_writes(&server).await;
+                let got = open_pr(
+                    dir.path(),
+                    &client_for(&server),
+                    "rust",
+                    "scan/rust/new",
+                    TITLE,
+                    BODY,
+                    "main",
+                );
+                let err = got.unwrap_err();
+                assert!(is_expected(&err), "{err:#}");
+                assert!(
+                    format!("{err:#}").contains("creating staging branch"),
+                    "{err:#}"
+                );
+                let sent = server.received_requests().await.unwrap();
+                assert_eq!(sent.len(), 2, "only discovery and the create: {sent:?}");
+            }
+        }
+
+        /// The same for an update: the PR's branch is not moved, the PR is
+        /// not edited, and nothing follows the failed create.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn update_pr_with_a_failed_staging_create_writes_nothing() {
+            for (answer, is_expected) in graphql_failures() {
+                let (dir, _origin, pr) = clone_with_open_scan_pr();
+                let server = create_fails(answer).await;
+                refuse_update_writes(&server).await;
+                let got = update_pr(dir.path(), &client_for(&server), "rust", &pr, TITLE, BODY);
+                let err = got.unwrap_err();
+                assert!(is_expected(&err), "{err:#}");
+                assert!(
+                    format!("{err:#}").contains("creating staging branch"),
+                    "{err:#}"
+                );
+                let sent = server.received_requests().await.unwrap();
+                assert_eq!(sent.len(), 2, "only discovery and the create: {sent:?}");
             }
         }
 
