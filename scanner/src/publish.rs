@@ -13,7 +13,7 @@
 //! the PRs were listed, so a push that raced in since then survives.
 
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine as _;
@@ -359,13 +359,16 @@ fn run(cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
         pipe.write_all(input)
             .with_context(|| format!("writing stdin of {}", shown()))?;
     }
-    let output = child
-        .wait_with_output()
-        .with_context(|| format!("waiting for {}", shown()))?;
+    finish(&shown(), child.wait_with_output())
+}
+
+/// Turns the child's wait result into `run`'s output, labelling each failure.
+/// Split out so a test can feed it a wait error no real child produces.
+fn finish(shown: &str, waited: std::io::Result<Output>) -> Result<Vec<u8>> {
+    let output = waited.with_context(|| format!("waiting for {shown}"))?;
     if !output.status.success() {
         bail!(
-            "{} failed: {}",
-            shown(),
+            "{shown} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -672,14 +675,24 @@ mod tests {
     /// stdin, fails the write with EPIPE once git exits; that error must
     /// surface with the stdin label rather than be swallowed.
     ///
-    /// The "waiting for" label stays untested: `wait_with_output` on a
-    /// spawned child only fails on an OS fault this test cannot provoke.
+    /// The "waiting for" label is covered through `finish` by
+    /// `wait_failure_names_the_git_command`: a real child cannot provoke it.
     #[test]
     fn unread_stdin_names_the_write_in_the_error() {
         let dir = empty_repo();
         let input = vec![0u8; 1 << 20];
         let err = run(dir.path(), &["--version"], Some(&input)).unwrap_err();
         assert_eq!(err.to_string(), "writing stdin of `git --version`");
+    }
+
+    /// `wait_with_output` fails only on an OS fault, so the wait error is
+    /// injected into `finish`: it must carry the wait label and keep the
+    /// underlying io error as its cause.
+    #[test]
+    fn wait_failure_names_the_git_command() {
+        let err = finish("`git status`", Err(std::io::Error::other("boom"))).unwrap_err();
+        assert_eq!(err.to_string(), "waiting for `git status`");
+        assert_eq!(err.root_cause().to_string(), "boom");
     }
 
     #[test]
