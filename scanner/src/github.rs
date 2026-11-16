@@ -449,8 +449,9 @@ pub(crate) mod testing {
     }
 
     /// Variables through which an inherited environment (e.g. a git hook)
-    /// would point the temp-repo fixtures' `git` at another repo, index or
-    /// object store. Config injection is refused by prefix instead.
+    /// would point the temp-repo fixtures' `git` at another repo, index,
+    /// object store or ref view, or seed `git init` with foreign templates
+    /// (and so hooks). Config injection is refused by prefix instead.
     const INHERITED_GIT_ENV: &[&str] = &[
         "GIT_DIR",
         "GIT_WORK_TREE",
@@ -458,7 +459,11 @@ pub(crate) mod testing {
         "GIT_COMMON_DIR",
         "GIT_OBJECT_DIRECTORY",
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_QUARANTINE_PATH",
+        "GIT_SHALLOW_FILE",
+        "GIT_REPLACE_REF_BASE",
         "GIT_NAMESPACE",
+        "GIT_TEMPLATE_DIR",
     ];
 
     /// Every config-injecting variable starts with this: `GIT_CONFIG`
@@ -483,7 +488,8 @@ pub(crate) mod testing {
         set.sort();
         assert!(
             set.is_empty(),
-            "unset {}: the temp-repo tests would act on another repo or config",
+            "unset {}: the temp-repo tests would act on another repo or config \
+             (a hook run under `git -c ...` exports GIT_CONFIG_PARAMETERS)",
             set.join("/")
         );
     }
