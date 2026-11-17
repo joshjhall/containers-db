@@ -57,7 +57,8 @@ enum Tok<'a> {
 }
 
 /// Rust source as a token stream with comments and string, char and raw
-/// string literals dropped, so nothing inside them is matched. Lifetimes
+/// string literals dropped, so nothing inside them is matched. A byte
+/// string `b"…"` lexes as the ident `b` plus a dropped string. Lifetimes
 /// lex as an `'` punct plus an ident, which is all a lint scan needs.
 fn tokens(src: &str) -> Vec<Tok<'_>> {
     let b = src.as_bytes();
@@ -100,9 +101,7 @@ fn tokens(src: &str) -> Vec<Tok<'_>> {
             i = src[body..]
                 .find(&close)
                 .map_or(b.len(), |n| body + n + close.len());
-        } else if c == b'b' && b.get(i + 1) == Some(&b'"') {
-            i = skip_quoted(i + 2, b'"');
-        } else if c == b'\'' && is_char_literal(&b[i..]) {
+        } else if c == b'\'' && is_char_literal(&src[i..]) {
             i = skip_quoted(i + 1, b'\'');
         } else if c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80 {
             let start = i;
@@ -130,18 +129,14 @@ fn raw_string_hashes(s: &str) -> Option<(usize, usize)> {
         .then(|| (s.len() - rest.len() + hashes + 1, hashes))
 }
 
-/// A `'` opens a char literal, not a lifetime, when it closes within a
-/// few bytes: `'a'`, `'\n'`, `'\u{1F600}'`.
-fn is_char_literal(b: &[u8]) -> bool {
-    match b.get(1) {
-        Some(b'\\') => true,
-        Some(_) => {
-            let w = std::str::from_utf8(&b[1..b.len().min(6)])
-                .ok()
-                .and_then(|s| s.chars().next())
-                .map_or(1, char::len_utf8);
-            b.get(1 + w) == Some(&b'\'')
-        }
+/// A `'` opens a char literal, not a lifetime, when the one char after
+/// it is followed by a closing `'`: `'a'`, `'é'`, or an escape such as
+/// `'\n'` or `'\''`. `s` starts at the opening quote.
+fn is_char_literal(s: &str) -> bool {
+    let mut chars = s[1..].chars();
+    match chars.next() {
+        Some('\\') => true,
+        Some(_) => chars.next() == Some('\''),
         None => false,
     }
 }
@@ -258,7 +253,8 @@ fn item_after(t: &[Tok<'_>], mut k: usize) -> String {
     }
 }
 
-/// Every `.rs` file under the given workspace-relative directories.
+/// Every `.rs` file under the given workspace-relative directories,
+/// skipping build output and hidden directories.
 fn rust_files(workspace: &Path, dirs: &[&str]) -> Vec<std::path::PathBuf> {
     let mut stack: Vec<_> = dirs
         .iter()
@@ -269,8 +265,11 @@ fn rust_files(workspace: &Path, dirs: &[&str]) -> Vec<std::path::PathBuf> {
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
             if path.is_dir() {
-                stack.push(path);
+                if name != "target" && !name.starts_with('.') {
+                    stack.push(path);
+                }
             } else if path.extension().is_some_and(|e| e == "rs") {
                 files.push(path);
             }
@@ -316,12 +315,8 @@ fn the_ban_and_lint_levels_are_in_place() {
 #[test]
 fn spawn_exemptions_are_pinned() {
     let ws = workspace();
-    let dirs = [
-        "scanner/src",
-        "scanner/tests",
-        "validator/src",
-        "validator/tests",
-    ];
+    // Whole crates, so build.rs, benches/ and examples/ count too.
+    let dirs = ["scanner", "validator"];
     let mut found = Vec::new();
     for path in rust_files(ws, &dirs) {
         let rel = path
@@ -342,6 +337,19 @@ fn spawn_exemptions_are_pinned() {
         found, want,
         "spawn git through crate::git_command(); a new Command::new exemption must be pinned in spawn_guard::PINNED"
     );
+}
+
+/// A char literal is told from a lifetime by its decoded first char, so
+/// a multibyte char next to more multibyte text still closes where Rust
+/// closes it.
+#[test]
+fn is_char_literal_decodes_whole_chars() {
+    for lit in ["'a'", "'é',ü)", "'😀'", "'\\''", "'\\u{1F600}'", "'\"'"] {
+        assert!(is_char_literal(lit), "{lit:?} is a char literal");
+    }
+    for lifetime in ["'a>", "'static str", "'é>", "'"] {
+        assert!(!is_char_literal(lifetime), "{lifetime:?} is not");
+    }
 }
 
 /// The scanner sees each silencer spelling, and nothing that only looks
@@ -400,6 +408,26 @@ fn silencers_sees_every_spelling() {
         one("warnings", "fn g")
     );
 
+    // A literal that could swallow what follows it must end where Rust
+    // ends it, so the real silencer after it is still found.
+    for (lead, item) in [
+        ("const Q: char = '\"';", "fn q"),
+        ("const E: char = '\\'';", "fn q"),
+        ("const U: char = 'é'; const V: char = '😀';", "fn q"),
+        ("const B: &[u8] = b\"]\";", "fn q"),
+        ("const R: &str = r@\"\"]\"@;", "fn q"),
+        ("const L: &str = \"\\\"]\";", "fn q"),
+        ("fn lt<'a>(_: &'a str) {}", "fn q"),
+    ] {
+        assert_eq!(
+            lints(&format!(
+                "{lead}\n@[allow(clippy::disallowed_methods)]\nfn q() {{}}"
+            )),
+            one(dm, item),
+            "missed the silencer after {lead:?}"
+        );
+    }
+
     // Not silencers: comments, strings, other lints, other attributes.
     for quiet in [
         "// @[allow(clippy::disallowed_methods)]\nfn h() {}",
@@ -411,6 +439,9 @@ fn silencers_sees_every_spelling() {
         "@[deny(clippy::disallowed_methods)]\nfn l() {}",
         "@[doc = \"allow(clippy::disallowed_methods)\"]\nfn m() {}",
         "fn n<'a>(x: &'a str) -> char { let _ = x; 'x' }",
+        "/* outer /* @[allow(clippy::all)] */ still comment @[allow(warnings)] */ fn o() {}",
+        "const B: &[u8] = b\"@[allow(clippy::all)]\";",
+        "const H: &str = r@@\"\"@ @[allow(warnings)] \"@@;",
     ] {
         assert_eq!(lints(quiet), Vec::new(), "false positive on {quiet:?}");
     }
