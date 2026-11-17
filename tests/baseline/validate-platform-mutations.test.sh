@@ -142,12 +142,33 @@ test_github_mutants() {
         "github.yml exists and is not empty"
     # A second context beside merge-gate: the required set is then wider than
     # the CI template's single gate job.
-    mutant extra-check platform/github.yml '/^ *integration_id: /a\        - context: lint' \
+    mutant extra-check platform/github.yml '/^ *- context: merge-gate$/i\        - context: lint' \
         "github.yml requires exactly the CI template's gate job, nothing else"
     mutant string-integration-id platform/github.yml 's/integration_id: 15368/integration_id: "15368"/' \
         "merge-gate's integration_id, when set, is an integer app id"
     mutant bypass-actor platform/github.yml 's/^  bypass_actors: \[\]/  bypass_actors: [{ actor_id: 5, actor_type: RepositoryRole, bypass_mode: always }]/' \
         "The ruleset declares no bypass actors"
+    # Absent is not empty: yq's length of null is 0, so a length-only check
+    # would let a dropped key fall back to the consumer's default.
+    mutant no-bypass-key platform/github.yml '/^  bypass_actors:/d' \
+        "The ruleset declares no bypass actors"
+}
+
+# integration_id is optional (platform/README.md): a spec without it must pass,
+# or the documented "drop it" option would break the gate.
+test_integration_id_optional() {
+    command -v yq >/dev/null 2>&1 || {
+        skip_test "yq not installed"
+        return 0
+    }
+    local d="$WORKDIR/no-integration-id"
+    fresh "$d"
+    command sed -i -e '/^ *integration_id: /d' "$d/platform/github.yml"
+    assert_equals "" "$(yq '.. | select(has("integration_id")?) | .context' "$d/platform/github.yml")" \
+        "The scratch spec has no integration_id"
+    run_gate "$d"
+    assert_equals "0" "$GATE_RC" "The gate passes when integration_id is left out"
+    assert_equals "" "$(failed_messages)" "...and reports no failing assertion"
 }
 
 test_gitlab_mutants() {
@@ -197,6 +218,7 @@ test_label_mutants() {
 }
 
 run_test test_pristine_passes "The gate passes on the real spec"
+run_test test_integration_id_optional "A spec without the optional integration_id passes"
 run_test test_github_mutants "Each GitHub spec or CI template mutation fails its own assertion"
 run_test test_gitlab_mutants "Each GitLab spec mutation fails its own assertion"
 run_test test_label_mutants "Each label vocabulary mutation fails its own assertion"

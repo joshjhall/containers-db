@@ -80,10 +80,11 @@ test_github_check_source() {
     have_yq || return 0
     local g="$PLATFORM_DIR/github.yml"
     # Tag, not value: a quoted "15368" is a string GitHub's API rejects or, worse,
-    # a consumer passes through unchecked. Absent (!!null) is allowed.
+    # a consumer passes through unchecked. Absent is allowed. Test absence with
+    # has(): yq's `tag != "!!null"` on a missing key selects it anyway.
     assert_equals "" \
         "$(yq '.ruleset.rules.required_status_checks.required_status_checks[]
-            | select((.integration_id | tag) != "!!null" and (.integration_id | tag) != "!!int") | .context' "$g")" \
+            | select(has("integration_id") and (.integration_id | tag) != "!!int") | .context' "$g")" \
         "merge-gate's integration_id, when set, is an integer app id"
     assert_equals "!!seq 0" "$(yq '(.ruleset.bypass_actors | tag) + " " + (.ruleset.bypass_actors | length | tostring)' "$g")" \
         "The ruleset declares no bypass actors"
