@@ -45,7 +45,7 @@ const PINNED: [(&str, &str, &str); 4] = [
         "fn run_with_env",
     ),
     (
-        "scanner/src/pr/mod.rs",
+        "scanner/src/pr/tests.rs",
         "clippy::disallowed_methods",
         "fn hostile_home_fails_a_plain_commit",
     ),
