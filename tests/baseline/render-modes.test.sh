@@ -63,6 +63,23 @@ test_once_does_not_block() {
     assert_equals "0" "$rc" "An existing once/link target does not refuse a render without --force"
     assert_equals "# Existing" "$(command cat "$out/README.md")" "...and is left as it was"
     assert_equals "elsewhere.md" "$(command readlink "$out/AGENTS.md")" "...including an existing (dangling) link"
+    # A dangling symlink at a once FILE target is the user's too: writing
+    # through it would create a file wherever it points.
+    local dangle="$WORKDIR/adopt-dangle"
+    command mkdir -p "$dangle"
+    command ln -s nowhere.md "$dangle/README.md"
+    "$RENDER" --slices python --ci gitlab --out "$dangle" --force >/dev/null
+    assert_equals "nowhere.md" "$(command readlink "$dangle/README.md")" "A dangling once-target symlink is kept, even with --force"
+    assert_true "[ ! -e \"$dangle/nowhere.md\" ]" "...and nothing is written through it"
+    # A dangling symlink at a TRACKED target must refuse without --force, not
+    # silently write through to the link's destination.
+    local tracked="$WORKDIR/adopt-tracked" rc=0 err
+    command mkdir -p "$tracked"
+    command ln -s nowhere.just "$tracked/justfile"
+    err="$("$RENDER" --slices python --ci gitlab --out "$tracked" 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "A dangling symlink at a tracked target refuses a render without --force"
+    assert_contains "$err" "refusing to overwrite" "...by the overwrite check"
+    assert_true "[ ! -e \"$tracked/nowhere.just\" ]" "...and nothing is written through it"
 }
 
 test_link_is_symlink() {
@@ -159,6 +176,9 @@ test_bad_mode_rows_refused() {
     # did not select: the link is validated against the selection, not the file.
     refused link-unselected "link X.md -> .gitlab-ci.yml: target is not a file rendered" \
         "X.md${t}core${t}always${t}.gitlab-ci.yml${t}link"
+    refused link-dot "link text must be a plain relative path" "X.md${t}core${t}always${t}./CLAUDE.md${t}link"
+    refused link-dot-mid "link text must be a plain relative path" "docs/X.md${t}core${t}always${t}./x.md${t}link"
+    refused link-empty-segment "link text must be a plain relative path" "X.md${t}core${t}always${t}docs//x.md${t}link"
     refused six-columns "expected 4 or 5 tab-separated columns" "x.md${t}core${t}always${t}$claude${t}once${t}extra"
 }
 

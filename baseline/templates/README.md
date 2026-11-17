@@ -43,8 +43,10 @@ Nothing else: no substitution, no escaping, no trailing-newline fix-up.
   empty source) are `once`.
 - `link` writes a **symlink** whose text is `source`, read relative to the link's
   directory. The text must name a non-link target that the same render writes,
-  with no `..` and no leading `/`. A link target has exactly one row and is
-  create-only, like `once`. `AGENTS.md` → `CLAUDE.md` is the one link.
+  as a plain relative path: no `..`, no `.` segment, no empty segment, and no
+  leading `/`. It is compared to target names as written, never normalized.
+  A link target has exactly one row and is create-only, like `once`.
+  `AGENTS.md` → `CLAUDE.md` is the one link.
 
 A 4-column reader that ignores `mode` renders these rows wrongly (it would copy
 `CLAUDE.md` from a template path that does not exist), so a renderer must
