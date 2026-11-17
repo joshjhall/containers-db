@@ -103,29 +103,56 @@ test_readme_commands_exist() {
     assert_not_contains "$(command cat "$WORKDIR/cmd-core-github/README.md")" "tests/*.bats" "A core README names no slice layout"
 }
 
-# refused <name> <row> — append <row> to a copy of the manifest; render.sh must
-# exit 2 and write nothing.
-refused() {
-    local m="$WORKDIR/m-$1" rc=0
+# with_rows <name> <row>... — a copy of the templates whose manifest has <row>s
+# appended; prints the copy's manifest path.
+with_rows() {
+    local m="$WORKDIR/m-$1"
+    shift
     command mkdir -p "$m"
     command cp -R "$TEMPLATES/." "$m/"
-    command printf '%s\n' "$2" >>"$m/manifest.tsv"
-    RENDER_MANIFEST="$m/manifest.tsv" "$RENDER" --slices shell,python --ci github --out "$WORKDIR/o-$1" >/dev/null 2>&1 || rc=$?
-    assert_equals "2" "$rc" "$1: render.sh exits 2"
-    assert_true "[ ! -e \"$WORKDIR/o-$1\" ]" "$1: ...and writes nothing"
+    command printf '%s\n' "$@" >>"$m/manifest.tsv"
+    command printf '%s\n' "$m/manifest.tsv"
+}
+
+# refused <name> <expected-error> <row>... — render.sh must exit 2, write
+# nothing, and fail with <expected-error>: exit 2 alone is every die(), so a
+# case whose own guard was deleted would still pass via a later check.
+refused() {
+    local name="$1" want="$2" manifest rc=0 err
+    shift 2
+    manifest="$(with_rows "$name" "$@")"
+    err="$(RENDER_MANIFEST="$manifest" "$RENDER" --slices shell,python --ci github --out "$WORKDIR/o-$name" 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "$name: render.sh exits 2"
+    assert_contains "$err" "$want" "$name: ...refused by its own check"
+    assert_true "[ ! -e \"$WORKDIR/o-$name\" ]" "$name: ...and writes nothing"
 }
 
 test_bad_mode_rows_refused() {
-    local t
+    local t claude="core/docs/claude.md.tmpl"
     t="$(command printf '\t')"
-    refused unknown-mode "x.md${t}core${t}always${t}core/docs/claude.md.tmpl${t}sometimes"
-    refused mixed-modes "README.md${t}core${t}always${t}core/docs/claude.md.tmpl"
-    refused link-twice "AGENTS.md${t}core${t}always${t}README.md${t}link"
-    refused link-dotdot "X.md${t}core${t}always${t}../CLAUDE.md${t}link"
-    refused link-absolute "X.md${t}core${t}always${t}/etc/passwd${t}link"
-    refused link-unrendered "X.md${t}core${t}always${t}nope.md${t}link"
-    refused link-to-link "X.md${t}core${t}always${t}AGENTS.md${t}link"
-    refused six-columns "x.md${t}core${t}always${t}core/docs/claude.md.tmpl${t}once${t}extra"
+    refused unknown-mode "unknown mode 'sometimes'" "x.md${t}core${t}always${t}$claude${t}sometimes"
+    refused mixed-once-tracked "README.md mixes modes (once vs -)" "README.md${t}core${t}always${t}$claude"
+    refused mixed-tracked-once "justfile mixes modes (- vs once)" "justfile${t}core${t}always${t}$claude${t}once"
+    refused link-twice "link target AGENTS.md has more than one row" "AGENTS.md${t}core${t}always${t}README.md${t}link"
+    refused link-dotdot "link text must be relative without '..'" "X.md${t}core${t}always${t}../CLAUDE.md${t}link"
+    refused link-absolute "link text must be relative without '..'" "X.md${t}core${t}always${t}/etc/passwd${t}link"
+    refused link-unrendered "link X.md -> nope.md: target is not a file rendered" "X.md${t}core${t}always${t}nope.md${t}link"
+    refused link-to-link "link X.md -> AGENTS.md: target is not a file rendered" "X.md${t}core${t}always${t}AGENTS.md${t}link"
+    # Link text is relative to the link's own directory: docs/X.md -> CLAUDE.md
+    # names docs/CLAUDE.md, which this render does not write.
+    refused link-subdir-unresolved "link docs/X.md -> CLAUDE.md: target is not a file rendered" \
+        "docs/X.md${t}core${t}always${t}CLAUDE.md${t}link"
+    refused six-columns "expected 4 or 5 tab-separated columns" "x.md${t}core${t}always${t}$claude${t}once${t}extra"
+}
+
+test_link_in_subdirectory() {
+    local t manifest out="$WORKDIR/o-subdir"
+    t="$(command printf '\t')"
+    manifest="$(with_rows subdir "docs/index.md${t}core${t}always${t}core/docs/claude.md.tmpl${t}once" \
+        "docs/latest.md${t}core${t}always${t}index.md${t}link")"
+    RENDER_MANIFEST="$manifest" "$RENDER" --ci github --out "$out" >/dev/null
+    assert_equals "index.md" "$(command readlink "$out/docs/latest.md")" "A link in a subdirectory keeps its relative text"
+    assert_true "[ -f \"$out/docs/latest.md\" ]" "...and resolves to the file beside it"
 }
 
 test_manifest_declares_docs_minimum() {
@@ -140,7 +167,8 @@ run_test test_once_recreated_when_absent "A missing once target is re-created"
 run_test test_once_does_not_block "An existing once/link target never blocks a render"
 run_test test_link_is_symlink "A link target is a symlink with the manifest's text"
 run_test test_readme_commands_exist "README stub commands exist in every render"
-run_test test_bad_mode_rows_refused "Malformed mode rows are refused without writing"
+run_test test_bad_mode_rows_refused "Malformed mode rows are refused by their own check, without writing"
+run_test test_link_in_subdirectory "A link's text is relative to its own directory"
 run_test test_manifest_declares_docs_minimum "The manifest scaffolds the docs minimum"
 
 generate_report
