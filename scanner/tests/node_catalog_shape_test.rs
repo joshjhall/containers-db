@@ -303,13 +303,21 @@ fn without_tested(mut doc: Value) -> Value {
 /// Issue #484's byte-identical criterion: re-rendering an existing release
 /// reproduces the committed file. 22.23.4 is the named example; 26.12.1 is
 /// the newest line (libatomic and the alpine 3.24 cells).
+///
+/// The template is NOT pinned to one file: `template_for` takes the newest
+/// file on the same line, so each new patch release (22.23.5, ...) becomes
+/// the template for its older siblings. What must hold is that the template
+/// comes from the same `major.minor` line and the re-render is byte-identical.
 #[test]
 fn rescanning_a_cataloged_release_reproduces_its_file() {
     let index = ToolIndex::from_path(&node_dir().join("index.json")).unwrap();
     let available = index.available_versions();
-    for (version, expected_template) in [("22.23.4", "22.23.3"), ("26.12.1", "26.12.0")] {
+    for (version, line) in [("22.23.4", "22.23."), ("26.12.1", "26.12.")] {
         let (from, rendered) = rerender(version, &available);
-        assert_eq!(from, expected_template, "{version}: template");
+        assert!(
+            from.starts_with(line) && from != version,
+            "{version}: template {from} is not another {line}x release"
+        );
         let committed = read_json(&node_dir().join("versions").join(format!("{version}.json")));
         // A re-render must start with no evidence even when both the
         // template and the committed file carry ingested rows.
