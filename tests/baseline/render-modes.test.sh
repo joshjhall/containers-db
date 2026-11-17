@@ -5,6 +5,8 @@
 # symlink (`link`). This pins what render.sh does with each:
 #   - a `once` target is written when absent and never overwritten, even with
 #     --force, and an existing one never blocks a render;
+#   - a symlink at or above a target the render would write (tracked, or an
+#     absent create-only one) is refused even with --force (#627);
 #   - a `link` target is a real symlink with the manifest's link text;
 #   - the README stub's "Lint and tests" commands exist in the same render;
 #   - a malformed mode row is refused before anything is written.
@@ -80,6 +82,93 @@ test_once_does_not_block() {
     assert_equals "2" "$rc" "A dangling symlink at a tracked target refuses a render without --force"
     assert_contains "$err" "refusing to overwrite" "...by the overwrite check"
     assert_true "[ ! -e \"$tracked/nowhere.just\" ]" "...and nothing is written through it"
+}
+
+# refused_through <case> <out> <expected-error> — a --force render into <out>
+# must exit 2 with <expected-error> and create no other target (all-or-nothing).
+refused_through() {
+    local name="$1" out="$2" want="$3" rc=0 err
+    err="$("$RENDER" --slices shell,python --ci github --out "$out" --force 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "$name: --force render exits 2"
+    assert_contains "$err" "$want" "$name: ...refused by the symlink check"
+    assert_true "[ ! -e \"$out/CLAUDE.md\" ] && [ ! -e \"$out/.github\" ]" "$name: ...and writes no other target"
+}
+
+test_force_refuses_tracked_symlink() {
+    # #627: --force used to truncate and append through a symlink at a
+    # tracked target, writing wherever it pointed (outside --out).
+    local out="$WORKDIR/thru-real" dest="$WORKDIR/dest-real.just" err rc
+    command mkdir -p "$out"
+    command printf 'theirs\n' >"$dest"
+    command ln -s "$dest" "$out/justfile"
+    refused_through resolving "$out" "refusing to write through symlink $out/justfile"
+    assert_equals "theirs" "$(command cat "$dest")" "resolving: ...the link's destination is untouched"
+    assert_true "[ -L \"$out/justfile\" ]" "resolving: ...and the link is kept"
+
+    out="$WORKDIR/thru-dangle" dest="$WORKDIR/dest-dangle.just"
+    command mkdir -p "$out"
+    command ln -s "$dest" "$out/justfile"
+    refused_through dangling "$out" "refusing to write through symlink $out/justfile"
+    assert_true "[ ! -e \"$dest\" ]" "dangling: ...nothing is created at the link's destination"
+
+    # A symlinked directory above a tracked target redirects mkdir -p and the
+    # write just the same.
+    out="$WORKDIR/thru-parent" dest="$WORKDIR/elsewhere-dir"
+    command mkdir -p "$out" "$dest"
+    command ln -s "$dest" "$out/bin"
+    refused_through parent "$out" "refusing to write through symlink $out/bin"
+    assert_equals "" "$(command ls -A "$dest")" "parent: ...nothing is written into the linked directory"
+
+    # The walk must reach a deeper segment too: .github is real, workflows is
+    # the link above the tracked .github/workflows/ci.yml.
+    out="$WORKDIR/thru-nested" dest="$WORKDIR/elsewhere-wf"
+    command mkdir -p "$out/.github" "$dest"
+    command ln -s "$dest" "$out/.github/workflows"
+    err="$("$RENDER" --slices shell,python --ci github --out "$out" --force 2>&1 >/dev/null)" && rc=0 || rc=$?
+    assert_equals "2" "$rc" "nested: --force render exits 2"
+    assert_contains "$err" "refusing to write through symlink $out/.github/workflows" "nested: ...refused at the second segment"
+    assert_equals "" "$(command ls -A "$dest")" "nested: ...nothing is written into the linked directory"
+    assert_true "[ ! -e \"$out/CLAUDE.md\" ]" "nested: ...and writes no other target"
+
+    # An absent create-only target (docs/.gitkeep is `once`) under a symlinked
+    # directory would be created through it just the same.
+    out="$WORKDIR/thru-once" dest="$WORKDIR/elsewhere-docs"
+    command mkdir -p "$out" "$dest"
+    command ln -s "$dest" "$out/docs"
+    refused_through once-parent "$out" "refusing to write through symlink $out/docs"
+    assert_equals "" "$(command ls -A "$dest")" "once-parent: ...nothing is created in the linked directory"
+    # ...but one that already exists through that link is skipped, never refused.
+    command printf 'mine\n' >"$dest/.gitkeep"
+    rc=0
+    "$RENDER" --slices shell,python --ci github --out "$out" --force >/dev/null || rc=$?
+    assert_equals "0" "$rc" "once-parent: an existing once target through a linked dir does not block"
+    assert_equals "mine" "$(command cat "$dest/.gitkeep")" "...and is left as it was"
+    assert_equals ".gitkeep" "$(command ls -A "$dest")" "...with nothing else written through the link"
+
+    # A dangling directory link is refused too: mkdir -p would create its
+    # destination outside --out.
+    out="$WORKDIR/thru-dangle-dir" dest="$WORKDIR/missing-dir"
+    command mkdir -p "$out"
+    command ln -s "$dest" "$out/bin"
+    refused_through dangling-parent "$out" "refusing to write through symlink $out/bin"
+    assert_true "[ ! -e \"$dest\" ]" "dangling-parent: ...and its destination is not created"
+
+    # Without --force the overwrite check cannot catch a linked DIRECTORY ($out/bin/x
+    # does not exist behind it), so the walk must run in that mode too.
+    out="$WORKDIR/thru-noforce" dest="$WORKDIR/elsewhere-noforce"
+    command mkdir -p "$out" "$dest"
+    command ln -s "$dest" "$out/bin"
+    rc=0
+    err="$("$RENDER" --slices shell,python --ci github --out "$out" 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "no-force: a symlinked parent dir refuses a plain render"
+    assert_contains "$err" "refusing to write through symlink $out/bin" "no-force: ...by the symlink walk, not the overwrite check"
+    assert_equals "" "$(command ls -A "$dest")" "no-force: ...and nothing is written into the linked directory"
+
+    # --out itself being a link is the user's choice of destination.
+    command mkdir -p "$WORKDIR/real-out"
+    command ln -s "$WORKDIR/real-out" "$WORKDIR/out-link"
+    "$RENDER" --ci github --out "$WORKDIR/out-link" --force >/dev/null
+    assert_true "[ -f \"$WORKDIR/real-out/justfile\" ]" "A symlinked --out is rendered into"
 }
 
 test_link_is_symlink() {
@@ -192,6 +281,24 @@ test_link_in_subdirectory() {
     assert_true "[ -f \"$out/docs/latest.md\" ]" "...and resolves to the file beside it"
 }
 
+test_absent_link_under_symlinked_dir() {
+    # The shipped manifest's only link (AGENTS.md) is top-level, so a nested
+    # one comes from a fixture. sub/CLAUDE.md already exists through the
+    # linked sub/ (skipped, as an existing once target), which leaves the
+    # absent link sub/AGENTS.md as the only write the walk can refuse.
+    local t manifest out="$WORKDIR/o-sublink" dest="$WORKDIR/elsewhere-sub" rc=0 err
+    t="$(command printf '\t')"
+    manifest="$(with_rows sublink "sub/CLAUDE.md${t}core${t}always${t}core/docs/claude.md.tmpl${t}once" \
+        "sub/AGENTS.md${t}core${t}always${t}CLAUDE.md${t}link")"
+    command mkdir -p "$out" "$dest"
+    command printf 'mine\n' >"$dest/CLAUDE.md"
+    command ln -s "$dest" "$out/sub"
+    err="$(RENDER_MANIFEST="$manifest" "$RENDER" --ci github --out "$out" --force 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "An absent link target under a symlinked dir refuses the render"
+    assert_contains "$err" "refusing to write through symlink $out/sub" "...by the symlink walk"
+    assert_equals "CLAUDE.md" "$(command ls -A "$dest")" "...and no link is created through it"
+}
+
 test_manifest_declares_docs_minimum() {
     # core.md § 5: README, CLAUDE.md, AGENTS.md as a link to it — all create-only.
     assert_equals "core always CLAUDE.md link" \
@@ -204,10 +311,12 @@ test_manifest_declares_docs_minimum() {
 run_test test_once_survives_force "A once target survives --force"
 run_test test_once_recreated_when_absent "A missing once target is re-created"
 run_test test_once_does_not_block "An existing once/link target never blocks a render"
+run_test test_force_refuses_tracked_symlink "--force never writes through a symlink at or above a target it writes"
 run_test test_link_is_symlink "A link target is a symlink with the manifest's text"
 run_test test_readme_commands_exist "README stub commands exist in every render"
 run_test test_bad_mode_rows_refused "Malformed mode rows are refused by their own check, without writing"
 run_test test_link_in_subdirectory "A link's text is relative to its own directory"
+run_test test_absent_link_under_symlinked_dir "An absent link target under a symlinked dir is refused"
 run_test test_manifest_declares_docs_minimum "The manifest scaffolds the docs minimum"
 
 generate_report

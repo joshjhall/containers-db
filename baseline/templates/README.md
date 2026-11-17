@@ -58,6 +58,17 @@ defines; any other `when` or `mode` is an error, as is a missing
 the reference implementation: it validates every row before writing anything,
 and refuses to overwrite an existing target without `--force`.
 
+A renderer never writes through a symlink. If a target it is about to write
+(every tracked target, and a `once` or `link` target that does not exist yet),
+or any directory between `--out` and it, is a symlink (resolving or dangling),
+the render is refused (exit 2, nothing written), **even with `--force`**. It
+is not replaced, because the link is the user's. `--out` itself may be a
+symlink. A `once` or `link` target that already exists, as a symlink or
+through one, is skipped like any existing create-only target and never
+refuses a render. The check runs before anything is written, so it assumes
+nothing else changes `--out` during the render: a symlink created after it is
+still followed.
+
 ## How composition works
 
 A file several slices contribute to — `lefthook.yml`, `justfile`,
