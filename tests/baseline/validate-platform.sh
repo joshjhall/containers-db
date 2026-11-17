@@ -55,12 +55,18 @@ test_spec_files_parse() {
 
 test_github_requires_the_ci_gate_job() {
     have_yq || return 0
-    local jobs gate required
-    # The gate is the job every other job feeds: it `needs` all of them.
-    jobs="$(yq '.jobs | keys | length' "$GITHUB_CI")"
-    gate="$(yq '.jobs | to_entries | .[] | select((.value.needs // []) | length == '"$((jobs - 1))"') | .key' "$GITHUB_CI")"
+    local gate required
+    # The gate is the job whose `needs` is exactly every other job, compared as
+    # a set. `needs` may be a list, a single string (`needs: lint`), or absent,
+    # so normalise it to a list first: a string's yq `length` is its character
+    # count, which a count-based check would silently mistake for a job count.
+    # shellcheck disable=SC2016 # $all is a yq variable, not a shell one
+    gate="$(yq '(.jobs | keys) as $all | .jobs | to_entries | .[]
+        | select((.value.needs | with(select(tag == "!!null"); . = []) | with(select(tag == "!!str"); . = [.])
+            | sort | join(",")) == (($all - [.key]) | sort | join(",")))
+        | .key' "$GITHUB_CI")"
     required="$(yq '.ruleset.rules.required_status_checks.required_status_checks[].context' "$PLATFORM_DIR/github.yml")"
-    assert_equals "merge-gate" "$gate" "The GitHub CI template's gate job (needs every other job) is merge-gate"
+    assert_equals "merge-gate" "$gate" "The GitHub CI template's gate job (needs exactly every other job) is merge-gate"
     assert_equals "$gate" "$required" "github.yml requires exactly the CI template's gate job, nothing else"
     assert_equals "always()" "$(yq ".jobs.\"$gate\".if" "$GITHUB_CI")" \
         "The gate job runs even when a stage fails (a skipped required check counts as passed)"

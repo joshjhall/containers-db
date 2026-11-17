@@ -86,7 +86,17 @@ test_pristine_passes() {
 test_github_mutants() {
     command -v yq >/dev/null 2>&1 || { skip_test "yq not installed"; return 0; }
     mutant rename-gate ci.yml 's/^  merge-gate:/  gate:/' \
-        "The GitHub CI template's gate job (needs every other job) is merge-gate"
+        "The GitHub CI template's gate job (needs exactly every other job) is merge-gate"
+    # A new job the gate does not wait on: a count-based check would instead
+    # pick `test`, whose string-form `needs: lint` has a yq length of 4.
+    mutant job-outside-gate ci.yml 's/^  merge-gate:/  docs:\n    needs: lint\n    runs-on: ubuntu-24.04\n    steps:\n      - run: "true"\n  merge-gate:/' \
+        "The GitHub CI template's gate job (needs exactly every other job) is merge-gate"
+    # Right count, wrong jobs: a count-based check accepts this gate even
+    # though `security` can fail without blocking the merge.
+    mutant gate-wrong-set ci.yml '/^  merge-gate:/,/^    needs:/ s/needs: \[lint, test, security\]/needs: [lint, test, test]/' \
+        "The GitHub CI template's gate job (needs exactly every other job) is merge-gate"
+    mutant gate-misses-job ci.yml '/^  merge-gate:/,/^    needs:/ s/needs: \[lint, test, security\]/needs: [lint, test]/' \
+        "The GitHub CI template's gate job (needs exactly every other job) is merge-gate"
     mutant wrong-check platform/github.yml 's/context: merge-gate/context: lint/' \
         "github.yml requires exactly the CI template's gate job, nothing else"
     mutant gate-skippable ci.yml '/^  merge-gate:/,/^    if:/ s/if: always()/if: success()/' \
