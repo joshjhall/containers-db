@@ -152,6 +152,10 @@ test_bad_mode_rows_refused() {
     # names docs/CLAUDE.md, which this render does not write.
     refused link-subdir-unresolved "link docs/X.md -> CLAUDE.md: target is not a file rendered" \
         "docs/X.md${t}core${t}always${t}CLAUDE.md${t}link"
+    # The target exists in the manifest but only for a CI platform this render
+    # did not select: the link is validated against the selection, not the file.
+    refused link-unselected "link X.md -> .gitlab-ci.yml: target is not a file rendered" \
+        "X.md${t}core${t}always${t}.gitlab-ci.yml${t}link"
     refused six-columns "expected 4 or 5 tab-separated columns" "x.md${t}core${t}always${t}$claude${t}once${t}extra"
 }
 
