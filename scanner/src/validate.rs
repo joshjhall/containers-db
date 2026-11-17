@@ -60,6 +60,7 @@ pub(crate) const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 /// for them (#416). Defense in depth only: a same-user child can still
 /// read its parent's environment from `/proc`. In CI, ajv runs in the
 /// scan workflow's `stage` job, which has no write token at all.
+#[expect(clippy::disallowed_methods, reason = "spawns npx, not git")]
 pub(crate) fn npx() -> Command {
     let mut cmd = Command::new("npx");
     for var in TOKEN_VARS {

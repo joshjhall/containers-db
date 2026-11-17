@@ -620,6 +620,10 @@ pub(super) mod tests {
 
     #[test]
     #[ignore = "run by a_plain_git_reads_the_hostile_global_config"]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the control must read the host config that git_command() hides"
+    )]
     fn hostile_home_fails_a_plain_commit() {
         if !crate::tests::in_child() {
             return;

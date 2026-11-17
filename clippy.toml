@@ -1,0 +1,10 @@
+# A bare `Command::new` spawn of `git` reads the host's global and system
+# git config, whose `commit.gpgsign` or hooks would reach the scanner's
+# temp-repo fixtures (#588). Banning the constructor outright catches a
+# program name spelled through a const or variable too (#599). Spawn git
+# through `crate::git_command()`; any other program needs an explicit
+# `#[expect(clippy::disallowed_methods, reason = "...")]`, and the set of
+# those is pinned by `spawn_exemptions_are_pinned` in scanner/src/lib.rs.
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "spawn git through crate::git_command() (#588); another program needs an #[expect] pinned in spawn_exemptions_are_pinned" },
+]

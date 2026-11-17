@@ -43,6 +43,10 @@ use serde_json::Value;
 /// (`github::testing::assert_no_inherited_git_env`) still holds.
 /// `GIT_CONFIG_GLOBAL` needs git 2.32+; an older git ignores it and the
 /// hostile-config test in `pr::tests` fails rather than passing silently.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the one sanctioned git spawn; everything else goes through here (#588)"
+)]
 pub(crate) fn git_command() -> std::process::Command {
     #[allow(unused_mut)]
     let mut cmd = std::process::Command::new("git");
@@ -460,43 +464,71 @@ mod tests {
     use chrono::TimeZone;
     use serde_json::json;
 
-    /// No source file spawns `git` by passing the `"git"` literal to
-    /// `Command::new`, except the builder itself and the hostile-config
-    /// control, which must read the host config, so a fixture cannot
-    /// quietly regain the host's global config (#588). The match is
-    /// textual: a program name passed through a variable or const is not
-    /// caught.
+    /// Every exemption from the `disallowed-methods` ban on
+    /// `Command::new` (workspace `clippy.toml`) is one of the four known
+    /// spawns, each anchored to its function. Clippy is the enforcement:
+    /// CI's `cargo clippy --workspace --all-targets -- -D warnings` fails
+    /// on a git spawn that bypasses [`crate::git_command`] however the
+    /// program name is spelled, in `src/` and `tests/` alike (#588, #599).
+    /// This test makes widening that escape hatch a visible change: a new
+    /// `allow`/`expect`, a crate-wide `#![...]`, or the control's
+    /// exemption moving to another function fails here even under a
+    /// plain `cargo test`.
     #[test]
-    fn git_is_only_spawned_through_git_command() {
-        let needle = ["Command::new(", "\"git\")"].concat();
-        let allowed = [("lib.rs", 1), ("pr/mod.rs", 1)];
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut stack = vec![root.clone()];
+    fn spawn_exemptions_are_pinned() {
+        let needle = ["clippy::", "disallowed_methods"].concat();
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut stack = vec![manifest.join("src"), manifest.join("tests")];
         let mut found = Vec::new();
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     stack.push(path);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    let n = std::fs::read_to_string(&path)
-                        .unwrap()
-                        .matches(&needle)
-                        .count();
-                    if n > 0 {
-                        let rel = path
-                            .strip_prefix(&root)
-                            .unwrap()
-                            .to_string_lossy()
-                            .into_owned();
-                        found.push((rel, n));
-                    }
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                let rel = path
+                    .strip_prefix(manifest)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                for (at, _) in text.match_indices(&needle) {
+                    // An inner attribute covers a whole module or crate.
+                    let attr = text[..at].rfind('#').map_or("", |h| &text[h..at]);
+                    let item = if attr.starts_with("#!") {
+                        "<inner attribute>".to_string()
+                    } else {
+                        text[at..]
+                            .split_once("fn ")
+                            .map_or("<no fn>", |(_, rest)| {
+                                rest.split(|c: char| !c.is_alphanumeric() && c != '_')
+                                    .next()
+                                    .unwrap()
+                            })
+                            .to_string()
+                    };
+                    found.push((rel.clone(), item));
                 }
             }
         }
         found.sort();
-        let want: Vec<(String, usize)> = allowed.iter().map(|(f, n)| (f.to_string(), *n)).collect();
-        assert_eq!(found, want, "spawn git through crate::git_command()");
+        let want: Vec<(String, String)> = [
+            ("src/lib.rs", "git_command"),
+            ("src/lib.rs", "run_with_env"),
+            ("src/pr/mod.rs", "hostile_home_fails_a_plain_commit"),
+            ("src/validate.rs", "npx"),
+        ]
+        .iter()
+        .map(|(f, n)| (f.to_string(), n.to_string()))
+        .collect();
+        assert_eq!(
+            found, want,
+            "spawn git through crate::git_command(); a new Command::new exemption must be pinned here"
+        );
     }
 
     fn git(p: &Path, args: &[&str]) -> String {
@@ -871,6 +903,10 @@ mod tests {
     }
 
     /// [`run_with_path`], plus the extra `envs`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "re-executes the test binary, not git"
+    )]
     pub(crate) fn run_with_env(
         name: &str,
         path: &std::path::Path,
