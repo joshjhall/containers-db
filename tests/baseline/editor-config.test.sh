@@ -40,6 +40,19 @@ editor_targets() {
     command printf '%s\n' "${found# }"
 }
 
+# mutate <sed-script> <file> — edit a SCRATCH copy in place, portably (BSD sed
+# reads `-i`'s next argument as a backup suffix), and fail loudly when the
+# script changed nothing, so a mutation test cannot pass on an unapplied edit.
+mutate() {
+    command sed -e "$1" "$2" >"$2.new"
+    if command cmp -s "$2" "$2.new"; then
+        command printf 'mutate: %s left %s unchanged\n' "$1" "$2" >&2
+        command rm -f "$2.new"
+        return 1
+    fi
+    command mv "$2.new" "$2"
+}
+
 # editor_parity <dir> — prints one line per mismatch between the rendered
 # justfile's formatter flags and the rendered editor files; empty means they agree.
 editor_parity() {
@@ -150,9 +163,8 @@ test_mutated_flags_fail_parity() {
     # Scratch copy, never the tracked template: shfmt now indents 2.
     local copy="$WORKDIR/tmpl-copy" out="$WORKDIR/mutated" got
     command cp -R "$TEMPLATES" "$copy"
-    command sed -i 's/^shfmt_flags := "-i 4 -ci"$/shfmt_flags := "-i 2 -ci"/' "$copy/shell/justfile-recipes.just"
-    assert_contains "$(command cat "$copy/shell/justfile-recipes.just")" 'shfmt_flags := "-i 2 -ci"' \
-        "The mutation applied to the scratch copy"
+    assert_true "mutate 's/^shfmt_flags := \"-i 4 -ci\"\$/shfmt_flags := \"-i 2 -ci\"/' \"$copy/shell/justfile-recipes.just\"" \
+        "The shfmt_flags mutation applied to the scratch copy"
     RENDER_MANIFEST="$copy/manifest.tsv" "$copy/render.sh" --slices shell --out "$out" >/dev/null
     got="$(editor_parity "$out")"
     assert_contains "$got" "vscode shellformat.flag" "A drifted shfmt_flags fails the vscode check"
@@ -165,16 +177,36 @@ test_mutated_severity_and_ruff_fail_parity() {
     # drifted, not only pass on the real templates. Scratch copy again.
     local copy="$WORKDIR/tmpl-copy2" out="$WORKDIR/mutated2" got
     command cp -R "$TEMPLATES" "$copy"
-    command sed -i 's/shellcheck --severity=warning/shellcheck --severity=error/' "$copy/shell/justfile-recipes.just"
-    command sed -i 's/"charliermarsh.ruff"/"ms-python.black-formatter"/' "$copy/python/vscode-settings.json.tmpl"
-    command sed -i 's/"name": "ruff"/"name": "pylsp"/' "$copy/python/zed-settings.json.tmpl"
-    assert_contains "$(command cat "$copy/shell/justfile-recipes.just")" "--severity=error" \
+    assert_true "mutate 's/shellcheck --severity=warning/shellcheck --severity=error/' \"$copy/shell/justfile-recipes.just\"" \
         "The severity mutation applied to the scratch copy"
+    assert_true "mutate 's/\"charliermarsh.ruff\"/\"ms-python.black-formatter\"/' \"$copy/python/vscode-settings.json.tmpl\"" \
+        "The vscode formatter mutation applied to the scratch copy"
+    assert_true "mutate 's/\"name\": \"ruff\"/\"name\": \"pylsp\"/' \"$copy/python/zed-settings.json.tmpl\"" \
+        "The zed formatter mutation applied to the scratch copy"
     RENDER_MANIFEST="$copy/manifest.tsv" "$copy/render.sh" --slices shell,python --out "$out" >/dev/null
     got="$(editor_parity "$out")"
     assert_contains "$got" "vscode shellcheck.customArgs" "A drifted shellcheck severity fails the vscode check"
     assert_contains "$got" "vscode [python] formatter is not ruff" "A non-ruff vscode Python formatter fails"
     assert_contains "$got" "zed Python formatter is not the ruff language server" "A non-ruff zed Python formatter fails"
+}
+
+test_mutated_guards_fail_parity() {
+    # The rule-restatement guard and the shell-without-slice branch, each
+    # driven to fire on a scratch copy.
+    local copy="$WORKDIR/tmpl-copy3" out got t
+    t="$(command printf '\t')"
+    command cp -R "$TEMPLATES" "$copy"
+    assert_true "mutate 's/^  \"editor.formatOnSave\": true,\$/& \"ruff.lineLength\": 100,/' \"$copy/core/editor/vscode-settings-head.json.tmpl\"" \
+        "The rule-restatement mutation applied to the scratch copy"
+    # Re-own the shell vscode row as core, so it renders without the shell slice.
+    assert_true "mutate 's/^\\.vscode\\/settings\\.json${t}shell${t}/.vscode\\/settings.json${t}core${t}/' \"$copy/manifest.tsv\"" \
+        "The slice-ownership mutation applied to the scratch manifest"
+    out="$WORKDIR/mutated3"
+    RENDER_MANIFEST="$copy/manifest.tsv" "$copy/render.sh" --ide vscode --out "$out" >/dev/null
+    got="$(editor_parity "$out")"
+    assert_contains "$got" "restates a linter rule: \"ruff.lineLength\"" "A restated linter rule fails the guard"
+    assert_contains "$got" "shell editor settings rendered without the shell slice" \
+        "Shell editor settings without the shell slice fail the guard"
 }
 
 test_ide_argument_edges() {
@@ -197,6 +229,7 @@ run_test test_editor_json_parses "Composed editor JSON parses for every slice x 
 run_test test_formatter_flags_match_hooks "Editor formatter flags equal the hooks' (justfile) flags"
 run_test test_mutated_flags_fail_parity "A drifted shfmt_flags fails the parity check"
 run_test test_mutated_severity_and_ruff_fail_parity "A drifted severity or non-ruff formatter fails the parity check"
+run_test test_mutated_guards_fail_parity "A restated rule or slice-less shell settings fail the parity check"
 run_test test_ide_argument_edges "--ide edge inputs: bare flag, duplicates, none+unknown"
 
 generate_report
