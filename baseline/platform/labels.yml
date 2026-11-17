@@ -1,0 +1,32 @@
+# Repo-baseline label vocabulary. `stibbons setup platform` creates these on
+# either host; the issue workflow selects and parks work by them.
+#   type/*      what kind of change
+#   severity/*  how much it matters (selection order: critical first)
+#   effort/*    how big it is (selection order: trivial first)
+#   status/*    where it is; an issue with any status/* is not picked up
+# color is 6 hex digits, no leading `#`.
+version: 1
+
+labels:
+  - { name: type/bug, color: "D73A4A", description: Something broken that worked before }
+  - { name: type/feature, color: "1D76DB", description: New feature or enhancement }
+  - { name: type/docs, color: "0075CA", description: Documentation-only change }
+  - { name: type/test, color: "0E8A16", description: Test addition or fix }
+  - { name: type/refactor, color: "5319E7", description: Restructuring without behavior change }
+  - { name: type/chore, color: "FEF2C0", description: "Dependency updates, CI, maintenance" }
+
+  - { name: severity/critical, color: "B60205", description: "Actively causing harm, data loss, or downtime" }
+  - { name: severity/high, color: "D93F0B", description: Will cause problems under normal use }
+  - { name: severity/medium, color: "FBCA04", description: Increases maintenance burden or tech debt }
+  - { name: severity/low, color: "0E8A16", description: "Best-practice improvement, no immediate impact" }
+
+  - { name: effort/trivial, color: "C5DEF5", description: "1 file, under 30 minutes" }
+  - { name: effort/small, color: "BFD4F2", description: "2-3 files in the same directory, hours of work" }
+  - { name: effort/medium, color: "7B61FF", description: "4-8 files or 2-3 directories, a day of work" }
+  - { name: effort/large, color: "5319E7", description: "9+ files or 4+ directories, multi-day effort" }
+
+  - { name: status/in-progress, color: "FBCA04", description: Currently being worked on }
+  - { name: status/pr-pending, color: "0E8A16", description: A PR or MR is open; awaiting review and merge }
+  - { name: status/commit-pending, color: "C2E0C6", description: Committed locally; not yet pushed }
+  - { name: status/on-hold, color: "D4C5F9", description: Deliberately deferred; not ready to work on }
+  - { name: status/blocked, color: "E99695", description: Waiting on an unresolved dependency }

@@ -1,0 +1,7 @@
+# Code owners: each pattern names who must review a change to matching paths.
+# GitHub reads this file from the repo root, .github/ or docs/; GitLab from the
+# root, .gitlab/ or docs/. Later rules win over earlier ones.
+#
+# per-repo: replace the owner below with a user or team handle, then add a
+# rule per area that needs its own reviewers.
+* @per-repo-owner

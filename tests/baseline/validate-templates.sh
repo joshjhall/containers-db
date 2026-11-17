@@ -321,6 +321,32 @@ test_render_refuses_bad_manifest() {
     assert_true "[ ! -e \"$WORKDIR/bm4\" ]" "...and writes nothing"
 }
 
+test_render_platform_files() {
+    local out="$WORKDIR/plat"
+    render_to "$out/py-gh" --slices python --ci github >/dev/null
+    render_to "$out/core-gh" --ci github >/dev/null
+    render_to "$out/sh-gl" --slices shell --ci gitlab >/dev/null
+    if command -v yq >/dev/null 2>&1; then
+        # Dependabot entries are composed fragments: a slice's entry must land
+        # INSIDE `updates`, ahead of core's github-actions entry.
+        assert_equals "$(command printf '%s\n' pip github-actions)" \
+            "$(yq '.updates[]."package-ecosystem"' "$out/py-gh/.github/dependabot.yml")" \
+            "A python+github render's Dependabot covers pip, then github-actions"
+        assert_equals "/tests" "$(yq '.updates[] | select(."package-ecosystem" == "pip") | .directory' "$out/py-gh/.github/dependabot.yml")" \
+            "...with pip pointed at tests/requirements.txt"
+        assert_equals "github-actions" "$(yq '.updates[]."package-ecosystem"' "$out/core-gh/.github/dependabot.yml")" \
+            "A core-only github render's Dependabot covers github-actions alone"
+    else
+        skip_test "yq not installed"
+    fi
+    assert_true "[ -f \"$out/py-gh/.github/ISSUE_TEMPLATE/bug.md\" ] && [ -f \"$out/py-gh/.github/pull_request_template.md\" ] && [ ! -e \"$out/py-gh/.gitlab\" ]" \
+        "A github render writes the GitHub issue/PR templates and no .gitlab/"
+    assert_true "[ -f \"$out/sh-gl/.gitlab/issue_templates/Bug.md\" ] && [ -f \"$out/sh-gl/.gitlab/merge_request_templates/Default.md\" ] && [ ! -e \"$out/sh-gl/.github\" ]" \
+        "A gitlab render writes the GitLab issue/MR templates and no .github/ (no Dependabot)"
+    assert_true "[ -f \"$out/core-gh/CODEOWNERS\" ] && [ -f \"$out/sh-gl/CODEOWNERS\" ]" \
+        "CODEOWNERS is written for both hosts"
+}
+
 # --- Validity of the rendered files --------------------------------------------
 
 test_rendered_files_parse() {
@@ -329,7 +355,7 @@ test_rendered_files_parse() {
         assert_true "bash -n \"$out/$f\"" "$f parses as bash"
     done
     if command -v yq >/dev/null 2>&1; then
-        for f in lefthook.yml .github/workflows/ci.yml .gitlab-ci.yml .conform.yaml; do
+        for f in lefthook.yml .github/workflows/ci.yml .gitlab-ci.yml .conform.yaml .github/dependabot.yml; do
             assert_true "yq '.' \"$out/$f\" >/dev/null 2>&1" "$f parses as YAML"
         done
         assert_equals "$(command printf '%s\n' check-merge-conflict large-file gitleaks dprint taplo rumdl \
@@ -854,6 +880,7 @@ run_test test_parity_hook_fragments "Slice hook fragments equal the slice docs' 
 run_test test_render_full_set "A full render writes every target"
 run_test test_render_core_only "A core-only render selects no slice rows"
 run_test test_render_shell_only "A shell-only gitlab render selects only its rows"
+run_test test_render_platform_files "#561: platform files follow the slice and ci selection"
 run_test test_render_deterministic "Rendering is deterministic"
 run_test test_render_refuses_bad_input "render.sh refuses bad flags and existing files"
 run_test test_render_refuses_bad_manifest "render.sh refuses a bad manifest without writing"

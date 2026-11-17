@@ -17,3 +17,12 @@ disable = [
 line_length = 120
 code_blocks = false
 tables = false
+
+# Issue, PR and MR templates are bodies pasted under the host's own title, so
+# they start at `##`, not with a level-1 heading. Patterns for the host you did
+# not render match nothing.
+[per-file-ignores]
+".github/ISSUE_TEMPLATE/*.md" = ["MD041"]
+".github/pull_request_template.md" = ["MD041"]
+".gitlab/issue_templates/*.md" = ["MD041"]
+".gitlab/merge_request_templates/*.md" = ["MD041"]

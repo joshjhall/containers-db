@@ -267,6 +267,24 @@ repo's own entry points; `templates/` renders a working set of all three. The
 checkable property is that **CI and the hooks call the same entry points**, and
 that the install step **fails** when a tool cannot be installed.
 
+### Platform settings
+
+The gate only works if the host enforces it. The required settings are not
+files in the repo, so they are specified as data in `platform/` and applied
+through the host API (`stibbons setup platform`):
+
+| Setting           | GitHub (`platform/github.yml`)                   | GitLab (`platform/gitlab.yml`)                        |
+| ----------------- | ------------------------------------------------ | ----------------------------------------------------- |
+| Required gate     | ruleset requires exactly `merge-gate`            | `only_allow_merge_if_pipeline_succeeds`, no skipped pipelines |
+| Default branch    | PR required; no force-push or deletion           | protected: no direct push, maintainers merge          |
+| Merge             | squash only; delete branch on merge              | squash on by default; remove source branch            |
+| Signed commits    | opt-in (`required_signatures`)                   | opt-in (`reject_unsigned_commits`)                    |
+
+`platform/labels.yml` holds the label vocabulary (`type/*`, `severity/*`,
+`effort/*`, `status/*`) for both hosts. The platform files a repo does carry
+are rendered from `templates/`: Dependabot on GitHub (`github-actions` plus each
+slice's ecosystem), `CODEOWNERS`, and issue and PR/MR templates.
+
 ---
 
 ## 4. Version-pinning policy
@@ -388,6 +406,8 @@ What an audit tests, per repo:
 - [ ] every optional tool has a `skip:` guard; toolchain and in-repo gates have none
 - [ ] all always-on tools (§ 2) are present at the listed stages
 - [ ] CI has lint → test → security, plus a single merge gate that runs `if: always()` and fails unless every stage succeeded
+- [ ] the default branch requires that gate (GitHub: `merge-gate`; GitLab: pipeline must succeed) and refuses force-push
+- [ ] on GitHub, Dependabot covers `github-actions` and each slice's package ecosystem
 - [ ] the secret scan covers the whole change range, falling back to full history (not `HEAD~1`) when there is no base
 - [ ] CI installs every tool and runs every check with no skip guard
 - [ ] no CI image uses `:latest` or a floating tag; every action is SHA-pinned with a version comment

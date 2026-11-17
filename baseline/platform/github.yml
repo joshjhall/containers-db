@@ -1,0 +1,39 @@
+# Repo-baseline GitHub settings spec (core § 3, Platform settings).
+# API-only settings: no file in the rendered repo carries them. `stibbons setup
+# platform` applies this spec through the GitHub API. Field names follow the
+# REST API (repos and rulesets endpoints) so a consumer maps them one to one.
+version: 1
+
+repository:
+  allow_squash_merge: true
+  allow_merge_commit: false
+  allow_rebase_merge: false
+  squash_merge_commit_title: PR_TITLE
+  squash_merge_commit_message: PR_BODY
+  delete_branch_on_merge: true
+
+ruleset:
+  name: default-branch
+  target: branch
+  enforcement: active
+  conditions:
+    ref_name:
+      include: ["~DEFAULT_BRANCH"]
+      exclude: []
+  rules:
+    pull_request:
+      required_approving_review_count: 0 # per-repo: raise once there are reviewers
+      dismiss_stale_reviews_on_push: true
+      require_code_owner_review: false
+      required_review_thread_resolution: true
+    # The CI template's single gate job (core § 3). Naming one check rather
+    # than every stage keeps protection from drifting as stages change.
+    required_status_checks:
+      strict_required_status_checks_policy: false
+      required_status_checks:
+        - context: merge-gate
+    non_fast_forward: true # no force-push
+    deletion: true # the default branch cannot be deleted
+  # Signed commits are opt-in: requiring them blocks every contributor who has
+  # not set up signing. Set to `required` to add the `required_signatures` rule.
+  required_signatures: optional
