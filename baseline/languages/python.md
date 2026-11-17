@@ -6,8 +6,8 @@ set of standalone `bin/*.py` scripts with hyphenated names — and notes the
 package variant under `## Test framework & runner`.
 
 The ruff values are librarian's configuration at the move into containers-db
-(#558); the test layout was
-validated on two script repos (ruff + pytest-via-uv, green in hooks and CI).
+(#558); the test layout was validated on two script repos (ruff +
+pytest-via-uv, green in hooks and CI).
 
 ## Tools & versions
 

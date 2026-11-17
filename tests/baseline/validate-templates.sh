@@ -193,7 +193,6 @@ test_parity_plain_files() {
     done
 }
 
-
 test_parity_hook_fragments() {
     local spec expect got
     for spec in "shell pre-commit shell/lefthook-pre-commit.yml" \

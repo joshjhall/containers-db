@@ -369,8 +369,8 @@ What an audit tests, per repo:
 ## 9. Status in librarian (as of this spec)
 
 This spec moved from librarian into containers-db (#558); librarian is now a
-consumer, and this section records it as one. Librarian is the reference these rules were drawn from, and it does **not** yet
-meet all of them. Recorded here so an audit run against it starts from a known
+consumer, and this section records it as one. Librarian is the reference these
+rules were drawn from, and it does **not** yet meet all of them. Recorded here so an audit run against it starts from a known
 answer rather than a false green:
 
 - **CI does not install or run** dprint, taplo, rumdl, gitleaks, shfmt,
