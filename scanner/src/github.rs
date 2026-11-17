@@ -996,6 +996,30 @@ mod tests {
     /// global git config says.
     const ORIGIN: &str = "https://example.invalid/a/b.git";
 
+    /// `repo_with_origin` ignores the host's global git config (#588,
+    /// #600): under the hostile `HOME` of `pr::tests::hostile_home`
+    /// (control: `pr::tests::a_plain_git_reads_the_hostile_global_config`)
+    /// its `init` succeeds and its `origin` is the one it added, not the
+    /// templated one.
+    #[test]
+    fn repo_with_origin_ignores_a_hostile_global_git_config() {
+        crate::pr::tests::run_under_hostile_home(
+            "github::tests::hostile_home_repo_with_origin_still_builds",
+        );
+    }
+
+    #[test]
+    #[ignore = "run by repo_with_origin_ignores_a_hostile_global_git_config"]
+    fn hostile_home_repo_with_origin_still_builds() {
+        if !crate::tests::in_child() {
+            return;
+        }
+        let dir = repo_with_origin(Some(ORIGIN));
+        assert_eq!(origin_url(dir.path()).unwrap(), ORIGIN);
+        let dir = repo_with_origin(None);
+        assert!(origin_url(dir.path()).is_err(), "no templated origin");
+    }
+
     #[test]
     fn origin_url_reads_the_origin_remote() {
         let dir = repo_with_origin(Some(ORIGIN));

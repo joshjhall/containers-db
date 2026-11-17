@@ -534,31 +534,51 @@ pub(super) mod tests {
     }
 
     /// A `HOME` whose global git config (both `~/.gitconfig` and
-    /// `$XDG_CONFIG_HOME/git/config`) fails every commit: signing through
-    /// a `gpg.program` that always exits 1, and a `pre-commit` hook that
-    /// does too. Returns `(home, xdg_config_home)`.
+    /// `$XDG_CONFIG_HOME/git/config`) breaks the fixtures four ways:
+    /// signing through a `gpg.program` that always exits 1; a `pre-commit`
+    /// hook that does too; a `reference-transaction` hook that aborts every
+    /// ref update (so `init` and `update-ref`, which commit-free fixtures
+    /// like `BareRemote` rely on); and an `init.templateDir` whose `config`
+    /// already defines `origin`, so `git remote add origin` fails.
+    /// Returns `(home, xdg_config_home)`.
     fn hostile_home(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
         let home = root.join("home");
         let xdg = home.join("xdg");
         let hooks = root.join("hooks");
+        let template = root.join("template");
         std::fs::create_dir_all(xdg.join("git")).unwrap();
         std::fs::create_dir_all(&hooks).unwrap();
-        let hook = hooks.join("pre-commit");
-        std::fs::write(&hook, "#!/bin/sh\necho hostile-pre-commit >&2\nexit 1\n").unwrap();
+        std::fs::create_dir_all(&template).unwrap();
         use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for name in ["pre-commit", "reference-transaction"] {
+            let hook = hooks.join(name);
+            std::fs::write(
+                &hook,
+                format!("#!/bin/sh\necho hostile-{name} >&2\nexit 1\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(
+            template.join("config"),
+            "[remote \"origin\"]\n\turl = hostile\n",
+        )
+        .unwrap();
         let config = format!(
-            "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n[core]\n\thooksPath = {}\n",
-            hooks.display()
+            "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n[core]\n\thooksPath = {}\n\
+             [init]\n\ttemplateDir = {}\n",
+            hooks.display(),
+            template.display()
         );
         std::fs::write(home.join(".gitconfig"), &config).unwrap();
         std::fs::write(xdg.join("git/config"), &config).unwrap();
         (home, xdg)
     }
 
-    /// Run the `#[ignore]`d test `name` in a child whose `HOME` holds a
-    /// global git config that fails every commit.
-    fn run_under_hostile_home(name: &str) {
+    /// Run the `#[ignore]`d test `name` in a child whose `HOME` holds the
+    /// [`hostile_home`] global git config. Shared with the `publish` and
+    /// `github` fixture tests.
+    pub(crate) fn run_under_hostile_home(name: &str) {
         let root = tempfile::tempdir().unwrap();
         let (home, xdg) = hostile_home(root.path());
         let path = std::path::PathBuf::from(std::env::var_os("PATH").unwrap());
@@ -590,10 +610,9 @@ pub(super) mod tests {
         assert_eq!(rev(dir.path(), &pr.head), pr.head_oid);
     }
 
-    /// The control for the test above: the same hostile `HOME` fails a
-    /// commit made by a plain `git` through EACH of its two mechanisms, so
-    /// that test cannot pass because the config, or either half of it, was
-    /// never read.
+    /// The control for the fixture tests: the same hostile `HOME` breaks a
+    /// plain `git` through EACH of its four mechanisms, so those tests
+    /// cannot pass because the config, or any part of it, was never read.
     #[test]
     fn a_plain_git_reads_the_hostile_global_config() {
         run_under_hostile_home("pr::tests::hostile_home_fails_a_plain_commit");
@@ -608,7 +627,7 @@ pub(super) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
         // No system config, so a failure can only come from the global one
-        // under test; `off` disables the other mechanism, so each commit
+        // under test; `off` disables the other mechanisms, so each step
         // below can fail for exactly one reason.
         let plain = |off: &[&str], args: &[&str]| {
             std::process::Command::new("git")
@@ -620,11 +639,38 @@ pub(super) mod tests {
                 .output()
                 .unwrap()
         };
-        assert!(plain(&[], &["init", "-q", "-b", "main"]).status.success());
+        let hooks_off = ["-c", "core.hooksPath=/dev/null"];
+        // `init` writes HEAD through the reference-transaction hook.
+        let out = plain(&[], &["init", "-q", "-b", "main"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("hostile-reference-transaction"),
+            "the hostile global config's reference-transaction hook was not applied: {out:?}"
+        );
+        std::fs::remove_dir_all(p.join(".git")).unwrap();
+        assert!(
+            plain(&hooks_off, &["init", "-q", "-b", "main"])
+                .status
+                .success()
+        );
         std::fs::write(p.join("a"), "a").unwrap();
         assert!(plain(&[], &["add", "a"]).status.success());
 
-        let hooks_off = ["-c", "core.hooksPath=/dev/null"];
+        // The template seeded `origin`; `remote add` writes config only, so
+        // no hook or signing is involved.
+        let out = plain(&[], &["config", "remote.origin.url"]);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "hostile",
+            "the hostile global config's init.templateDir was not applied: {out:?}"
+        );
+        let out = plain(&[], &["remote", "add", "origin", "x"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("remote origin already exists"),
+            "the templated origin did not block `remote add`: {out:?}"
+        );
+
         let out = plain(&hooks_off, &["commit", "-q", "-m", "init"]);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
