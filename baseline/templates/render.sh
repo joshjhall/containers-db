@@ -17,8 +17,8 @@
 # Refuses (exit 2) an unknown slice or CI platform, a manifest row with an
 # unknown `when` or `mode` or a missing source, an absolute or `..` target, a
 # target whose rows disagree on `mode`, a bad link, an existing tracked target
-# unless --force, and, even with --force, a symlink at or above a tracked
-# target inside --out. Nothing is written until every check passes. Prints
+# unless --force, and, even with --force, a symlink at or above (inside --out)
+# any target it would write. Nothing is written until every check passes. Prints
 # each target it wrote. bash-3.2 clean.
 set -euo pipefail
 
@@ -148,12 +148,14 @@ if [ "$force" -eq 0 ]; then
         if [ -e "$out/$t" ] || [ -L "$out/$t" ]; then die "refusing to overwrite $out/$t (pass --force)"; fi
     done
 fi
-# A tracked target is truncated and appended to, and both redirections (and
-# mkdir -p) follow symlinks. So a symlink at the target, or at any directory
-# between --out and it, would send the write wherever the link points, which
-# can be outside --out. Refuse it, even with --force. --out itself may be a link.
+# Writes (redirections, mkdir -p, ln -s) follow symlinks. So a symlink at a
+# target pass 2 will write, or at any directory between --out and it, would
+# send the write wherever the link points, which can be outside --out. Refuse
+# it, even with --force. That covers every tracked target and any absent
+# create-only one; an existing create-only target is skipped below, so it
+# never blocks a render. --out itself may be a link.
 for t in $targets; do
-    [ -z "$(mode_of "$t")" ] || continue
+    if [ -n "$(mode_of "$t")" ] && { [ -e "$out/$t" ] || [ -L "$out/$t" ]; }; then continue; fi
     p="" rest="$t"
     while [ -n "$rest" ]; do
         seg="${rest%%/*}"

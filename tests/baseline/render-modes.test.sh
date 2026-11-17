@@ -5,8 +5,8 @@
 # symlink (`link`). This pins what render.sh does with each:
 #   - a `once` target is written when absent and never overwritten, even with
 #     --force, and an existing one never blocks a render;
-#   - a symlink at or above a tracked target is refused even with --force,
-#     never written through (#627);
+#   - a symlink at or above a target the render would write (tracked, or an
+#     absent create-only one) is refused even with --force (#627);
 #   - a `link` target is a real symlink with the manifest's link text;
 #   - the README stub's "Lint and tests" commands exist in the same render;
 #   - a malformed mode row is refused before anything is written.
@@ -118,6 +118,18 @@ test_force_refuses_tracked_symlink() {
     command ln -s "$dest" "$out/bin"
     refused_through parent "$out" "refusing to write through symlink $out/bin"
     assert_equals "" "$(command ls -A "$dest")" "parent: ...nothing is written into the linked directory"
+
+    # An absent create-only target (docs/.gitkeep is `once`) under a symlinked
+    # directory would be created through it just the same.
+    out="$WORKDIR/thru-once" dest="$WORKDIR/elsewhere-docs"
+    command mkdir -p "$out" "$dest"
+    command ln -s "$dest" "$out/docs"
+    refused_through once-parent "$out" "refusing to write through symlink $out/docs"
+    assert_equals "" "$(command ls -A "$dest")" "once-parent: ...nothing is created in the linked directory"
+    # ...but one that already exists through that link is skipped, never refused.
+    command touch "$dest/.gitkeep"
+    "$RENDER" --slices shell,python --ci github --out "$out" --force >/dev/null
+    assert_true "[ -f \"$out/CLAUDE.md\" ]" "once-parent: an existing once target through a linked dir does not block"
 
     # --out itself being a link is the user's choice of destination.
     command mkdir -p "$WORKDIR/real-out"
@@ -248,7 +260,7 @@ test_manifest_declares_docs_minimum() {
 run_test test_once_survives_force "A once target survives --force"
 run_test test_once_recreated_when_absent "A missing once target is re-created"
 run_test test_once_does_not_block "An existing once/link target never blocks a render"
-run_test test_force_refuses_tracked_symlink "--force never writes through a symlink at or above a tracked target"
+run_test test_force_refuses_tracked_symlink "--force never writes through a symlink at or above a target it writes"
 run_test test_link_is_symlink "A link target is a symlink with the manifest's text"
 run_test test_readme_commands_exist "README stub commands exist in every render"
 run_test test_bad_mode_rows_refused "Malformed mode rows are refused by their own check, without writing"
