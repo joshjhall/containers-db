@@ -576,6 +576,39 @@ mod tests {
         (dir, origin)
     }
 
+    /// `repo_with_scan_commit` and `BareRemote` ignore the host's global
+    /// git config (#588, #600): under the hostile `HOME` of
+    /// `pr::tests::hostile_home` (control:
+    /// `pr::tests::a_plain_git_reads_the_hostile_global_config`) they still
+    /// build the repos and publish a commit.
+    #[test]
+    fn fixtures_ignore_a_hostile_global_git_config() {
+        crate::pr::tests::run_under_hostile_home(
+            "publish::tests::hostile_home_fixtures_still_publish",
+        );
+    }
+
+    #[test]
+    #[ignore = "run by fixtures_ignore_a_hostile_global_git_config"]
+    fn hostile_home_fixtures_still_publish() {
+        if !crate::tests::in_child() {
+            return;
+        }
+        let (dir, origin) = repo_with_scan_commit();
+        let remote = BareRemote::new(origin.path());
+        let oid = publish_head(
+            dir.path(),
+            &remote,
+            Target::New("scan/rust/2026-11-02"),
+            "feat(rust): x",
+        )
+        .unwrap();
+        assert_eq!(
+            remote.head("scan/rust/2026-11-02").as_deref(),
+            Some(oid.as_str())
+        );
+    }
+
     #[test]
     fn changes_cover_modify_add_and_delete() {
         let (dir, _origin) = repo_with_scan_commit();
