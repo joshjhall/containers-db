@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "conform",
+  "display_name": "Conform",
+  "kind": "cli",
+  "homepage": "https://github.com/siderolabs/conform",
+  "source_repo": "https://github.com/siderolabs/conform",
+  "license": "MPL-2.0",
+  "activity": {
+    "score": "maintained",
+    "scan_cadence_days": 30,
+    "scanned_at": "2026-11-17T00:00:00Z"
+  },
+  "channels": {
+    "stable": {
+      "default": true,
+      "description": "Upstream tagged releases."
+    }
+  },
+  "default_version": "0.1.0-alpha.31",
+  "available": [
+    {
+      "version": "0.1.0-alpha.31"
+    }
+  ],
+  "validation_tiers": {
+    "tier2": {
+      "available": true,
+      "notes": "Per-arch sha256 of the release asset pinned in the version file; it is the source bin/baseline-pins.sh renders into the repo-baseline tools.sha256."
+    }
+  },
+  "version_args": [
+    "version"
+  ]
+}

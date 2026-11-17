@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "tool": "uv",
+  "version": "0.12.23",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "uv-amd64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "amd64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/astral-sh/uv/releases/download/0.12.23/uv-x86_64-unknown-linux-musl.tar.gz",
+      "prefix": "/usr/local",
+      "strip_components": 1,
+      "binaries": [
+        "uv"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "1cff8783850e794470aadb73f54b749542a511fc57b0ce6468b64bd3852e0ade"
+      }
+    },
+    {
+      "name": "uv-arm64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "arm64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/astral-sh/uv/releases/download/0.12.23/uv-aarch64-unknown-linux-musl.tar.gz",
+      "prefix": "/usr/local",
+      "strip_components": 1,
+      "binaries": [
+        "uv"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "b536543cc4d50661986b165c76ee8aa9056e4fa332edcd153ff2e98760f9359b"
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-11-17T00:00:00Z",
+    "updated_at": "2026-11-17T00:00:00Z",
+    "schema_version": 1
+  }
+}

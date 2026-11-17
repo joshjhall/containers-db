@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "typos",
+  "display_name": "typos",
+  "kind": "cli",
+  "homepage": "https://github.com/crate-ci/typos",
+  "source_repo": "https://github.com/crate-ci/typos",
+  "license": "MIT OR Apache-2.0",
+  "activity": {
+    "score": "very-active",
+    "scan_cadence_days": 30,
+    "scanned_at": "2026-11-17T00:00:00Z"
+  },
+  "channels": {
+    "stable": {
+      "default": true,
+      "description": "Upstream tagged releases."
+    }
+  },
+  "default_version": "1.51.1",
+  "available": [
+    {
+      "version": "1.51.1"
+    }
+  ],
+  "validation_tiers": {
+    "tier2": {
+      "available": true,
+      "notes": "Per-arch sha256 of the release asset pinned in the version file; it is the source bin/baseline-pins.sh renders into the repo-baseline tools.sha256."
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "tool": "ruff",
+  "version": "0.16.10",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "ruff-amd64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "amd64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/astral-sh/ruff/releases/download/0.16.10/ruff-x86_64-unknown-linux-musl.tar.gz",
+      "prefix": "/usr/local",
+      "strip_components": 1,
+      "binaries": [
+        "ruff"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "ad1b2138407a0c53b936524df99d87211333f7bc40478d6860f42994597f7ff0"
+      }
+    },
+    {
+      "name": "ruff-arm64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "arm64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/astral-sh/ruff/releases/download/0.16.10/ruff-aarch64-unknown-linux-musl.tar.gz",
+      "prefix": "/usr/local",
+      "strip_components": 1,
+      "binaries": [
+        "ruff"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "38ebc0ec3e0de538d1c399729ca04e124749211d66aa134c24ad0c1f09a935b9"
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-11-17T00:00:00Z",
+    "updated_at": "2026-11-17T00:00:00Z",
+    "schema_version": 1
+  }
+}

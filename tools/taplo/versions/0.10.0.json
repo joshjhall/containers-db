@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "tool": "taplo",
+  "version": "0.10.0",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "taplo-amd64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "amd64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "taplo"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156"
+      }
+    },
+    {
+      "name": "taplo-arm64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "arm64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-aarch64.gz",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "taplo"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3"
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-11-17T00:00:00Z",
+    "updated_at": "2026-11-17T00:00:00Z",
+    "schema_version": 1
+  }
+}
