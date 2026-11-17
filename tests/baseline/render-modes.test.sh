@@ -145,6 +145,14 @@ test_force_refuses_tracked_symlink() {
     assert_equals "mine" "$(command cat "$dest/.gitkeep")" "...and is left as it was"
     assert_equals ".gitkeep" "$(command ls -A "$dest")" "...with nothing else written through the link"
 
+    # A dangling directory link is refused too: mkdir -p would create its
+    # destination outside --out.
+    out="$WORKDIR/thru-dangle-dir" dest="$WORKDIR/missing-dir"
+    command mkdir -p "$out"
+    command ln -s "$dest" "$out/bin"
+    refused_through dangling-parent "$out" "refusing to write through symlink $out/bin"
+    assert_true "[ ! -e \"$dest\" ]" "dangling-parent: ...and its destination is not created"
+
     # Without --force the overwrite check cannot catch a linked DIRECTORY ($out/bin/x
     # does not exist behind it), so the walk must run in that mode too.
     out="$WORKDIR/thru-noforce" dest="$WORKDIR/elsewhere-noforce"
@@ -273,6 +281,24 @@ test_link_in_subdirectory() {
     assert_true "[ -f \"$out/docs/latest.md\" ]" "...and resolves to the file beside it"
 }
 
+test_absent_link_under_symlinked_dir() {
+    # The shipped manifest's only link (AGENTS.md) is top-level, so a nested
+    # one comes from a fixture. sub/CLAUDE.md already exists through the
+    # linked sub/ (skipped, as an existing once target), which leaves the
+    # absent link sub/AGENTS.md as the only write the walk can refuse.
+    local t manifest out="$WORKDIR/o-sublink" dest="$WORKDIR/elsewhere-sub" rc=0 err
+    t="$(command printf '\t')"
+    manifest="$(with_rows sublink "sub/CLAUDE.md${t}core${t}always${t}core/docs/claude.md.tmpl${t}once" \
+        "sub/AGENTS.md${t}core${t}always${t}CLAUDE.md${t}link")"
+    command mkdir -p "$out" "$dest"
+    command printf 'mine\n' >"$dest/CLAUDE.md"
+    command ln -s "$dest" "$out/sub"
+    err="$(RENDER_MANIFEST="$manifest" "$RENDER" --ci github --out "$out" --force 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "An absent link target under a symlinked dir refuses the render"
+    assert_contains "$err" "refusing to write through symlink $out/sub" "...by the symlink walk"
+    assert_equals "CLAUDE.md" "$(command ls -A "$dest")" "...and no link is created through it"
+}
+
 test_manifest_declares_docs_minimum() {
     # core.md § 5: README, CLAUDE.md, AGENTS.md as a link to it — all create-only.
     assert_equals "core always CLAUDE.md link" \
@@ -290,6 +316,7 @@ run_test test_link_is_symlink "A link target is a symlink with the manifest's te
 run_test test_readme_commands_exist "README stub commands exist in every render"
 run_test test_bad_mode_rows_refused "Malformed mode rows are refused by their own check, without writing"
 run_test test_link_in_subdirectory "A link's text is relative to its own directory"
+run_test test_absent_link_under_symlinked_dir "An absent link target under a symlinked dir is refused"
 run_test test_manifest_declares_docs_minimum "The manifest scaffolds the docs minimum"
 
 generate_report
