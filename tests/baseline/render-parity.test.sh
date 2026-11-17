@@ -29,14 +29,28 @@ fail() {
     failures=$((failures + 1))
 }
 
+# modes <dir> — "<octal mode> <relative path>" per file, sorted. diff -r compares
+# bytes only, so this is what catches a lost exec bit on a rendered script.
+modes() {
+    (cd "$1" && find . -type f -exec stat -c '%a %n' {} + | sort)
+}
+
 combos=0
+names=""
 for slices in core core,shell core,python core,shell,python; do
     for ci in github gitlab; do
         name="${slices//,/+}-$ci"
         out="$scratch/$name"
         combos=$((combos + 1))
+        names="$names$name"$'\n'
         if ! "$render" --slices "$slices" --ci "$ci" --out "$out" >/dev/null; then
             fail "$name: render.sh exited non-zero"
+            continue
+        fi
+        # Fail closed: a render that wrote nothing would trivially match an
+        # empty golden, so an empty tree is a failure, never a pass.
+        if [ -z "$(find "$out" -type f -print -quit)" ]; then
+            fail "$name: render wrote no files"
             continue
         fi
         if [ "$update" = 1 ]; then
@@ -48,17 +62,30 @@ for slices in core core,shell core,python core,shell,python; do
         fi
         if [ ! -d "$expected/$name" ]; then
             fail "$name: no golden at tests/baseline/expected/$name (run with --update)"
-        elif diff_out=$(diff -r "$expected/$name" "$out" 2>&1); then
-            pass "$name: render is byte-identical to the golden"
-        else
+        elif ! diff_out=$(diff -r "$expected/$name" "$out" 2>&1); then
             fail "$name: render differs from the golden"
             printf '%s\n' "$diff_out" | head -20
+        elif ! mode_out=$(diff <(modes "$expected/$name") <(modes "$out") 2>&1); then
+            fail "$name: file modes differ from the golden"
+            printf '%s\n' "$mode_out" | head -20
+        else
+            pass "$name: render is byte- and mode-identical to the golden"
         fi
     done
 done
 
-# Fail closed: a loop that compared nothing must not report a pass.
-[ "$combos" -eq 8 ] || fail "expected 8 slice x CI combinations, ran $combos"
+# A golden no combination produces is stale: it would never be compared, so a
+# renamed or dropped combination would silently stop being checked.
+if [ "$update" = 0 ] && [ -d "$expected" ]; then
+    for dir in "$expected"/*/; do
+        [ -d "$dir" ] || continue
+        golden=$(basename "$dir")
+        case "$names" in
+            *"$golden"$'\n'*) ;;
+            *) fail "$golden: stale golden; no rendered combination produces it" ;;
+        esac
+    done
+fi
 
 if [ "$failures" -ne 0 ]; then
     printf '%d failure(s)\n' "$failures"
