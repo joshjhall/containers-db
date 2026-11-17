@@ -7,9 +7,11 @@
 - **Follow-up:** template rewrite and enforcement gate in [#620](https://github.com/joshjhall/containers-db/issues/620),
   blocked by [#558](https://github.com/joshjhall/containers-db/issues/558)
 
-This record is authoritative until #558 moves the baseline spec (`core.md`)
-into this repo. At that point it folds into `core.md` § 1 *Hook layout* and
-this file becomes a pointer.
+The baseline spec now lives in this repo at
+[`baseline/core.md`](../../baseline/core.md) (#558), whose § 1 *Hook layout*
+links here. This record stays authoritative until #620 applies it to the
+templates and folds it into `core.md` § 1, at which point this file becomes a
+pointer.
 
 ## Problem
 
