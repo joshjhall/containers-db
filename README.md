@@ -31,7 +31,7 @@ Splitting the catalog out of the main repo means:
 ├── snapshots/                 # frozen catalog snapshots for client pinning (planned)
 ├── scanner/                   # daily catalog scanner (Rust crate)
 ├── validator/                 # semantic validator (Rust crate)
-├── baseline/                  # repo-baseline spec, language slices, templates + render.sh
+├── baseline/                  # repo-baseline spec, slices, templates
 └── .github/workflows/
     ├── validate.yml           # ajv-cli + Rust validator on every push/PR
     └── scan.yml               # hourly upstream scan, opens PRs for new versions

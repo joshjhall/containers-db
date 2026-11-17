@@ -50,8 +50,8 @@ quote-style = "double"
 ```
 
 The settings lines of this block equal the shipped
-`templates/python/ruff.toml.tmpl`; `tests/baseline/validate-slices.sh` fails if they drift apart, so a pin
-bump that forgets this slice fails the suite.
+`templates/python/ruff.toml.tmpl`; `tests/baseline/validate-slices.sh` fails
+if they drift apart, so a pin bump that forgets this slice fails the suite.
 
 `bin/ruff-version.sh` — required: prints the bare pin from `ruff.toml` and
 fails loud when it is missing, so every installer reads one source. Copy
