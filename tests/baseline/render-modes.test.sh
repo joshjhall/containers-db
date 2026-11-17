@@ -138,9 +138,23 @@ test_force_refuses_tracked_symlink() {
     refused_through once-parent "$out" "refusing to write through symlink $out/docs"
     assert_equals "" "$(command ls -A "$dest")" "once-parent: ...nothing is created in the linked directory"
     # ...but one that already exists through that link is skipped, never refused.
-    command touch "$dest/.gitkeep"
-    "$RENDER" --slices shell,python --ci github --out "$out" --force >/dev/null
-    assert_true "[ -f \"$out/CLAUDE.md\" ]" "once-parent: an existing once target through a linked dir does not block"
+    command printf 'mine\n' >"$dest/.gitkeep"
+    rc=0
+    "$RENDER" --slices shell,python --ci github --out "$out" --force >/dev/null || rc=$?
+    assert_equals "0" "$rc" "once-parent: an existing once target through a linked dir does not block"
+    assert_equals "mine" "$(command cat "$dest/.gitkeep")" "...and is left as it was"
+    assert_equals ".gitkeep" "$(command ls -A "$dest")" "...with nothing else written through the link"
+
+    # Without --force the overwrite check cannot catch a linked DIRECTORY ($out/bin/x
+    # does not exist behind it), so the walk must run in that mode too.
+    out="$WORKDIR/thru-noforce" dest="$WORKDIR/elsewhere-noforce"
+    command mkdir -p "$out" "$dest"
+    command ln -s "$dest" "$out/bin"
+    rc=0
+    err="$("$RENDER" --slices shell,python --ci github --out "$out" 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "no-force: a symlinked parent dir refuses a plain render"
+    assert_contains "$err" "refusing to write through symlink $out/bin" "no-force: ...by the symlink walk, not the overwrite check"
+    assert_equals "" "$(command ls -A "$dest")" "no-force: ...and nothing is written into the linked directory"
 
     # --out itself being a link is the user's choice of destination.
     command mkdir -p "$WORKDIR/real-out"
