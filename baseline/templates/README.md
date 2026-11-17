@@ -145,7 +145,7 @@ if they were. A complete file keeps its real extension.
 ## After rendering
 
 Fill in the `<!-- per-repo: -->` sections of `README.md` and `CLAUDE.md`,
-edit every line marked `# per-repo:` (including the owner in `CODEOWNERS`),
+edit every line marked `# per-repo:` (including the commented-out owner rule in `CODEOWNERS`),
 adjust the issue and PR/MR templates to the project, then `lefthook install`.
 The pins and action SHAs are current as of the template; bump them per
 `core.md` § 4. A

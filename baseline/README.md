@@ -38,6 +38,7 @@ kept by hand; deriving them from catalog data is a follow-up.
 | `tests/baseline/validate-templates.sh` | Manifest, fence parity, render behavior, rendered-repo hooks |
 | `tests/baseline/render-parity.test.sh` | Every slice × CI render equals its golden (`--update` regenerates) |
 | `tests/baseline/validate-platform.sh`  | `platform/` parses; GitHub requires the CI template's `merge-gate`; labels |
+| `tests/baseline/validate-platform-mutations.test.sh` | Each single break of the spec or CI template fails `validate-platform.sh` |
 
 `tests/baseline/install-tools.sh` installs every pinned tool through the
 templates' own installer. CI runs the gates with `BASELINE_REQUIRE_TOOLS=1`,

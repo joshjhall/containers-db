@@ -25,6 +25,8 @@ gate job, because a GitLab pipeline already fails on any failed job, so
 `gitlab.yml` requires `only_allow_merge_if_pipeline_succeeds` instead.
 `tests/baseline/validate-platform.sh` reads the job name from the CI template,
 so renaming the job without updating the spec fails the gate.
+`tests/baseline/validate-platform-mutations.test.sh` breaks scratch copies one
+way at a time and requires the gate to fail on each.
 
 ## Placeholders and per-repo values
 

@@ -2,6 +2,7 @@
 # GitHub reads this file from the repo root, .github/ or docs/; GitLab from the
 # root, .gitlab/ or docs/. Later rules win over earlier ones.
 #
-# per-repo: replace the owner below with a user or team handle, then add a
-# rule per area that needs its own reviewers.
-* @per-repo-owner
+# per-repo: uncomment the rule below with a real user or team handle, then add
+# a rule per area that needs its own reviewers. It ships commented out: a
+# placeholder handle is an invalid owner, and one anyone could register.
+# * @your-org/your-team
