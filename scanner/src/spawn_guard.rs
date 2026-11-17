@@ -286,21 +286,37 @@ fn read(rel: &str) -> String {
     std::fs::read_to_string(workspace().join(rel)).unwrap()
 }
 
+/// A TOML file with CRLF normalised, whole-line comments dropped and
+/// each remaining line trimmed, so a commented-out entry does not count
+/// and spacing or line endings do not matter.
+fn live_toml(rel: &str) -> String {
+    read(rel)
+        .replace("\r\n", "\n")
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn the_ban_and_lint_levels_are_in_place() {
-    let clippy_toml = read("clippy.toml");
+    let clippy_toml = live_toml("clippy.toml");
+    let ban = clippy_toml
+        .split_once("disallowed-methods = [")
+        .map(|(_, rest)| rest.split(']').next().unwrap_or(""));
     assert!(
-        clippy_toml.contains("{ path = \"std::process::Command::new\""),
-        "clippy.toml must keep the Command::new ban:\n{clippy_toml}"
+        ban.is_some_and(|b| b.contains("path = \"std::process::Command::new\"")),
+        "clippy.toml must keep the live Command::new ban:\n{clippy_toml}"
     );
     for krate in ["scanner", "validator"] {
-        let manifest = read(&format!("{krate}/Cargo.toml"));
+        let manifest = live_toml(&format!("{krate}/Cargo.toml"));
         assert!(
-            manifest.contains("[lints]\nworkspace = true\n") && !manifest.contains("[lints."),
+            manifest.contains("[lints]\nworkspace = true") && !manifest.contains("[lints."),
             "{krate} must inherit the workspace lints unchanged"
         );
     }
-    let root = read("Cargo.toml");
+    let root = live_toml("Cargo.toml");
     let clippy = root
         .split_once("[workspace.lints.clippy]")
         .unwrap()
