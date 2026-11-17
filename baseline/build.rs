@@ -54,6 +54,11 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
             println!("cargo:rerun-if-changed={}", path.display());
             collect_files(root, &path, out);
         } else {
+            assert!(
+                kind.is_file(),
+                "refusing non-regular file in templates: {}",
+                path.display()
+            );
             let rel = path.strip_prefix(root).expect("entry is under root");
             let parts: Vec<String> = rel
                 .components()

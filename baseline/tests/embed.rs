@@ -5,11 +5,20 @@ use std::path::Path;
 
 /// Every regular file under `dir`, `/`-separated and relative to `root`. An
 /// independent walk (no shared code with `build.rs`), so a build-script bug
-/// that drops or invents an entry shows up as a mismatch.
+/// that drops or invents an entry shows up as a mismatch. A symlink fails the
+/// test here too, so a committed link is caught by `cargo test`, not only by
+/// the build script's refusal.
 fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let kind = entry.file_type().unwrap();
+        assert!(
+            !kind.is_symlink(),
+            "symlink in templates: {}",
+            path.display()
+        );
+        if kind.is_dir() {
             walk(root, &path, out);
         } else {
             let rel = path.strip_prefix(root).unwrap().to_string_lossy();
@@ -78,6 +87,35 @@ fn every_manifest_source_is_embedded() {
         );
     }
     assert!(rows > 0, "manifest.tsv has no template rows");
+}
+
+/// `TEMPLATES_DIR` is a tree `render.sh` can run from: the script is there and
+/// executable, next to the manifest it reads.
+#[cfg(unix)]
+#[test]
+fn templates_dir_holds_a_runnable_render_sh() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = Path::new(repo_baseline::TEMPLATES_DIR);
+    assert!(root.join("manifest.tsv").is_file(), "manifest.tsv missing");
+    let mode = std::fs::metadata(root.join("render.sh"))
+        .expect("render.sh present in TEMPLATES_DIR")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111, "render.sh not executable: {mode:o}");
+}
+
+/// The crate stays dependency-free (issue #631): consumers pin it by git rev
+/// and must not inherit a dependency tree with it.
+#[test]
+fn crate_has_no_dependencies() {
+    let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+        .expect("read baseline/Cargo.toml");
+    for line in manifest.lines().map(str::trim) {
+        assert!(
+            !(line.starts_with('[') && line.contains("dependencies")),
+            "repo-baseline must have no dependencies, found {line}"
+        );
+    }
 }
 
 #[test]
