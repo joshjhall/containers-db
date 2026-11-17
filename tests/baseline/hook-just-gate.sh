@@ -45,12 +45,14 @@ fail() {
 
 # One line per fact: `<stage>.<command>\t<kind>\t<value>`, kind in glob|skip|run.
 # A run: body's newlines become `;` so a multi-line script splits into segments.
+# Tabs and carriage returns in any value become spaces: a raw tab would end the
+# value field early, and everything after it would go unchecked.
 hook_facts="$(yq -r '
   to_entries[] | select(.value | tag == "!!map") | .key as $s
   | (.value.commands // {}) | to_entries[] | .key as $c
-  | ( ([(.value.glob // [])] | flatten | .[] | $s + "." + $c + "\tglob\t" + .),
-      ((.value.skip // [])[] | select(tag == "!!map") | $s + "." + $c + "\tskip\t" + (.run // "")),
-      ($s + "." + $c + "\trun\t" + ((.value.run // "") | sub("\n"; " ; "))) )
+  | ( ([(.value.glob // [])] | flatten | .[] | $s + "." + $c + "\tglob\t" + (. | sub("[\t\r]"; " "))),
+      ((.value.skip // [])[] | select(tag == "!!map") | $s + "." + $c + "\tskip\t" + ((.run // "") | sub("[\t\r]"; " "))),
+      ($s + "." + $c + "\trun\t" + ((.value.run // "") | sub("[\t\r]"; " ") | sub("\n"; " ; "))) )
 ' "$hooks")"
 
 # One line per fact: `<recipe>\tparams\t<n variadic params>` and

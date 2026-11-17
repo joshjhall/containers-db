@@ -281,6 +281,16 @@ open(p, "w").write(s.replace(old, "run: typos", 1))
     assert_contains "$OUT" "problem(s)" "...and prints the summary, so it ran to the end"
 }
 
+test_tab_in_run_is_checked() {
+    have_tools || return 0
+    # A tab in run: must not end the gate's view of the command.
+    mutate tabrun lefthook.yml "run: just lint-typos" 'run: "just lint-typos &&\ttee /tmp/x"'
+    gate_on tabrun
+    assert_equals "1" "$RC" "A direct tool after a tab in run: fails the gate"
+    assert_contains "$OUT" "pre-push.typos: run: segment does not call just: tee /tmp/x" \
+        "...naming the segment after the tab"
+}
+
 test_missing_justfile_exits_2() {
     local rc=0
     "$GATE" "$WORKDIR/base/lefthook.yml" "$WORKDIR/nope.just" >/dev/null 2>&1 || rc=$?
@@ -317,6 +327,7 @@ run_test test_no_hook_commands_fails "A lefthook.yml with no commands fails"
 run_test test_multi_recipe_glob_mismatch_fails "A two-recipe hook names only the recipe that disagrees with the glob"
 run_test test_no_glob_hook_is_not_compared "A no-glob hook is not compared under rule 4"
 run_test test_patternless_recipe_keeps_checking "A pattern-less recipe does not abort the gate before later hooks"
+run_test test_tab_in_run_is_checked "A tab in run: does not hide a direct tool"
 run_test test_missing_justfile_exits_2 "A missing justfile exits 2"
 run_test test_bad_usage_exits_2 "Bad usage exits 2"
 
