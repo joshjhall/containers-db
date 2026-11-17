@@ -1,5 +1,5 @@
 # repo-baseline scaffold manifest — format: templates/README.md.
-# target	slice	when	source
+# target	slice	when	source	[mode]
 # Every row whose slice is selected and whose `when` holds is rendered; rows
 # that share a target are CONCATENATED in this file's order.
 lefthook.yml	core	always	core/lefthook/10-pre-commit.yml.tmpl
@@ -48,3 +48,10 @@ uv.toml	python	always	python/uv.toml.tmpl
 .python-version	python	always	python/python-version.tmpl
 tests/requirements.txt	python	always	python/requirements.txt
 tests/conftest.py	python	always	python/conftest.py.tmpl
+README.md	core	always	core/docs/readme-head.md.tmpl	once
+README.md	shell	always	shell/docs-readme.md.tmpl	once
+README.md	python	always	python/docs-readme.md.tmpl	once
+README.md	core	always	core/docs/readme-tail.md.tmpl	once
+CLAUDE.md	core	always	core/docs/claude.md.tmpl	once
+AGENTS.md	core	always	CLAUDE.md	link
+docs/.gitkeep	core	always	core/docs/gitkeep.tmpl	once

@@ -29,10 +29,14 @@ fail() {
     failures=$((failures + 1))
 }
 
-# modes <dir> — "<octal mode> <relative path>" per file, sorted. diff -r compares
-# bytes only, so this is what catches a lost exec bit on a rendered script.
+# modes <dir> — "<octal mode> <relative path>" per file and "link <path> -> <text>"
+# per symlink, sorted. diff -r compares bytes only (and follows links), so this
+# is what catches a lost exec bit or a link rendered as a copy (#562).
 modes() {
-    (cd "$1" && find . -type f -exec stat -c '%a %n' {} + | sort)
+    (cd "$1" && {
+        find . -type f -exec stat -c '%a %n' {} +
+        find . -type l -exec sh -c 'for l; do printf "link %s -> %s\n" "$l" "$(readlink "$l")"; done' sh {} +
+    } | sort)
 }
 
 combos=0
@@ -56,13 +60,13 @@ for slices in core core,shell core,python core,shell,python; do
         if [ "$update" = 1 ]; then
             rm -rf "${expected:?}/$name"
             mkdir -p "$expected"
-            cp -R "$out" "$expected/$name"
+            cp -RP "$out" "$expected/$name"
             pass "$name: golden updated"
             continue
         fi
         if [ ! -d "$expected/$name" ]; then
             fail "$name: no golden at tests/baseline/expected/$name (run with --update)"
-        elif ! diff_out=$(diff -r "$expected/$name" "$out" 2>&1); then
+        elif ! diff_out=$(diff -r --no-dereference "$expected/$name" "$out" 2>&1); then
             fail "$name: render differs from the golden"
             printf '%s\n' "$diff_out" | head -20
         elif ! mode_out=$(diff <(modes "$expected/$name") <(modes "$out") 2>&1); then

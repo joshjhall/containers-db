@@ -10,10 +10,15 @@
 # contract a non-LLM renderer (stibbons) implements independently. Format and
 # rationale: README.md.
 #
+# An optional 5th column, `mode`, marks a target create-only (`once`: written
+# only when absent, even under --force) or a symlink (`link`: `source` is the
+# link text, naming another target of the same render; also create-only).
+#
 # Refuses (exit 2) an unknown slice or CI platform, a manifest row with an
-# unknown `when` or a missing source, an absolute or `..` target, and an
-# existing target file unless --force. Nothing is written until every check
-# passes. bash-3.2 clean.
+# unknown `when` or `mode` or a missing source, an absolute or `..` target, a
+# target whose rows disagree on `mode`, a bad link, and an existing tracked
+# target unless --force. Nothing is written until every check passes. Prints
+# each target it wrote. bash-3.2 clean.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,7 +65,7 @@ done
 
 # Known slices are the ones the manifest names — adding a slice is adding rows.
 known_slices=" "
-while IFS="$(printf '\t')" read -r target slice when source || [ -n "${target:-}" ]; do
+while IFS="$(printf '\t')" read -r target slice when source mode || [ -n "${target:-}" ]; do
     case "$target" in '' | '#'*) continue ;; esac
     case "$known_slices" in *" $slice "*) ;; *) known_slices="$known_slices$slice " ;; esac
 done <"$MANIFEST"
@@ -82,17 +87,36 @@ done
 
 # Pass 1: validate every row and collect the selected ones, in order.
 plan="$(mktemp)"
-trap 'rm -f "$plan"' EXIT
+modes="$(mktemp)"
+trap 'rm -f "$plan" "$modes"' EXIT
 n=0
-while IFS="$(printf '\t')" read -r target slice when source || [ -n "${target:-}" ]; do
+while IFS="$(printf '\t')" read -r target slice when source mode || [ -n "${target:-}" ]; do
     n=$((n + 1))
     case "$target" in '' | '#'*) continue ;; esac
     [ -n "$slice" ] && [ -n "$when" ] && [ -n "$source" ] ||
-        die "manifest line $n: expected 4 tab-separated columns"
+        die "manifest line $n: expected 4 or 5 tab-separated columns"
+    case "$mode" in *"$(printf '\t')"*) die "manifest line $n: expected 4 or 5 tab-separated columns" ;; esac
     case "$target" in
         /* | ../* | */../* | *'/..' | '..') die "manifest line $n: target must be a relative path inside the repo: $target" ;;
     esac
-    [ -f "$TEMPLATES/$source" ] || die "manifest line $n: source not found: $source"
+    case "$mode" in
+        '' | once) [ -f "$TEMPLATES/$source" ] || die "manifest line $n: source not found: $source" ;;
+        link)
+            case "$source" in
+                /* | .. | ../* | */../* | *'/..') die "manifest line $n: link text must be relative without '..': $source" ;;
+                . | ./* | */./* | *'/.' | *//*) die "manifest line $n: link text must be a plain relative path (no '.' or empty segments): $source" ;;
+            esac
+            ;;
+        *) die "manifest line $n: unknown mode '$mode' (known: once link)" ;;
+    esac
+    # A target's rows must agree on its mode, selected or not.
+    prev="$(T="$target" awk -F '\t' '$1 == ENVIRON["T"] { print ($3 == "" ? "-" : $3); exit }' "$modes")"
+    if [ -n "$prev" ]; then
+        [ "$prev" = "${mode:--}" ] || die "manifest line $n: $target mixes modes ($prev vs ${mode:--})"
+        [ "$mode" != link ] || die "manifest line $n: link target $target has more than one row"
+    else
+        printf '%s\t\t%s\n' "$target" "$mode" >>"$modes"
+    fi
     case "$when" in
         always) keep=1 ;;
         ci=github | ci=gitlab)
@@ -101,25 +125,54 @@ while IFS="$(printf '\t')" read -r target slice when source || [ -n "${target:-}
         *) die "manifest line $n: unknown when '$when' (known: always ci=github ci=gitlab)" ;;
     esac
     case "$selected" in *" $slice "*) ;; *) keep=0 ;; esac
-    [ "$keep" -eq 1 ] && printf '%s\t%s\n' "$target" "$source" >>"$plan"
+    [ "$keep" -eq 1 ] && printf '%s\t%s\t%s\n' "$target" "$source" "$mode" >>"$plan"
 done <"$MANIFEST"
 
+# mode_of <target> — "" (tracked), once, or link.
+mode_of() { T="$1" awk -F '\t' '$1 == ENVIRON["T"] { print $3; exit }' "$plan"; }
+# link_text <target> — a link row's source column.
+link_text() { T="$1" awk -F '\t' '$1 == ENVIRON["T"] { print $2; exit }' "$plan"; }
+
 targets="$(cut -f1 "$plan" | awk '!seen[$0]++')"
+for t in $targets; do
+    [ "$(mode_of "$t")" = link ] || continue
+    text="$(link_text "$t")"
+    case "$t" in */*) dest="$(dirname "$t")/$text" ;; *) dest="$text" ;; esac
+    printf '%s\n' "$targets" | grep -qxF "$dest" && [ "$(mode_of "$dest")" != link ] ||
+        die "link $t -> $text: target is not a file rendered by this selection"
+done
 if [ "$force" -eq 0 ]; then
     for t in $targets; do
-        [ ! -e "$out/$t" ] || die "refusing to overwrite $out/$t (pass --force)"
+        [ -z "$(mode_of "$t")" ] || continue
+        if [ -e "$out/$t" ] || [ -L "$out/$t" ]; then die "refusing to overwrite $out/$t (pass --force)"; fi
     done
 fi
 
-# Pass 2: write. Each target is truncated once, then its rows are appended.
+# Pass 2: write. A create-only target (once, link) that already exists — even
+# as a dangling symlink — is the user's now and is left alone. Each written
+# file target is truncated once, then its rows are appended; links go last.
+written=""
 for t in $targets; do
+    m="$(mode_of "$t")"
+    if [ -n "$m" ] && { [ -e "$out/$t" ] || [ -L "$out/$t" ]; }; then continue; fi
+    written="$written$t
+"
+    [ "$m" = link ] && continue
     mkdir -p "$out/$(dirname "$t")"
     : >"$out/$t"
 done
-while IFS="$(printf '\t')" read -r t source; do
+while IFS="$(printf '\t')" read -r t source m; do
+    [ "$m" != link ] || continue
+    printf '%s' "$written" | grep -qxF "$t" || continue
     cat "$TEMPLATES/$source" >>"$out/$t"
 done <"$plan"
 for t in $targets; do
-    case "$t" in *.sh) chmod 0755 "$out/$t" ;; esac
+    printf '%s' "$written" | grep -qxF "$t" || continue
+    if [ "$(mode_of "$t")" = link ]; then
+        mkdir -p "$out/$(dirname "$t")"
+        ln -s "$(link_text "$t")" "$out/$t"
+    else
+        case "$t" in *.sh) chmod 0755 "$out/$t" ;; esac
+    fi
     printf '%s\n' "$t"
 done

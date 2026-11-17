@@ -122,17 +122,21 @@ test_manifest_nonempty() {
 }
 
 test_manifest_rows_well_formed() {
-    local target slice when source bad=""
-    while IFS="$(command printf '\t')" read -r target slice when source; do
+    local target slice when source mode bad=""
+    while IFS="$(command printf '\t')" read -r target slice when source mode; do
         [ -n "$source" ] || bad="$bad [$target: fewer than 4 columns]"
         case "$when" in always | ci=github | ci=gitlab) ;; *) bad="$bad [$target: when=$when]" ;; esac
-        [ -f "$TEMPLATES/$source" ] || bad="$bad [$target: missing $source]"
+        case "$mode" in
+            '' | once) [ -f "$TEMPLATES/$source" ] || bad="$bad [$target: missing $source]" ;;
+            link) ;; # source is link text, checked by render-modes.test.sh
+            *) bad="$bad [$target: mode=$mode]" ;;
+        esac
         case "$slice" in
             core) ;;
             *) [ -f "$SLICES_DIR/$slice.md" ] || bad="$bad [$target: slice $slice has no languages/$slice.md]" ;;
         esac
     done < <(manifest_rows)
-    assert_equals "" "$bad" "Every manifest row has 4 columns, a known when, an existing source and slice"
+    assert_equals "" "$bad" "Every manifest row has 4-5 columns, a known when and mode, an existing source and slice"
 }
 
 test_manifest_covers_every_fragment() {
@@ -813,7 +817,6 @@ test_live_hooks_pass() {
     command printf '"""Greet."""\n\n\ndef greet(name):\n    return f"hello {name}"\n' >"$repo/bin/greet.py"
     command printf 'def test_greet(load_script):\n    assert load_script("greet").greet("x") == "hello x"\n' \
         >"$repo/tests/test_greet.py"
-    command printf '# Sample\n\nA sample repo.\n' >"$repo/README.md"
 
     (cd "$repo" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" lefthook install >/dev/null 2>&1)
     sgit -C "$repo" add -A
