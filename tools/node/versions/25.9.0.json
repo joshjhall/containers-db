@@ -832,6 +832,18 @@
       "image_digest": "sha256:ffa9e1f0234969143ea46b69ea103cb5cc2c8c728aaeea72d07af9f8aea5f4f3",
       "duration_seconds": 8.527789244000001,
       "error_class": "validate"
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T05:30:02.706940254Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44023956173",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:cc864dd396429c8037be91a7cd40a2c2c669f1b68db090a6584a2064cf746795",
+      "duration_seconds": 5.870630017,
+      "error_class": "validate"
     }
   ]
 }
