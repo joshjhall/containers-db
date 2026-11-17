@@ -74,15 +74,17 @@ fn tokens(src: &str) -> Vec<Tok<'_>> {
         let c = b[i];
         if c.is_ascii_whitespace() {
             i += 1;
-        } else if src[i..].starts_with("//") {
+        } else if b[i..].starts_with(b"//") {
             i = src[i..].find('\n').map_or(b.len(), |n| i + n);
-        } else if src[i..].starts_with("/*") {
+        } else if b[i..].starts_with(b"/*") {
+            // Bytes, not `&str` slices: this loop steps one byte at a
+            // time, so `i` can sit inside a multibyte char here.
             let mut depth = 0;
             while i < b.len() {
-                if src[i..].starts_with("/*") {
+                if b[i..].starts_with(b"/*") {
                     depth += 1;
                     i += 2;
-                } else if src[i..].starts_with("*/") {
+                } else if b[i..].starts_with(b"*/") {
                     depth -= 1;
                     i += 2;
                     if depth == 0 {
@@ -109,7 +111,7 @@ fn tokens(src: &str) -> Vec<Tok<'_>> {
                 i += 1;
             }
             out.push(Tok::Ident(&src[start..i]));
-        } else if src[i..].starts_with("::") {
+        } else if b[i..].starts_with(b"::") {
             out.push(Tok::Punct("::"));
             i += 2;
         } else {
@@ -299,14 +301,55 @@ fn live_toml(rel: &str) -> String {
         .join("\n")
 }
 
+/// Every `path = "..."` value in `clippy.toml`'s live
+/// `disallowed-methods` table, read key by key outside TOML strings, so
+/// entry field order and a `]` or `path =` inside a reason do not matter.
+fn banned_paths(clippy_toml: &str) -> Vec<String> {
+    let Some((_, rest)) = clippy_toml.split_once("disallowed-methods") else {
+        return Vec::new();
+    };
+    let b = rest.as_bytes();
+    let (mut i, mut depth, mut paths) = (0, 0usize, Vec::new());
+    let string_end = |mut i: usize| {
+        while i < b.len() && b[i] != b'"' {
+            i += if b[i] == b'\\' { 2 } else { 1 };
+        }
+        i
+    };
+    while i < b.len() {
+        match b[i] {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            b'"' => i = string_end(i + 1),
+            b'p' if depth > 0
+                && b[i..].starts_with(b"path")
+                && !b[i - 1].is_ascii_alphanumeric() =>
+            {
+                let after = rest[i + 4..].trim_start();
+                if let Some(value) = after.strip_prefix('=').map(str::trim_start)
+                    && let Some(body) = value.strip_prefix('"')
+                {
+                    let end = body.find('"').unwrap_or(body.len());
+                    paths.push(body[..end].to_string());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    paths
+}
+
 #[test]
 fn the_ban_and_lint_levels_are_in_place() {
     let clippy_toml = live_toml("clippy.toml");
-    let ban = clippy_toml
-        .split_once("disallowed-methods = [")
-        .map(|(_, rest)| rest.split(']').next().unwrap_or(""));
     assert!(
-        ban.is_some_and(|b| b.contains("path = \"std::process::Command::new\"")),
+        banned_paths(&clippy_toml).contains(&"std::process::Command::new".to_string()),
         "clippy.toml must keep the live Command::new ban:\n{clippy_toml}"
     );
     for krate in ["scanner", "validator"] {
@@ -353,6 +396,43 @@ fn spawn_exemptions_are_pinned() {
         found, want,
         "spawn git through crate::git_command(); a new Command::new exemption must be pinned in spawn_guard::PINNED"
     );
+}
+
+/// The ban is found whatever the entry's field order, and text that only
+/// mentions the path inside a reason string does not count as a ban.
+#[test]
+fn banned_paths_reads_keys_not_text() {
+    let cmd = "std::process::Command::new".to_string();
+    for live in [
+        "disallowed-methods = [\n{ path = \"std::process::Command::new\", reason = \"x\" },\n]",
+        "disallowed-methods = [\n{ reason = \"see #[expect] ] here\", path = \"std::process::Command::new\" },\n]",
+        "disallowed-methods=[{path=\"a::b\"},{path=\"std::process::Command::new\"}]",
+    ] {
+        assert!(
+            banned_paths(live).contains(&cmd),
+            "missed the ban in {live:?}"
+        );
+    }
+    for dead in [
+        "disallowed-methods = [\n{ path = \"a::b\", reason = \"not path = \\\"std::process::Command::new\\\"\" },\n]",
+        "disallowed-methods = []\nother = [{ path = \"std::process::Command::new\" }]",
+        "disallowed-types = [{ path = \"std::process::Command::new\" }]",
+    ] {
+        assert!(!banned_paths(dead).contains(&cmd), "false ban in {dead:?}");
+    }
+}
+
+/// Non-ASCII text inside a block comment is skipped with the comment and
+/// never splits a char, so the silencer after it is still found.
+#[test]
+fn block_comments_may_hold_multibyte_text() {
+    let src =
+        "/* café — 😀 /* nested é */ ü */\n@[allow(clippy::all)]\nfn x() {}".replace('@', "#");
+    let found: Vec<_> = silencers(&src)
+        .into_iter()
+        .map(|s| (s.lint, s.item))
+        .collect();
+    assert_eq!(found, vec![("clippy::all".to_string(), "fn x".to_string())]);
 }
 
 /// A char literal is told from a lifetime by its decoded first char, so
