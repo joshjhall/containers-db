@@ -273,6 +273,41 @@ jobs:
             echo "Negative tool fixture $fixture rejected by $want_keyword at $want_path; repaired twin accepted"
           done
 
+  # Repo-baseline templates moved from librarian (#558). Tools come from the
+  # templates' own installer and pins, and BASELINE_REQUIRE_TOOLS=1 turns a
+  # missing-tool skip into a failure so the gates cannot pass on skips alone.
+  baseline:
+    name: Repo-baseline gates
+    runs-on: ubuntu-24.04
+    env:
+      BASELINE_REQUIRE_TOOLS: "1"
+      TOOLS_BIN: ${{ github.workspace }}/.tools/bin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned baseline tools
+        # The installer appends TOOLS_BIN to GITHUB_PATH, so later steps use
+        # the pinned binaries ahead of the runner's own.
+        run: tests/baseline/install-tools.sh
+
+      - name: Lint baseline scripts
+        run: >-
+          shellcheck -x --severity=warning baseline/templates/render.sh
+          tests/baseline/install-tools.sh
+          tests/baseline/render-parity.test.sh tests/baseline/validate-slices.sh
+          tests/baseline/validate-templates.sh
+
+      - name: Slice contract conformance
+        run: bash tests/baseline/validate-slices.sh
+
+      - name: Template gate (manifest, fence parity, rendered-repo hooks)
+        run: bash tests/baseline/validate-templates.sh
+
+      - name: Render parity against goldens
+        run: tests/baseline/render-parity.test.sh
+
   # The job above floats on `stable`, which only ever moves past the declared
   # minimum. This job builds on exactly `rust-version`, so a newer-than-MSRV
   # API or a dependency raising its own MSRV fails here instead of quietly

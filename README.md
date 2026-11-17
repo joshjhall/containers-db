@@ -31,6 +31,7 @@ Splitting the catalog out of the main repo means:
 ├── snapshots/                 # frozen catalog snapshots for client pinning (planned)
 ├── scanner/                   # daily catalog scanner (Rust crate)
 ├── validator/                 # semantic validator (Rust crate)
+├── baseline/                  # repo-baseline spec, slices, templates
 └── .github/workflows/
     ├── validate.yml           # ajv-cli + Rust validator on every push/PR
     └── scan.yml               # hourly upstream scan, opens PRs for new versions
@@ -52,6 +53,10 @@ are rechecked monthly or longer.
 
 See [`docs/scanner.md`](docs/scanner.md) for the adapter authoring
 guide, the activity tier rule table, and local dry-run usage.
+
+[`baseline/`](baseline/README.md) is the single source of truth for the repo
+baseline (spec, slice contract, language slices, and the templates `render.sh`
+renders); consumers pin a containers-db commit until snapshots land.
 
 See [`docs/baseline/hook-layering.md`](docs/baseline/hook-layering.md) for the
 repo-baseline decision that git hooks call `just` recipes and only `just` calls
