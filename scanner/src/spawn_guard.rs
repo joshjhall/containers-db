@@ -288,12 +288,11 @@ fn read(rel: &str) -> String {
     std::fs::read_to_string(workspace().join(rel)).unwrap()
 }
 
-/// A TOML file with CRLF normalised, whole-line comments dropped and
-/// each remaining line trimmed, so a commented-out entry does not count
-/// and spacing or line endings do not matter.
-fn live_toml(rel: &str) -> String {
-    read(rel)
-        .replace("\r\n", "\n")
+/// TOML text with CRLF normalised, whole-line comments dropped and each
+/// remaining line trimmed, so a commented-out entry does not count and
+/// spacing or line endings do not matter.
+fn live_toml(text: &str) -> String {
+    text.replace("\r\n", "\n")
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -320,15 +319,23 @@ fn banned_paths(clippy_toml: &str) -> Vec<String> {
         match b[i] {
             b'[' => depth += 1,
             b']' => {
-                depth -= 1;
+                // A `]` before any `[` means a malformed table: no ban.
+                let Some(d) = depth.checked_sub(1) else { break };
+                depth = d;
                 if depth == 0 {
                     break;
                 }
             }
             b'"' => i = string_end(i + 1),
+            // A whole `path` key: not the tail of `reason_path` or
+            // `x-path`, and not the head of `paths`.
             b'p' if depth > 0
                 && b[i..].starts_with(b"path")
-                && !b[i - 1].is_ascii_alphanumeric() =>
+                && !matches!(b[i - 1], b'_' | b'-' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z')
+                && !matches!(
+                    b.get(i + 4),
+                    Some(b'_' | b'-' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z')
+                ) =>
             {
                 let after = rest[i + 4..].trim_start();
                 if let Some(value) = after.strip_prefix('=').map(str::trim_start)
@@ -345,30 +352,83 @@ fn banned_paths(clippy_toml: &str) -> Vec<String> {
     paths
 }
 
+/// Whether a crate manifest inherits the workspace lints with no
+/// crate-level `[lints.*]` override.
+fn inherits_workspace_lints(manifest: &str) -> bool {
+    let live = live_toml(manifest);
+    live.contains("[lints]\nworkspace = true") && !live.contains("[lints.")
+}
+
+/// The body of the root manifest's `[workspace.lints.clippy]` table, or
+/// `None` when the table is missing.
+fn workspace_clippy_lints(root: &str) -> Option<String> {
+    let live = live_toml(root);
+    let (_, rest) = live.split_once("[workspace.lints.clippy]")?;
+    Some(rest.split("\n[").next().unwrap_or("").trim().to_string())
+}
+
 #[test]
 fn the_ban_and_lint_levels_are_in_place() {
-    let clippy_toml = live_toml("clippy.toml");
+    let clippy_toml = live_toml(&read("clippy.toml"));
     assert!(
         banned_paths(&clippy_toml).contains(&"std::process::Command::new".to_string()),
         "clippy.toml must keep the live Command::new ban:\n{clippy_toml}"
     );
     for krate in ["scanner", "validator"] {
-        let manifest = live_toml(&format!("{krate}/Cargo.toml"));
         assert!(
-            manifest.contains("[lints]\nworkspace = true") && !manifest.contains("[lints."),
+            inherits_workspace_lints(&read(&format!("{krate}/Cargo.toml"))),
             "{krate} must inherit the workspace lints unchanged"
         );
     }
-    let root = live_toml("Cargo.toml");
-    let clippy = root
-        .split_once("[workspace.lints.clippy]")
-        .unwrap()
-        .1
-        .split("\n[")
-        .next()
-        .unwrap()
-        .trim();
-    assert_eq!(clippy, "all = \"warn\"", "workspace clippy lints changed");
+    assert_eq!(
+        workspace_clippy_lints(&read("Cargo.toml")).as_deref(),
+        Some("all = \"warn\""),
+        "workspace clippy lints changed"
+    );
+}
+
+/// Each manifest check rejects the overrides it exists to catch, so a
+/// regression in its parsing shows up here, not only against the repo.
+#[test]
+fn manifest_checks_reject_overrides() {
+    let ok = "[package]\nname = \"x\"\n\n[lints]\nworkspace = true\n";
+    assert!(inherits_workspace_lints(ok));
+    assert!(inherits_workspace_lints(&ok.replace('\n', "\r\n")));
+    for bad in [
+        "[package]\nname = \"x\"\n",
+        "[lints]\n# workspace = true\n",
+        "[lints]\nworkspace = false\n",
+        "[lints]\nworkspace = true\n[lints.clippy]\ndisallowed_methods = \"allow\"\n",
+        "[lints.clippy]\ndisallowed_methods = \"allow\"\n",
+    ] {
+        assert!(!inherits_workspace_lints(bad), "accepted {bad:?}");
+    }
+
+    let root = |clippy: &str| {
+        format!(
+            "[workspace.lints.rust]\nunsafe_code = \"forbid\"\n\n[workspace.lints.clippy]\n{clippy}\n[profile.release]\nlto = true\n"
+        )
+    };
+    assert_eq!(
+        workspace_clippy_lints(&root("all = \"warn\"")).as_deref(),
+        Some("all = \"warn\"")
+    );
+    assert_eq!(
+        workspace_clippy_lints(&root("all = \"warn\"\n# style = \"allow\"")).as_deref(),
+        Some("all = \"warn\"")
+    );
+    for bad in [
+        "all = \"warn\"\ndisallowed_methods = \"allow\"",
+        "all = \"warn\"\nstyle = \"allow\"",
+        "all = \"allow\"",
+    ] {
+        assert_ne!(
+            workspace_clippy_lints(&root(bad)).as_deref(),
+            Some("all = \"warn\""),
+            "accepted {bad:?}"
+        );
+    }
+    assert_eq!(workspace_clippy_lints("[workspace]\nmembers = []\n"), None);
 }
 
 #[test]
@@ -417,6 +477,10 @@ fn banned_paths_reads_keys_not_text() {
         "disallowed-methods = [\n{ path = \"a::b\", reason = \"not path = \\\"std::process::Command::new\\\"\" },\n]",
         "disallowed-methods = []\nother = [{ path = \"std::process::Command::new\" }]",
         "disallowed-types = [{ path = \"std::process::Command::new\" }]",
+        "disallowed-methods = [{ reason_path = \"std::process::Command::new\" }]",
+        "disallowed-methods = [{ x-path = \"std::process::Command::new\" }]",
+        "disallowed-methods = [{ paths = \"std::process::Command::new\" }]",
+        "disallowed-methods = ]\n[{ path = \"std::process::Command::new\" }]",
     ] {
         assert!(!banned_paths(dead).contains(&cmd), "false ban in {dead:?}");
     }
