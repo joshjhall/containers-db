@@ -53,6 +53,10 @@ are rechecked monthly or longer.
 See [`docs/scanner.md`](docs/scanner.md) for the adapter authoring
 guide, the activity tier rule table, and local dry-run usage.
 
+See [`docs/baseline/hook-layering.md`](docs/baseline/hook-layering.md) for the
+repo-baseline decision that git hooks call `just` recipes and only `just` calls
+the tools.
+
 ## Schema versioning
 
 Both schemas declare `schemaVersion: 1` as a const. Every breaking change
