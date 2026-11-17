@@ -47,9 +47,11 @@ The settings lines of this block equal the shipped
 if they drift apart.
 
 shfmt has no config file here; its flags are fixed in the justfile's
-`shfmt_flags` variable (`-i 4 -ci`: 4-space indent, indented `case` arms). An
-`.editorconfig` with `[*.sh] indent_style = space` / `indent_size = 4` /
-`switch_case_indent = true` is the equivalent if a repo prefers a file.
+`shfmt_flags` variable (`-i 4 -ci`: 4-space indent, indented `case` arms). The
+rendered `.editorconfig` carries the same settings for editors (`[*.sh]
+indent_size = 4` / `switch_case_indent = true`), and the VS Code and Zed
+settings pass the same flags to shfmt. `tests/baseline/editor-config.test.sh`
+fails if any of them drifts from `shfmt_flags`.
 
 ## Hook entries
 

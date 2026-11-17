@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "timonwong.shellcheck",
+    "foxundermoon.shell-format",
+    "charliermarsh.ruff",
+    "tekumara.typos-vscode",
+    "tamasfe.even-better-toml",
+    "rvben.rumdl",
+    "dprint.dprint"
+  ]
+}

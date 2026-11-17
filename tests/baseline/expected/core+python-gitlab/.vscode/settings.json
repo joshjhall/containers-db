@@ -1,0 +1,13 @@
+{
+  "editor.formatOnSave": true,
+  "files.insertFinalNewline": true,
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": { "source.organizeImports.ruff": "explicit" }
+  },
+  "[json]": { "editor.defaultFormatter": "dprint.dprint" },
+  "[jsonc]": { "editor.defaultFormatter": "dprint.dprint" },
+  "[yaml]": { "editor.defaultFormatter": "dprint.dprint" },
+  "[toml]": { "editor.defaultFormatter": "tamasfe.even-better-toml" },
+  "files.trimTrailingWhitespace": true
+}

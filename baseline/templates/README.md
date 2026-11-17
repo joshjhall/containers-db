@@ -6,8 +6,10 @@ for the slices that apply. The specs these encode are `../core.md` and
 `../languages/<lang>.md`; the files here are what a scaffold writes.
 
 ```bash
-render.sh --slices shell,python --ci github,gitlab --out /path/to/repo
+render.sh --slices shell,python --ci github,gitlab [--ide vscode,zed] --out /path/to/repo
 ```
+
+`--ide` defaults to `vscode,zed`; `--ide none` renders neither IDE's files.
 
 ## Manifest format
 
@@ -22,12 +24,12 @@ starting with `#` are ignored.
 | -------- | ----------------------------------------------------------------------- |
 | `target` | repo-relative output path; never absolute, never containing `..`        |
 | `slice`  | owner slice: `core` (always rendered) or a language slice (`shell`, `python`) |
-| `when`   | `always`, `ci=github`, or `ci=gitlab`                                   |
+| `when`   | `always`, `ci=github`, `ci=gitlab`, `ide=vscode`, or `ide=zed`          |
 | `source` | template path relative to this directory; for a `link` row, the link text |
 | `mode`   | optional: empty (tracked), `once` (create-only), or `link` (symlink)    |
 
 **Render rule.** Keep a row when its `slice` is `core` or was selected, **and**
-its `when` is `always` or names a selected CI platform. Then, for each distinct
+its `when` is `always` or names a selected CI platform or IDE. Then, for each distinct
 `target` in first-appearance order, write the concatenation of its kept rows'
 `source` files **in manifest order**. Mark a target ending in `.sh` executable.
 Nothing else: no substitution, no escaping, no trailing-newline fix-up.
@@ -82,6 +84,12 @@ A file several slices contribute to — `lefthook.yml`, `justfile`,
   start with a blank line.
 - `justfile` — the core fragment ends inside the `lint:` recipe; slice fragments
   are 4-space recipe lines; the core tail opens `test:`.
+- `.vscode/settings.json`, `.vscode/extensions.json`, `.zed/settings.json` —
+  strict JSON, so no trailing comma: the core head opens the object (or the
+  `recommendations` array / Zed `languages` object), each slice fragment adds
+  whole entries that **each end in a comma**, and the core tail carries the
+  last entry, without a comma, and closes. `.editorconfig` is a core head plus
+  one `[*.<ext>]` section per slice, each starting with a blank line.
 - `tests/run.sh` / `bin/install-tools.sh` — a core head defines the helpers
   (`stage`, `pin`, `fetch`, `from_tar`), each slice appends a stanza, and a core
   tail turns the result into the exit code.
@@ -115,6 +123,11 @@ if they were. A complete file keeps its real extension.
   set (the ruleset requiring `merge-gate`, merge options, labels) are not
   rendered: they live in `../platform/` and `stibbons setup platform` applies
   them.
+- **Editor config**: `.editorconfig` always, and `.vscode/` / `.zed/` settings
+  for each `--ide` selected. The settings turn on format-on-save with the
+  formatter flags the justfile uses (shfmt `-i 4 -ci`, ruff, dprint, taplo).
+  They recommend each slice's extensions and defer to `.shellcheckrc` and
+  `ruff.toml` for rules (`../core.md` § 2, Editor config).
 - **`tests/run.sh`** reports each slice as `[ok]`, `[FAIL]`, `[SKIP]` (runner
   absent, exit 77), or `[none]` (no test files). With `CI=true` — set by both CI
   templates — a skip fails the run.

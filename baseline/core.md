@@ -151,6 +151,22 @@ Hygiene checks, also always on, all at pre-commit:
 Pin plugin versions **inside** the config where the tool supports it (dprint
 plugins are URLs with a version in the path).
 
+### Editor config
+
+Format-on-save must write what the hooks accept, so the baseline ships editor
+settings beside the hooks: `.editorconfig` always, plus `.vscode/settings.json`,
+`.vscode/extensions.json` and `.zed/settings.json` for the selected IDEs
+(`render.sh --ide vscode,zed`, the default; `--ide none` for neither). Each
+slice adds its formatter and linter extensions.
+
+- Editor settings run the **same formatter flags** as the justfile (shfmt's
+  `shfmt_flags`, shellcheck's `--severity=warning`). `tests/baseline/editor-config.test.sh`
+  reads the flags back from the render and fails on a mismatch.
+- They **point at the repo's configs and never repeat their rules**:
+  shellcheck and ruff find `.shellcheckrc` and `ruff.toml` themselves, and no
+  editor file carries a rule list, a line length, or a disable.
+- They are tracked targets, so an edited editor file is drift like any other.
+
 ---
 
 ## 3. CI shape

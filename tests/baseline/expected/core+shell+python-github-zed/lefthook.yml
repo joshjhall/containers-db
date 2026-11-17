@@ -1,0 +1,106 @@
+# Lefthook configuration. Install hooks: lefthook install
+# Every command calls a `just` recipe; the tool's flags live only in the
+# justfile (core § 1). The hook decides when and on which files.
+# Optional tools carry a `skip:` guard so a bare host passes over them; CI
+# installs and runs every one with no skips (bin/install-tools.sh). `just`
+# itself is required and never guarded.
+
+pre-commit:
+  parallel: true
+  commands:
+    check-merge-conflict:
+      run: just lint-conflicts {staged_files}
+
+    large-file:
+      run: just lint-large-files {staged_files}
+
+    gitleaks:
+      skip:
+        - run: "! command -v gitleaks >/dev/null 2>&1"
+      run: just lint-secrets-staged
+
+    dprint:
+      glob: "*.{json,yml,yaml}"
+      skip:
+        - run: "! command -v dprint >/dev/null 2>&1"
+      run: just fmt-config {staged_files}
+      stage_fixed: true
+
+    taplo:
+      glob: "*.toml"
+      skip:
+        - run: "! command -v taplo >/dev/null 2>&1"
+      run: just fmt-toml {staged_files}
+      stage_fixed: true
+
+    rumdl:
+      glob: "*.md"
+      skip:
+        - run: "! command -v rumdl >/dev/null 2>&1"
+      run: just lint-md {staged_files}
+
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      skip:
+        - run: "! command -v actionlint >/dev/null 2>&1"
+      run: just lint-actions {staged_files}
+
+    shellcheck:
+      glob: "*.sh"
+      skip:
+        - run: "! command -v shellcheck >/dev/null 2>&1"
+      run: just lint-sh {staged_files}
+
+    shfmt:
+      glob: "*.sh"
+      skip:
+        - run: "! command -v shfmt >/dev/null 2>&1"
+      run: just fmt-sh {staged_files}
+      stage_fixed: true
+
+    ruff-format:
+      glob: "*.py"
+      skip:
+        - run: "! command -v ruff >/dev/null 2>&1"
+      run: just fmt-py {staged_files}
+      stage_fixed: true
+
+    ruff-check:
+      glob: "*.py"
+      skip:
+        - run: "! command -v ruff >/dev/null 2>&1"
+      run: just lint-py {staged_files}
+
+commit-msg:
+  commands:
+    conform:
+      skip:
+        - run: "! command -v conform >/dev/null 2>&1"
+      run: just lint-commit-msg {1}
+
+pre-push:
+  parallel: true
+  commands:
+    dprint-check:
+      skip:
+        - run: "! command -v dprint >/dev/null 2>&1"
+      run: just fmt-config-check
+
+    taplo-check:
+      skip:
+        - run: "! command -v taplo >/dev/null 2>&1"
+      run: just fmt-toml-check
+
+    typos:
+      skip:
+        - run: "! command -v typos >/dev/null 2>&1"
+      run: just lint-typos
+
+    tests:
+      run: just test
+
+    ruff:
+      glob: "*.py"
+      skip:
+        - run: "! command -v ruff >/dev/null 2>&1"
+      run: just lint-py && just fmt-py-check

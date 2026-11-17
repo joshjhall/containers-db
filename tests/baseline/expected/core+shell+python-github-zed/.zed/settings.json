@@ -1,0 +1,34 @@
+{
+  "format_on_save": "on",
+  "ensure_final_newline_on_save": true,
+  "remove_trailing_whitespace_on_save": true,
+  "languages": {
+    "Shell Script": {
+      "tab_size": 4,
+      "formatter": {
+        "external": {
+          "command": "shfmt",
+          "arguments": ["-i", "4", "-ci", "--filename", "{buffer_path}"]
+        }
+      }
+    },
+    "Python": {
+      "tab_size": 4,
+      "language_servers": ["ruff", "..."],
+      "formatter": { "language_server": { "name": "ruff" } }
+    },
+    "JSON": {
+      "formatter": {
+        "external": { "command": "dprint", "arguments": ["fmt", "--stdin", "{buffer_path}"] }
+      }
+    },
+    "YAML": {
+      "formatter": {
+        "external": { "command": "dprint", "arguments": ["fmt", "--stdin", "{buffer_path}"] }
+      }
+    },
+    "Markdown": {
+      "remove_trailing_whitespace_on_save": false
+    }
+  }
+}
