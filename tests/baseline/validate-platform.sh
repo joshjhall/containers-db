@@ -33,6 +33,17 @@ have_yq() {
     return 1
 }
 
+# assert_one_of <value> <message> <allowed>... — plain comparison, so a spec
+# value is never spliced into a command string that assert_true evaluates.
+assert_one_of() {
+    local value="$1" message="$2" ok
+    shift 2
+    for ok in "$@"; do
+        [ "$value" = "$ok" ] && return 0
+    done
+    _fail "$message" "Actual:   '$value'" "Allowed:  $*"
+}
+
 test_spec_files_parse() {
     have_yq || return 0
     local f
@@ -65,8 +76,8 @@ test_github_merge_settings() {
         "The ruleset targets the default branch only"
     assert_equals "true true" "$(yq '[.ruleset.rules.non_fast_forward, .ruleset.rules.deletion] | join(" ")' "$g")" \
         "The ruleset blocks force-push and deletion"
-    assert_true "case \"$(yq '.ruleset.required_signatures' "$g")\" in optional | required) true ;; *) false ;; esac" \
-        "required_signatures is optional or required"
+    assert_one_of "$(yq '.ruleset.required_signatures' "$g")" \
+        "required_signatures is optional or required" optional required
 }
 
 test_gitlab_requires_pipeline_success() {
@@ -78,15 +89,17 @@ test_gitlab_requires_pipeline_success() {
     assert_equals "no_access false" \
         "$(yq '[.protected_branch.push_access_level, .protected_branch.allow_force_push] | join(" ")' "$g")" \
         "The protected default branch takes no direct push and no force-push"
-    assert_true "case \"$(yq '.approval_rule.reject_unsigned_commits' "$g")\" in optional | required) true ;; *) false ;; esac" \
-        "reject_unsigned_commits is optional or required"
+    assert_one_of "$(yq '.approval_rule.reject_unsigned_commits' "$g")" \
+        "reject_unsigned_commits is optional or required" optional required
 }
 
 test_labels_well_formed() {
     have_yq || return 0
     local l="$PLATFORM_DIR/labels.yml" bad dups count
     count="$(yq '.labels | length' "$l")"
-    assert_true "[ \"$count\" -gt 0 ]" "labels.yml lists at least one label"
+    case "$count" in
+        '' | 0 | *[!0-9]*) _fail "labels.yml lists at least one label" "Count:    '$count'" ;;
+    esac
     # An unquoted color such as 0E8A16 is a YAML float, and `test` on a float
     # errors out. Check the tag first and fail on any yq error, so a parse
     # failure can never read as "no bad labels".
