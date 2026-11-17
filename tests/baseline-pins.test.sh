@@ -136,6 +136,99 @@ rm -rf "$tree/tools/lefthook"
 run --check
 expect "missing catalog entry is refused" 1 "lefthook: no catalog entry"
 
+# tree_sum — one checksum over the whole scratch templates tree.
+tree_sum() { (cd "$tree/$T" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum); }
+
+# 13. Drift in EACH wholly generated file is caught (a file missing from
+#     FILES, or a renderer for it gone wrong, would otherwise pass). The two
+#     python .toml.tmpl files are hand-authored except their required-version
+#     line, so only that line is drift there: ruff is case 4, uv is below.
+for f in core/tools.versions shell/tools.versions core/tools.sha256 \
+    shell/tools.sha256 python/tools.sha256; do
+    fresh
+    printf 'hand-edit-marker\n' >>"$tree/$T/$f"
+    run --check
+    expect "drift caught in $f" 1 "committed baseline/templates/$f"
+done
+fresh
+sed -i 's/^required-version = .*/required-version = "==0.0.2"/' "$tree/$T/python/uv.toml.tmpl"
+run --check
+expect "hand-edited uv required-version is drift" 1 '-required-version = "==0.0.2"'
+
+# 14. --check never modifies the tree, even on drift.
+fresh
+sed -i 's/^typos=.*/typos=0.0.1/' "$tree/$T/core/tools.versions"
+before=$(tree_sum)
+run --check
+if [ "$code" = 1 ] && [ "$(tree_sum)" = "$before" ]; then
+    pass "--check leaves the tree untouched"
+else
+    fail "--check leaves the tree untouched" "exit $code or tree changed"
+fi
+
+# 15. A core tool with no default_version fails and writes NOTHING. This is
+#     the case where a die inside a printf argument used to be swallowed.
+fresh
+set_json "$tree/tools/typos/index.json" 'del(.default_version)'
+before=$(tree_sum)
+run
+expect "missing default_version fails" 1 "typos: tools/typos/index.json has no default_version"
+if [ "$(tree_sum)" = "$before" ]; then
+    pass "missing default_version writes nothing"
+else
+    fail "missing default_version writes nothing" "templates tree changed"
+fi
+
+# 16. A default_version that could escape a path or a sed replacement is refused.
+fresh
+set_json "$tree/tools/shfmt/index.json" '.default_version = "../../x"'
+run --check
+expect "path-like default_version is refused" 1 "shfmt: default_version '../../x' is not a plain version string"
+fresh
+set_json "$tree/tools/ruff/index.json" '.default_version = "1.0/&"'
+run --check
+expect "sed-metachar default_version is refused" 1 "ruff: default_version '1.0/&' is not a plain version string"
+
+# 17. A malformed pinned_checksum is refused (it would land in the
+#     integrity file install-tools.sh trusts).
+fresh
+v=$(jq -r .default_version "$tree/tools/dprint/index.json")
+set_json "$tree/tools/dprint/versions/$v.json" '.install_methods[0].verification.pinned_checksum = "ABCDEF"'
+run --check
+expect "malformed pinned_checksum is refused" 1 "dprint $v: pinned_checksum is not 64 lowercase hex"
+
+# 18. An arch outside amd64/arm64 is refused.
+fresh
+v=$(jq -r .default_version "$tree/tools/typos/index.json")
+set_json "$tree/tools/typos/versions/$v.json" '.install_methods[0].platform.arch = ["riscv64"]'
+run --check
+expect "unknown arch is refused" 1 "typos $v: unknown arch riscv64"
+
+# 19. A string-valued arch is normalised like a one-element array.
+fresh
+v=$(jq -r .default_version "$tree/tools/typos/index.json")
+set_json "$tree/tools/typos/versions/$v.json" '(.install_methods[] | select(.platform.arch == ["arm64"]) | .platform.arch) = "arm64"'
+run --check
+expect "string arch is accepted" 0 "7 files match the catalog"
+
+# 20. A tool with no install methods is refused.
+fresh
+v=$(jq -r .default_version "$tree/tools/conform/index.json")
+set_json "$tree/tools/conform/versions/$v.json" '.install_methods = []'
+run --check
+expect "empty install_methods is refused" 1 "conform $v: no install methods"
+
+# 21. A ruff template without exactly one required-version line is refused.
+fresh
+sed -i '/^required-version/d' "$tree/$T/python/ruff.toml.tmpl"
+run --check
+expect "missing required-version line is refused" 1 "found 0"
+fresh
+line=$(grep "^required-version" "$tree/$T/python/uv.toml.tmpl")
+printf "%s\n" "$line" >>"$tree/$T/python/uv.toml.tmpl"
+run --check
+expect "duplicated required-version line is refused" 1 "found 2"
+
 # 12. An unknown argument is refused.
 fresh
 run --bogus
