@@ -3,4 +3,4 @@
       glob: ".github/workflows/*.{yml,yaml}"
       skip:
         - run: "! command -v actionlint >/dev/null 2>&1"
-      run: actionlint {staged_files}
+      run: just lint-actions {staged_files}

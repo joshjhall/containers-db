@@ -10,9 +10,14 @@ lefthook.yml	python	always	python/lefthook-pre-commit.yml.tmpl
 lefthook.yml	core	always	core/lefthook/30-commit-msg-pre-push.yml.tmpl
 lefthook.yml	python	always	python/lefthook-pre-push.yml.tmpl
 justfile	core	always	core/justfile/10-head.just
-justfile	core	ci=github	core/justfile/15-actionlint.just
+justfile	core	ci=github	core/justfile/15-actionlint-lint.just
 justfile	shell	always	shell/justfile-lint.just
 justfile	python	always	python/justfile-lint.just
+justfile	core	always	core/justfile/50-recipes.just
+justfile	core	ci=github	core/justfile/55-actionlint-recipes.just
+justfile	core	ci=gitlab	core/justfile/56-gitlab-ci-recipes.just
+justfile	shell	always	shell/justfile-recipes.just
+justfile	python	always	python/justfile-recipes.just
 justfile	core	always	core/justfile/90-tail.just
 tests/run.sh	core	always	core/scripts/run-head.sh.tmpl
 tests/run.sh	shell	always	shell/run-stage.sh.tmpl

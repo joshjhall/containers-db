@@ -1,17 +1,14 @@
 # Baseline hook layering: lefthook → just → tool
 
-- **Status:** Accepted (2026-11-17)
+- **Status:** Accepted (2026-11-17); applied to the templates in
+  [#620](https://github.com/joshjhall/containers-db/issues/620)
 - **Issue:** [#559](https://github.com/joshjhall/containers-db/issues/559),
   part of the repo-baseline epic
   [#557](https://github.com/joshjhall/containers-db/issues/557)
-- **Follow-up:** template rewrite and enforcement gate in [#620](https://github.com/joshjhall/containers-db/issues/620),
-  blocked by [#558](https://github.com/joshjhall/containers-db/issues/558)
 
-The baseline spec now lives in this repo at
-[`baseline/core.md`](../../baseline/core.md) (#558), whose § 1 *Hook layout*
-links here. This record stays authoritative until #620 applies it to the
-templates and folds it into `core.md` § 1, at which point this file becomes a
-pointer.
+**The rule now lives in [`baseline/core.md`](../../baseline/core.md) § 1
+*Layering*.** This record keeps the reasoning and measurements behind it; where
+the two differ, `core.md` wins.
 
 ## Problem
 
@@ -134,11 +131,15 @@ pre-commit:
       stage_fixed: true
 ```
 
-## Enforcement gate (specified here, built in the follow-up)
+## Enforcement gate
 
-- **Fail** when any lefthook `run:` value does not start with `just `.
+Built in #620 as `tests/baseline/hook-just-gate.sh`, run over every
+slice × CI render by `tests/baseline/validate-templates.sh`:
+
+- **Fail** when any lefthook `run:` segment does not start with `just `.
   `skip:` entries may name the tool, because naming it there is how the guard
   works.
 - **Fail** when a hook's `glob:` disagrees with the whole-tree pattern of the
   recipe it calls (question 4).
+- **Fail** when a hook guards `just` or calls a recipe the justfile lacks.
 - The gate is an in-repo script, so it is never skip-guarded.

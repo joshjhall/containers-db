@@ -1,4 +1,3 @@
-# Rendered from librarian's repo-baseline templates (core § 3).
 # CI and the hooks call the same entry points: bin/install-tools.sh, then
 # `just lint` / `just test`. Every tool is installed and run with no skips.
 name: CI
@@ -40,12 +39,7 @@ jobs:
       - name: Secret scan (PR range, else full history)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then
-            gitleaks detect --redact --log-opts="$BASE_SHA..HEAD"
-          else
-            gitleaks detect --redact # no PR base: scan everything, never just HEAD~1
-          fi
+        run: just scan-secrets "$BASE_SHA"
 
   merge-gate:
     if: always() # a skipped required check counts as PASSED — never let it skip

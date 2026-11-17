@@ -1,5 +1,9 @@
-# Rendered from librarian's repo-baseline templates.
-# CI and the hooks call these same recipes (core § 3).
+# The hooks, CI, and contributors all call these recipes. A tool's flags appear
+# only in this file (core § 1): lefthook decides when and on which files, the
+# recipe decides how. File-taking recipes run on the whole tree when called
+# with no arguments.
+
+set positional-arguments
 
 default:
     @just --list
@@ -10,13 +14,166 @@ install-hooks:
 
 # Run every linter over the whole tree, no skips
 lint:
-    typos
+    just lint-typos
+    just fmt-config-check
+    just fmt-toml-check
+    just lint-md
+    just lint-actions
+    just lint-py
+    just fmt-py-check
+
+gitleaks_flags := "--redact"
+
+# Fail on merge-conflict markers. No arguments: every tracked file.
+lint-conflicts *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files)"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    # One file at a time, reading grep's three outcomes apart: 0 is a marker,
+    # 1 is clean, anything else is a file that could not be read, which must
+    # fail rather than pass as clean. A path that is not a regular file (deleted,
+    # a submodule) is skipped.
+    status=0
+    for f in "$@"; do
+        [ -f "$f" ] || continue
+        rc=0
+        grep -qE '^(<{7} |>{7} |={7}$)' -- "$f" || rc=$?
+        case "$rc" in
+            0)
+                echo "$f"
+                status=1
+                ;;
+            1) ;;
+            *)
+                echo "ERROR: could not read $f"
+                status=1
+                ;;
+        esac
+    done
+    [ "$status" -eq 0 ] || echo "ERROR: merge conflict markers found in the above file(s)"
+    exit "$status"
+
+# Fail on any file over 1 MB. No arguments: every tracked file.
+lint-large-files *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files)"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    status=0
+    for f in "$@"; do
+        [ -f "$f" ] || continue
+        size=$(wc -c <"$f")
+        if [ "$size" -gt 1048576 ]; then
+            echo "ERROR: $f is over 1 MB ($size bytes)"
+            status=1
+        fi
+    done
+    exit "$status"
+
+# Scan the staged changes for secrets (the pre-commit hook)
+lint-secrets-staged:
+    gitleaks protect --staged {{ gitleaks_flags }}
+
+# Scan history for secrets: BASE..HEAD when a base is given, else everything
+scan-secrets base="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "${1:-}" ]; then
+        gitleaks detect {{ gitleaks_flags }} --log-opts="$1..HEAD"
+    else
+        gitleaks detect {{ gitleaks_flags }} # no base: scan everything, never just HEAD~1
+    fi
+
+# Format JSON and YAML in place. No arguments: every tracked file of those types.
+fmt-config *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files '*.json' '*.yml' '*.yaml')"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    [ "$#" -eq 0 ] || dprint fmt -- "$@"
+
+# Check JSON and YAML formatting over the whole tree
+fmt-config-check:
     dprint check
+
+# Format TOML in place. No arguments: every tracked *.toml.
+fmt-toml *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files '*.toml')"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    [ "$#" -eq 0 ] || taplo fmt -- "$@"
+
+# Check TOML formatting over the whole tree
+fmt-toml-check:
     taplo fmt --check
-    rumdl check .
-    actionlint
-    ruff check .
-    ruff format --check .
+
+# Lint Markdown. No arguments: every tracked *.md.
+lint-md *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files '*.md')"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    [ "$#" -eq 0 ] || rumdl check -- "$@"
+
+# Check spelling over the whole tree
+lint-typos:
+    typos
+
+# Check a commit message against Conventional Commits (the commit-msg hook)
+lint-commit-msg file:
+    conform enforce --commit-msg-file "$1"
+
+# Lint GitHub workflows. No arguments: every tracked workflow.
+lint-actions *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    [ "$#" -eq 0 ] || actionlint -- "$@"
+
+# Format Python in place. No arguments: every tracked *.py.
+fmt-py *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files '*.py')"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    [ "$#" -eq 0 ] || ruff format -- "$@"
+
+# Lint Python. No arguments: every tracked *.py.
+lint-py *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files '*.py')"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    [ "$#" -eq 0 ] || ruff check -- "$@"
+
+# Check Python formatting without writing. No arguments: every tracked *.py.
+fmt-py-check *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$#" -eq 0 ]; then
+        list="$(git ls-files '*.py')"
+        while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
+    fi
+    [ "$#" -eq 0 ] || ruff format --check -- "$@"
 
 # Run the single test entry point
 test:

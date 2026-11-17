@@ -159,14 +159,14 @@ pre-commit:
       glob: "*.py"
       skip:
         - run: "! command -v ruff >/dev/null 2>&1"
-      run: ruff format {staged_files}
+      run: just fmt-py {staged_files}
       stage_fixed: true
 
     ruff-check:
       glob: "*.py"
       skip:
         - run: "! command -v ruff >/dev/null 2>&1"
-      run: ruff check {staged_files}
+      run: just lint-py {staged_files}
 ```
 
 `lefthook.yml` — pre-push:
@@ -178,7 +178,7 @@ pre-push:
       glob: "*.py"
       skip:
         - run: "! command -v ruff >/dev/null 2>&1"
-      run: ruff check . && ruff format --check .
+      run: just lint-py && just fmt-py-check
 
     tests:
       glob:
@@ -188,8 +188,13 @@ pre-push:
         - ".python-version"
       skip:
         - run: "! command -v uv >/dev/null 2>&1"
-      run: bash tests/run.sh
+      run: just test
 ```
+
+Each hook calls a `just` recipe; the flags live only in the justfile
+(`core.md` § 1). The slice's recipes: `fmt-py` runs `ruff format`, `lint-py`
+runs `ruff check`, and `fmt-py-check` runs `ruff format --check`. Each takes the
+staged files, or every tracked `*.py` when called with none.
 
 The `tests` glob names whole directories plus the runner's own pin files, so a
 push that touches only `tests/requirements.txt` or `uv.toml` still runs the
@@ -200,7 +205,7 @@ exactly this layout's commonest pushes — and a skipped hook reads as a pass.
 
 A bare `ruff` here is safe because of `required-version`: a wrong local ruff
 exits 2 rather than formatting differently. Pre-push re-runs ruff over the whole
-tree (pre-commit saw only the staged slice) and calls the same `tests/run.sh` CI
+tree (pre-commit saw only the staged slice) and calls the same `just test` CI
 calls (`core.md` § 1). The `tests` entry is skip-guarded on `uv` because
 lefthook reads any non-zero exit — the `77` sentinel included — as a failure,
 and a hook must never block a machine without an optional tool; run directly,

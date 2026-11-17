@@ -235,7 +235,9 @@ test_render_core_only() {
 test_render_shell_only() {
     local out="$WORKDIR/shell"
     render_to "$out" --slices shell --ci gitlab >/dev/null
-    assert_contains "$(command cat "$out/lefthook.yml")" "shellcheck --severity=warning" "A shell render's hooks run shellcheck"
+    assert_contains "$(command cat "$out/lefthook.yml")" "run: just lint-sh {staged_files}" "A shell render's hooks run shellcheck through just"
+    assert_contains "$(command cat "$out/justfile")" 'shellcheck --severity=warning -- "$@"' "...and the justfile carries its flags"
+    assert_not_contains "$(command cat "$out/lefthook.yml")" "--severity" "...and the hooks carry none"
     assert_not_contains "$(command cat "$out/lefthook.yml")" "ruff" "A shell-only render has no python hook rows"
     assert_not_contains "$(command cat "$out/tests/run.sh")" "pytest" "A shell-only tests/run.sh has no pytest stage"
     assert_not_contains "$(command cat "$out/justfile")" "actionlint" "A gitlab-only justfile does not run actionlint"
@@ -370,10 +372,73 @@ test_rendered_files_lint() {
         skip_test "actionlint not installed"
     fi
     if command -v just >/dev/null 2>&1; then
-        assert_equals "default install-hooks lint test" "$(cd "$out" && just --summary)" \
-            "The rendered justfile parses, with lint and test recipes"
+        assert_equals "default fmt-config fmt-config-check fmt-py fmt-py-check fmt-sh fmt-sh-check fmt-toml fmt-toml-check install-hooks lint lint-actions lint-commit-msg lint-conflicts lint-gitlab-ci lint-large-files lint-md lint-py lint-secrets-staged lint-sh lint-typos scan-secrets test" \
+            "$(cd "$out" && just --summary)" \
+            "The rendered justfile parses, with every hook recipe plus lint and test"
     else
         skip_test "just not installed"
+    fi
+}
+
+# --- #620: hooks call just; flags live only in the justfile --------------------
+
+test_hooks_call_only_just() {
+    local s c out t
+    for t in yq just; do
+        if ! command -v "$t" >/dev/null 2>&1; then
+            skip_test "$t not installed"
+            return 0
+        fi
+    done
+    for s in "" shell python shell,python; do
+        for c in github gitlab; do
+            out="$WORKDIR/gate-${s:-core}-$c"
+            render_to "$out" ${s:+--slices "$s"} --ci "$c" >/dev/null
+            assert_true "\"$SCRIPT_DIR/hook-just-gate.sh\" \"$out/lefthook.yml\" \"$out/justfile\" >/dev/null" \
+                "The ${s:-core} × $c render passes hook-just-gate.sh"
+        done
+    done
+}
+
+test_tool_flags_only_in_justfile() {
+    local out="$WORKDIR/full" f flag
+    for f in lefthook.yml .github/workflows/ci.yml .gitlab-ci.yml; do
+        for flag in "--severity" "-i 4 -ci" "--redact" "--check" "--commit-msg-file" "--staged"; do
+            assert_not_contains "$(command cat "$out/$f")" "$flag" "$f carries no tool flag ($flag)"
+        done
+    done
+    assert_contains "$(command cat "$out/justfile")" 'gitleaks_flags := "--redact"' "The justfile owns gitleaks' flags"
+}
+
+test_lint_conflicts_reports_despite_missing_path() {
+    if ! command -v just >/dev/null 2>&1; then
+        skip_test "just not installed"
+        return 0
+    fi
+    local repo="$WORKDIR/conflicts" rc out
+    render_to "$repo" --ci github >/dev/null
+    command printf '<<<<<<< HEAD\n' >"$repo/marked.txt"
+    command printf 'clean\n' >"$repo/clean.txt"
+    # A missing operand makes grep exit 2 even after it printed a match; the
+    # recipe must still fail and name the marked file.
+    rc=0
+    out="$(cd "$repo" && just lint-conflicts clean.txt gone.txt marked.txt 2>&1)" || rc=$?
+    assert_equals "1" "$rc" "lint-conflicts fails on a marker even when another path is missing"
+    assert_contains "$out" "marked.txt" "...naming the marked file"
+    assert_not_contains "$out" "clean.txt" "...and not the clean one"
+    rc=0
+    (cd "$repo" && just lint-conflicts clean.txt gone.txt >/dev/null 2>&1) || rc=$?
+    assert_equals "0" "$rc" "lint-conflicts passes clean files and skips a missing path"
+    # An unreadable file is an error, never "clean". Root reads anything, so
+    # the case only exists for a non-root user.
+    if [ "$(id -u)" != 0 ]; then
+        command printf 'clean\n' >"$repo/locked.txt"
+        command chmod 000 "$repo/locked.txt"
+        rc=0
+        out="$(cd "$repo" && just lint-conflicts clean.txt locked.txt 2>&1)" || rc=$?
+        command chmod 644 "$repo/locked.txt"
+        assert_equals "1" "$rc" "lint-conflicts fails on a file it cannot read"
+        assert_contains "$out" "could not read locked.txt" "...naming it"
     fi
 }
 
@@ -791,6 +856,9 @@ run_test test_render_refuses_bad_input "render.sh refuses bad flags and existing
 run_test test_render_refuses_bad_manifest "render.sh refuses a bad manifest without writing"
 run_test test_rendered_files_parse "Every rendered file parses"
 run_test test_rendered_files_lint "Rendered scripts, workflow, and justfile lint clean"
+run_test test_hooks_call_only_just "#620: every render's hooks call only just recipes that agree with their globs"
+run_test test_tool_flags_only_in_justfile "#620: tool flags appear only in the justfile"
+run_test test_lint_conflicts_reports_despite_missing_path "lint-conflicts reports markers even when a path is unreadable"
 run_test test_rendered_ci_pins "Rendered CI pins images and actions"
 run_test test_rendered_gitlab_tool_cache "Rendered GitLab CI caches tool downloads keyed on the pin files"
 run_test test_run_sh_reports_skip_and_none "The rendered tests/run.sh reports SKIP, none, and FAIL honestly"

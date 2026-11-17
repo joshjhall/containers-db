@@ -1,2 +1,2 @@
-    ruff check .
-    ruff format --check .
+    just lint-py
+    just fmt-py-check

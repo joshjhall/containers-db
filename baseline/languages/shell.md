@@ -46,8 +46,8 @@ The settings lines of this block equal the shipped
 `templates/shell/shellcheckrc.tmpl`; `tests/baseline/validate-slices.sh` fails
 if they drift apart.
 
-shfmt has no config file here; its flags are fixed in the hook and gate
-invocations (`-i 4 -ci`: 4-space indent, indented `case` arms). An
+shfmt has no config file here; its flags are fixed in the justfile's
+`shfmt_flags` variable (`-i 4 -ci`: 4-space indent, indented `case` arms). An
 `.editorconfig` with `[*.sh] indent_style = space` / `indent_size = 4` /
 `switch_case_indent = true` is the equivalent if a repo prefers a file.
 
@@ -62,15 +62,21 @@ pre-commit:
       glob: "*.sh"
       skip:
         - run: "! command -v shellcheck >/dev/null 2>&1"
-      run: shellcheck --severity=warning {staged_files}
+      run: just lint-sh {staged_files}
 
     shfmt:
       glob: "*.sh"
       skip:
         - run: "! command -v shfmt >/dev/null 2>&1"
-      run: shfmt -w -i 4 -ci {staged_files}
+      run: just fmt-sh {staged_files}
       stage_fixed: true
 ```
+
+Each hook calls a `just` recipe; the flags live only in the justfile
+(`core.md` § 1). The slice's recipes: `lint-sh` runs `shellcheck
+--severity=warning`, `fmt-sh` runs `shfmt -w -i 4 -ci`, and `fmt-sh-check` runs
+`shfmt -d -i 4 -ci` for `just lint`. Each takes the staged files, or every
+tracked `*.sh` when called with none.
 
 No separate pre-push entry: the whole-tree shellcheck and portability lint run
 inside the single test entry point, which pre-push already calls (`core.md` § 1).

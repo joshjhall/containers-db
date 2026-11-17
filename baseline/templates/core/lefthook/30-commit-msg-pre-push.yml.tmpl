@@ -4,7 +4,7 @@ commit-msg:
     conform:
       skip:
         - run: "! command -v conform >/dev/null 2>&1"
-      run: conform enforce --commit-msg-file {1}
+      run: just lint-commit-msg {1}
 
 pre-push:
   parallel: true
@@ -12,17 +12,17 @@ pre-push:
     dprint-check:
       skip:
         - run: "! command -v dprint >/dev/null 2>&1"
-      run: dprint check
+      run: just fmt-config-check
 
     taplo-check:
       skip:
         - run: "! command -v taplo >/dev/null 2>&1"
-      run: taplo fmt --check
+      run: just fmt-toml-check
 
     typos:
       skip:
         - run: "! command -v typos >/dev/null 2>&1"
-      run: typos
+      run: just lint-typos
 
     tests:
-      run: bash tests/run.sh
+      run: just test

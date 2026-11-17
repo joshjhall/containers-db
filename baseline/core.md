@@ -12,10 +12,6 @@ without judgment calls.
 
 ## 1. Hook layout
 
-The lefthook → just → tool layering decision is recorded in
-[`docs/baseline/hook-layering.md`](../docs/baseline/hook-layering.md) (#559);
-the templates adopt it in #620.
-
 The hook runner is **lefthook** (`lefthook.yml` at the repo root). Three stages,
 each with a different cost ceiling:
 
@@ -24,6 +20,36 @@ each with a different cost ceiling:
 | `pre-commit` | **staged files only**          | seconds    | formatters (auto-fix + re-stage), fast linters, secret scan, hygiene |
 | `commit-msg` | the message file (`{1}`)       | instant    | conform (Conventional Commits)                         |
 | `pre-push`   | the pushed range / whole tree  | minutes    | full lint, the single test entry point                |
+
+### Layering: lefthook → just → tool
+
+**Every hook command is a `just` recipe, and the justfile is the only place a
+tool's flags appear** (decision #559, applied in #620; background in
+[`docs/baseline/hook-layering.md`](../docs/baseline/hook-layering.md)).
+
+```text
+lefthook (when + which files)  →  just recipe (how)  →  tool
+CI                             →  just recipe (how)  →  tool
+```
+
+- **Staged-file scope.** A file-taking recipe is `name *files` under
+  `set positional-arguments`. The hook passes `{staged_files}`; with no
+  arguments the recipe runs on the whole tree, chosen by exactly **one**
+  `git ls-files '<pattern>'…` line. Files expand as `"$@"`, so paths with spaces
+  survive.
+- **Names.** Fixers are `fmt-*` and write in place; checkers are `lint-*` or
+  `*-check` and only report. Only a fixer's hook gets `stage_fixed: true`.
+- **What stays in the hook.** `glob:`, `exclude:`, `skip:`, and `stage_fixed`.
+  A recipe never tests whether its tool is installed — a missing tool fails —
+  so CI, which calls recipes directly, has no skip path.
+- **`just` is required, never skip-guarded.** Guarding it would silently disable
+  every hook at once.
+- **Gate.** A hook `run:` segment that does not start with `just `, a guard on
+  `just`, a call to an undefined recipe, or a hook `glob:` that disagrees with
+  the called recipe's `git ls-files` patterns is a failure
+  (`tests/baseline/hook-just-gate.sh` in containers-db, over every render).
+- **Cost.** About 17 ms per hook command for the extra `just` process —
+  under 100 ms of wall time on a parallel pre-commit stage.
 
 ### pre-commit
 
@@ -44,14 +70,14 @@ commit-msg:
     conform:
       skip:
         - run: "! command -v conform >/dev/null 2>&1"
-      run: conform enforce --commit-msg-file {1}
+      run: just lint-commit-msg {1}
 ```
 
 ### pre-push
 
 - Runs the **same** test entry point CI runs (§ 6), not a hand-picked subset.
 - Re-runs the cheap whole-tree checks that pre-commit only saw a slice of
-  (`dprint check`, `taplo fmt --check`, `typos` over `{push_files}`).
+  (`just fmt-config-check`, `just fmt-toml-check`, `just lint-typos`).
 - `glob:` may narrow *when* the suite runs (e.g. only for pushes touching
   source or tests); it must not narrow *what* it runs.
 
@@ -66,7 +92,7 @@ shellcheck:
   glob: "*.sh"
   skip:
     - run: "! command -v shellcheck >/dev/null 2>&1"
-  run: shellcheck --severity=warning {staged_files}
+  run: just lint-sh {staged_files}
 ```
 
 Spell it exactly that way — a `skip:` list whose `run:` exits 0 when the tool is

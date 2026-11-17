@@ -311,12 +311,16 @@ jobs:
           tests/baseline/install-tools.sh
           tests/baseline/render-parity.test.sh tests/baseline/validate-slices.sh
           tests/baseline/validate-templates.sh
+          tests/baseline/hook-just-gate.sh tests/baseline/hook-just-gate.test.sh
 
       - name: Slice contract conformance
         run: bash tests/baseline/validate-slices.sh
 
       - name: Template gate (manifest, fence parity, rendered-repo hooks)
         run: bash tests/baseline/validate-templates.sh
+
+      - name: Hook-just gate (lefthook → just → tool)
+        run: tests/baseline/hook-just-gate.test.sh
 
       - name: Render parity against goldens
         run: tests/baseline/render-parity.test.sh
