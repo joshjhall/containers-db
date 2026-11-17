@@ -772,6 +772,18 @@
         }
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T06:20:48.086564432Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44029439609",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-amd64",
+      "image_digest": "sha256:a6f108ebd6145bb957d1e3ab4fe296985aeb2f4ff94c4b7d18eaa2e5f0c20356",
+      "duration_seconds": 6.389654955,
+      "error_class": "validate"
     }
   ]
 }

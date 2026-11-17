@@ -772,6 +772,18 @@
         "python3"
       ],
       "verification_tier": 1
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T06:21:06.116776479Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44029439609",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:d30b21d673335f9d695392d8c09ca2112e634e1d54d77bac58f709a61daddd41",
+      "duration_seconds": 6.387402349,
+      "error_class": "validate"
     }
   ]
 }
