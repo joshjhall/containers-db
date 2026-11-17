@@ -291,6 +291,56 @@ test_tab_in_run_is_checked() {
         "...naming the segment after the tab"
 }
 
+test_cr_in_run_is_checked() {
+    have_tools || return 0
+    mutate crrun lefthook.yml "run: just lint-typos" 'run: "just lint-typos &&\rtee /tmp/x"'
+    gate_on crrun
+    assert_equals "1" "$RC" "A direct tool after a carriage return in run: fails the gate"
+    assert_contains "$OUT" "pre-push.typos: run: segment does not call just: tee /tmp/x" "...naming the segment after it"
+}
+
+test_tab_in_glob_is_checked() {
+    have_tools || return 0
+    # A tab inside the glob value must not cut the glob short and hide a mismatch.
+    mutate tabglob lefthook.yml 'glob: "*.toml"' 'glob: "*.toml\tx"'
+    gate_on tabglob
+    assert_equals "1" "$RC" "A glob containing a tab is compared whole, so it mismatches"
+    assert_contains "$OUT" "pre-commit.taplo: glob (*.toml x) != recipe 'fmt-toml'" "...naming the hook and the full glob"
+}
+
+test_tab_or_newline_in_skip_is_checked() {
+    have_tools || return 0
+    # A just-guard after a tab or a newline in skip: must still be seen.
+    mutate tabskip lefthook.yml 'run: "! command -v shfmt >/dev/null 2>&1"' 'run: "true\t! command -v just"'
+    gate_on tabskip
+    assert_equals "1" "$RC" "A just-guard after a tab in skip: fails the gate"
+    assert_contains "$OUT" "pre-commit.shfmt: skip: guards just" "...naming the hook"
+    mutate nlskip lefthook.yml 'run: "! command -v shfmt >/dev/null 2>&1"' 'run: "true\n! command -v just"'
+    gate_on nlskip
+    assert_equals "1" "$RC" "A just-guard on a second skip: line fails the gate"
+    assert_contains "$OUT" "pre-commit.shfmt: skip: guards just" "...naming the hook"
+}
+
+test_jobs_and_scripts_fail_closed() {
+    have_tools || return 0
+    local key
+    for key in jobs scripts; do
+        command cp -R "$WORKDIR/base" "$WORKDIR/unchecked-$key"
+        python3 -I -c '
+import sys
+p, key = sys.argv[1:3]
+s = open(p).read()
+old = "pre-push:\n"
+assert old in s
+body = "  jobs:\n    - run: shfmt -w x.sh\n" if key == "jobs" else "  scripts:\n    x.sh:\n      runner: bash\n"
+open(p, "w").write(s.replace(old, old + body, 1))
+' "$WORKDIR/unchecked-$key/lefthook.yml" "$key"
+        gate_on "unchecked-$key"
+        assert_equals "1" "$RC" "A stage using $key: fails the gate (it is not read)"
+        assert_contains "$OUT" "pre-push.$key: the gate checks only commands:" "...naming the stage and key"
+    done
+}
+
 test_missing_justfile_exits_2() {
     local rc=0
     "$GATE" "$WORKDIR/base/lefthook.yml" "$WORKDIR/nope.just" >/dev/null 2>&1 || rc=$?
@@ -328,6 +378,10 @@ run_test test_multi_recipe_glob_mismatch_fails "A two-recipe hook names only the
 run_test test_no_glob_hook_is_not_compared "A no-glob hook is not compared under rule 4"
 run_test test_patternless_recipe_keeps_checking "A pattern-less recipe does not abort the gate before later hooks"
 run_test test_tab_in_run_is_checked "A tab in run: does not hide a direct tool"
+run_test test_cr_in_run_is_checked "A carriage return in run: does not hide a direct tool"
+run_test test_tab_in_glob_is_checked "A tab in glob: does not hide a mismatch"
+run_test test_tab_or_newline_in_skip_is_checked "A tab or newline in skip: does not hide a just-guard"
+run_test test_jobs_and_scripts_fail_closed "A stage using jobs: or scripts: fails closed"
 run_test test_missing_justfile_exits_2 "A missing justfile exits 2"
 run_test test_bad_usage_exits_2 "Bad usage exits 2"
 

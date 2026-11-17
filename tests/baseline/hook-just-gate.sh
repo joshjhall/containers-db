@@ -16,7 +16,8 @@
 #   3. a hook calls a recipe the justfile does not define;
 #   4. a hook with a `glob:` calls a file-taking recipe whose whole-tree
 #      `git ls-files` patterns differ from the glob after brace expansion;
-#   5. a file-taking recipe has no `git ls-files` line, or more than one.
+#   5. a file-taking recipe has no `git ls-files` line, or more than one;
+#   6. a stage uses `jobs:` or `scripts:`, which this gate does not read.
 #
 # Exit 2 on bad usage or a missing yq/just. Needs yq (mikefarah v4) and just.
 set -euo pipefail
@@ -44,16 +45,30 @@ fail() {
 }
 
 # One line per fact: `<stage>.<command>\t<kind>\t<value>`, kind in glob|skip|run.
-# A run: body's newlines become `;` so a multi-line script splits into segments.
-# Tabs and carriage returns in any value become spaces: a raw tab would end the
-# value field early, and everything after it would go unchecked.
+# Every value is flattened to one line with no tab: tabs and carriage returns
+# become spaces and newlines become ` ; `. A raw tab would end the value field
+# early, and a raw newline would start a line the parser never ties back to
+# its hook, so either one would hide whatever followed it. In run:, the ` ; `
+# also splits a multi-line script into segments.
 hook_facts="$(yq -r '
   to_entries[] | select(.value | tag == "!!map") | .key as $s
   | (.value.commands // {}) | to_entries[] | .key as $c
-  | ( ([(.value.glob // [])] | flatten | .[] | $s + "." + $c + "\tglob\t" + (. | sub("[\t\r]"; " "))),
-      ((.value.skip // [])[] | select(tag == "!!map") | $s + "." + $c + "\tskip\t" + ((.run // "") | sub("[\t\r]"; " "))),
+  | ( ([(.value.glob // [])] | flatten | .[] | $s + "." + $c + "\tglob\t" + (. | sub("[\t\r]"; " ") | sub("\n"; " ; "))),
+      ((.value.skip // [])[] | select(tag == "!!map") | $s + "." + $c + "\tskip\t" + ((.run // "") | sub("[\t\r]"; " ") | sub("\n"; " ; "))),
       ($s + "." + $c + "\trun\t" + ((.value.run // "") | sub("[\t\r]"; " ") | sub("\n"; " ; "))) )
 ' "$hooks")"
+
+# lefthook can also run commands from a stage's `jobs:` and `scripts:`. The
+# gate checks only `commands:`, so it fails closed on either key rather than
+# passing hooks it never read.
+unchecked="$(yq -r '
+  to_entries[] | select(.value | tag == "!!map") | .key as $s
+  | .value | keys[] | select(. == "jobs" or . == "scripts") | $s + "." + .
+' "$hooks")"
+while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    fail "$u: the gate checks only commands:; move these into commands: so each run: is checked"
+done <<<"$unchecked"
 
 # One line per fact: `<recipe>\tparams\t<n variadic params>` and
 # `<recipe>\tlsfiles\t<body line naming git ls-files>`.
@@ -67,6 +82,7 @@ recipe_facts="$(cd "$(dirname "$justfile")" && just --justfile "$(basename "$jus
 
 [ -n "$hook_facts" ] || {
     fail "$hooks defines no hook commands"
+    printf '%s: %d problem(s)\n' "$hooks" "$fails"
     exit 1
 }
 
