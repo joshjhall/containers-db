@@ -49,6 +49,10 @@ set_json() {
 
 T=baseline/templates
 
+# tree_sum — one checksum over the whole scratch templates tree.
+tree_sum() { (cd "$tree/$T" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum); }
+
+
 # 1. The real tree is in sync.
 fresh
 run --check
@@ -106,11 +110,11 @@ fi
 # 8. default_version pointing at a missing versions file fails, writes nothing.
 fresh
 set_json "$tree/tools/typos/index.json" '.default_version = "0.0.0"'
-before=$(cat "$tree/$T/core/tools.versions")
+before=$(tree_sum)
 run
 expect "missing versions file fails" 1 "typos: default_version 0.0.0 has no tools/typos/versions/0.0.0.json"
-if [ "$(cat "$tree/$T/core/tools.versions")" != "$before" ]; then
-    fail "failed run writes nothing" "core/tools.versions changed"
+if [ "$(tree_sum)" != "$before" ]; then
+    fail "failed run writes nothing" "templates tree changed"
 else
     pass "failed run writes nothing"
 fi
@@ -135,9 +139,6 @@ fresh
 rm -rf "$tree/tools/lefthook"
 run --check
 expect "missing catalog entry is refused" 1 "lefthook: no catalog entry"
-
-# tree_sum — one checksum over the whole scratch templates tree.
-tree_sum() { (cd "$tree/$T" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum); }
 
 # 13. Drift in EACH wholly generated file is caught (a file missing from
 #     FILES, or a renderer for it gone wrong, would otherwise pass). The two
@@ -208,8 +209,13 @@ expect "unknown arch is refused" 1 "typos $v: unknown arch riscv64"
 fresh
 v=$(jq -r .default_version "$tree/tools/typos/index.json")
 set_json "$tree/tools/typos/versions/$v.json" '(.install_methods[] | select(.platform.arch == ["arm64"]) | .platform.arch) = "arm64"'
-run --check
-expect "string arch is accepted" 0 "7 files match the catalog"
+if ! jq -e '[.install_methods[].platform.arch | type] | index("string")' \
+    "$tree/tools/typos/versions/$v.json" >/dev/null; then
+    fail "string arch is accepted" "mutation did not land: no string-valued arch in typos $v"
+else
+    run --check
+    expect "string arch is accepted" 0 "7 files match the catalog"
+fi
 
 # 20. A tool with no install methods is refused.
 fresh
@@ -228,6 +234,22 @@ line=$(grep "^required-version" "$tree/$T/python/uv.toml.tmpl")
 printf "%s\n" "$line" >>"$tree/$T/python/uv.toml.tmpl"
 run --check
 expect "duplicated required-version line is refused" 1 "found 2"
+
+# 22. A LATE failure (the uv template, rendered after every other file) in
+#     write mode leaves the whole tree unchanged: rendering is staged, never
+#     written as it goes.
+fresh
+sed -i 's/^shfmt=.*/shfmt=0.0.9/' "$tree/$T/shell/tools.versions"
+line=$(grep "^required-version" "$tree/$T/python/uv.toml.tmpl")
+printf "%s\n" "$line" >>"$tree/$T/python/uv.toml.tmpl"
+before=$(tree_sum)
+run
+expect "late failure fails" 1 "uv: expected exactly one required-version line"
+if [ "$(tree_sum)" = "$before" ]; then
+    pass "late failure writes nothing"
+else
+    fail "late failure writes nothing" "templates tree changed (shell/tools.versions would have been rewritten)"
+fi
 
 # 12. An unknown argument is refused.
 fresh
