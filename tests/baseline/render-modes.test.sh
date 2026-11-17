@@ -142,6 +142,9 @@ test_bad_mode_rows_refused() {
     t="$(command printf '\t')"
     refused unknown-mode "unknown mode 'sometimes'" "x.md${t}core${t}always${t}$claude${t}sometimes"
     refused mixed-once-tracked "README.md mixes modes (once vs -)" "README.md${t}core${t}always${t}$claude"
+    # Modes must agree across ALL rows, not just selected ones: this conflicting
+    # row is python/gitlab and refused() renders shell,python --ci github.
+    refused mixed-unselected "README.md mixes modes (once vs -)" "README.md${t}python${t}ci=gitlab${t}$claude"
     refused mixed-tracked-once "justfile mixes modes (- vs once)" "justfile${t}core${t}always${t}$claude${t}once"
     refused link-twice "link target AGENTS.md has more than one row" "AGENTS.md${t}core${t}always${t}README.md${t}link"
     refused link-dotdot "link text must be relative without '..'" "X.md${t}core${t}always${t}../CLAUDE.md${t}link"
