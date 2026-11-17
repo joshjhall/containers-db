@@ -33,15 +33,26 @@ lint-conflicts *files:
         list="$(git ls-files)"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    # Read the matches, not grep's status: grep exits 2 when ANY operand is
-    # unreadable (a deleted or submodule path), even after it printed matches.
+    # One file at a time, reading grep's three outcomes apart: 0 is a marker,
+    # 1 is clean, anything else is a file that could not be read, which must
+    # fail rather than pass as clean. A path that is not a regular file (deleted,
+    # a submodule) is skipped.
     status=0
     for f in "$@"; do
         [ -f "$f" ] || continue
-        if grep -qE '^(<{7} |>{7} |={7}$)' -- "$f"; then
-            echo "$f"
-            status=1
-        fi
+        rc=0
+        grep -qE '^(<{7} |>{7} |={7}$)' -- "$f" || rc=$?
+        case "$rc" in
+            0)
+                echo "$f"
+                status=1
+                ;;
+            1) ;;
+            *)
+                echo "ERROR: could not read $f"
+                status=1
+                ;;
+        esac
     done
     [ "$status" -eq 0 ] || echo "ERROR: merge conflict markers found in the above file(s)"
     exit "$status"

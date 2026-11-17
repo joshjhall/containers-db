@@ -259,6 +259,28 @@ test_no_glob_hook_is_not_compared() {
     assert_equals "0" "$RC" "A no-glob hook calling a file-taking recipe passes"
 }
 
+test_patternless_recipe_keeps_checking() {
+    have_tools || return 0
+    # rule 4 asks a recipe with NO quoted pathspec for its patterns; that must
+    # not abort the gate before it reaches a direct tool call in a later hook.
+    mutate nopat2 justfile "        list=\"\$(git ls-files '*.md')\"" "        list=\"\$(find . -name '*.md')\""
+    python3 -I -c '
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "run: just lint-typos"
+assert old in s
+open(p, "w").write(s.replace(old, "run: typos", 1))
+' "$WORKDIR/nopat2/lefthook.yml"
+    gate_on nopat2
+    assert_equals "1" "$RC" "A pattern-less recipe behind a glob still fails the gate"
+    assert_contains "$OUT" "pre-commit.rumdl: glob (*.md) != recipe 'lint-md' git ls-files ()" \
+        "...with the rule-4 diagnostic for that hook"
+    assert_contains "$OUT" "pre-push.typos: run: segment does not call just: typos" \
+        "...and still reports the direct tool in a LATER hook"
+    assert_contains "$OUT" "problem(s)" "...and prints the summary, so it ran to the end"
+}
+
 test_missing_justfile_exits_2() {
     local rc=0
     "$GATE" "$WORKDIR/base/lefthook.yml" "$WORKDIR/nope.just" >/dev/null 2>&1 || rc=$?
@@ -294,6 +316,7 @@ run_test test_empty_run_fails "An empty run: fails"
 run_test test_no_hook_commands_fails "A lefthook.yml with no commands fails"
 run_test test_multi_recipe_glob_mismatch_fails "A two-recipe hook names only the recipe that disagrees with the glob"
 run_test test_no_glob_hook_is_not_compared "A no-glob hook is not compared under rule 4"
+run_test test_patternless_recipe_keeps_checking "A pattern-less recipe does not abort the gate before later hooks"
 run_test test_missing_justfile_exits_2 "A missing justfile exits 2"
 run_test test_bad_usage_exits_2 "Bad usage exits 2"
 

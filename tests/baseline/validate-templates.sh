@@ -429,6 +429,17 @@ test_lint_conflicts_reports_despite_missing_path() {
     rc=0
     (cd "$repo" && just lint-conflicts clean.txt gone.txt >/dev/null 2>&1) || rc=$?
     assert_equals "0" "$rc" "lint-conflicts passes clean files and skips a missing path"
+    # An unreadable file is an error, never "clean". Root reads anything, so
+    # the case only exists for a non-root user.
+    if [ "$(id -u)" != 0 ]; then
+        command printf 'clean\n' >"$repo/locked.txt"
+        command chmod 000 "$repo/locked.txt"
+        rc=0
+        out="$(cd "$repo" && just lint-conflicts clean.txt locked.txt 2>&1)" || rc=$?
+        command chmod 644 "$repo/locked.txt"
+        assert_equals "1" "$rc" "lint-conflicts fails on a file it cannot read"
+        assert_contains "$out" "could not read locked.txt" "...naming it"
+    fi
 }
 
 test_rendered_ci_pins() {

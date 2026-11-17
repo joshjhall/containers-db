@@ -79,7 +79,7 @@ recipe_takes_files() { [ "$(recipe_params "$1")" != 0 ]; }
 # one per line, sorted.
 recipe_patterns() {
     printf '%s\n' "$recipe_facts" | awk -F"$tab" -v r="$1" '$1 == r && $2 == "lsfiles" { print $3 }' |
-        sed -n "s/.*git ls-files//p" | grep -oE "'[^']*'" | tr -d "'" | LC_ALL=C sort
+        sed -n "s/.*git ls-files//p" | { grep -oE "'[^']*'" || true; } | tr -d "'" | LC_ALL=C sort
 }
 
 # expand_glob <glob> — one-level brace expansion (`*.{a,b}` → `*.a` `*.b`).
