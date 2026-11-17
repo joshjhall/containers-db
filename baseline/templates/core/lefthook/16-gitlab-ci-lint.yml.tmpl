@@ -10,4 +10,4 @@
       skip:
         - run: "! command -v glab >/dev/null 2>&1"
         - run: "[ -z \"$(git remote)\" ]"
-      run: glab ci lint .gitlab-ci.yml
+      run: just lint-gitlab-ci

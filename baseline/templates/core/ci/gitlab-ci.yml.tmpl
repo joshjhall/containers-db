@@ -1,4 +1,4 @@
-# Rendered from librarian's repo-baseline templates (core § 3).
+# Repo-baseline CI (core § 3).
 # GitLab runs stages in order and fails the pipeline on any failed job, so the
 # stage list IS the merge gate: require "Pipelines must succeed" on the project.
 stages: [lint, test, security]
@@ -39,9 +39,5 @@ security:
   variables:
     GIT_DEPTH: 0
   script:
-    - |
-      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
-        gitleaks detect --redact --log-opts="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"
-      else
-        gitleaks detect --redact # branch pipeline: no MR base, scan everything
-      fi
+    # An MR pipeline scans its range; a branch pipeline has no base and scans everything.
+    - just scan-secrets "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
