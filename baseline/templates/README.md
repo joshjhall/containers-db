@@ -121,10 +121,10 @@ if they were. A complete file keeps its real extension.
   plus issue and PR templates. On GitLab, where Dependabot does not run,
   `renovate.json` does the same job: it bumps the CI image's dated tag (never its
   Debian codename), and Renovate detects each slice's ecosystem itself (python's
-  `tests/requirements.txt`). Issue and MR templates go under `.gitlab/`. `CODEOWNERS` is written for both hosts. Settings only an API can
-  set (the ruleset requiring `merge-gate`, merge options, labels) are not
-  rendered: they live in `../platform/` and `stibbons setup platform` applies
-  them.
+  `tests/requirements.txt`). Issue and MR templates go under `.gitlab/`.
+  `CODEOWNERS` is written for both hosts. Settings only an API can set (the
+  ruleset requiring `merge-gate`, merge options, labels) are not rendered: they
+  live in `../platform/` and `stibbons setup platform` applies them.
 - **Editor config**: `.editorconfig` always, and `.vscode/` / `.zed/` settings
   for each `--ide` selected. The settings turn on format-on-save with the
   formatter flags the justfile uses (shfmt `-i 4 -ci`, ruff, dprint, taplo).
