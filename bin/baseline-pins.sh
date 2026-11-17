@@ -26,6 +26,10 @@
 # that is not Tier 2 sha256, a duplicate or unknown arch, or an empty render
 # exits non-zero before anything is written.
 set -euo pipefail
+# Byte-order sorting: en_US collation ignores `-`, so a locale-dependent sort
+# could order <tool>-<arch> keys differently on a dev box than in CI and make
+# --check report drift that is not there.
+export LC_ALL=C
 
 ROOT=${BASELINE_PINS_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
 T="$ROOT/baseline/templates"
