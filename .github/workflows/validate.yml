@@ -313,6 +313,8 @@ jobs:
           tests/baseline/validate-templates.sh
           tests/baseline/hook-just-gate.sh tests/baseline/hook-just-gate.test.sh
           tests/baseline/render-modes.test.sh
+          tests/baseline/validate-platform.sh
+          tests/baseline/validate-platform-mutations.test.sh
 
       - name: Slice contract conformance
         run: bash tests/baseline/validate-slices.sh
@@ -328,6 +330,12 @@ jobs:
 
       - name: Render modes (create-only stubs, AGENTS.md symlink)
         run: tests/baseline/render-modes.test.sh
+
+      - name: Platform settings spec (merge-gate, labels)
+        run: tests/baseline/validate-platform.sh
+
+      - name: Platform gate mutation self-test
+        run: tests/baseline/validate-platform-mutations.test.sh
 
   # The job above floats on `stable`, which only ever moves past the declared
   # minimum. This job builds on exactly `rust-version`, so a newer-than-MSRV

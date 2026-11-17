@@ -1,0 +1,29 @@
+# Repo-baseline GitLab settings spec (core § 3, Platform settings).
+# API-only settings: no file in the rendered repo carries them. `stibbons setup
+# platform` applies this spec through the GitLab API. Field names follow the
+# REST API (projects, protected_branches, approval_rules).
+version: 1
+
+project:
+  merge_method: merge # per-repo: `ff` for a linear history
+  squash_option: default_on
+  remove_source_branch_after_merge: true
+  # The GitLab CI template has no merge-gate job: GitLab runs stages in order
+  # and fails the pipeline on any failed job, so the pipeline itself is the
+  # gate. This is the GitLab form of requiring `merge-gate` on GitHub.
+  only_allow_merge_if_pipeline_succeeds: true
+  allow_merge_on_skipped_pipeline: false
+  only_allow_merge_if_all_discussions_are_resolved: true
+
+protected_branch:
+  name: DEFAULT_BRANCH
+  push_access_level: no_access # every change lands through a merge request
+  merge_access_level: maintainer
+  allow_force_push: false
+
+approval_rule:
+  name: default
+  approvals_required: 0 # per-repo: raise once there are reviewers
+  # Signed commits: GitLab enforces them with the push rule
+  # `reject_unsigned_commits` (Premium). Opt-in, as on GitHub.
+  reject_unsigned_commits: optional

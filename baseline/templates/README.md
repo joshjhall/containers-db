@@ -107,6 +107,14 @@ if they were. A complete file keeps its real extension.
   to `just lint`, `tests/run.sh`, and `bin/install-tools.sh` rather than adding
   jobs, so one install step covers every tool and nothing runs twice. The
   per-slice CI blocks in the slice docs are the **single-slice** form.
+- **Platform files**: on GitHub, `.github/dependabot.yml` keeps the action SHAs
+  and each slice's package pins current (core adds `github-actions`, python
+  adds `pip` for `tests/requirements.txt`, and shell has nothing to update),
+  plus issue and PR templates. On GitLab, issue and MR templates under
+  `.gitlab/`. `CODEOWNERS` is written for both hosts. Settings only an API can
+  set (the ruleset requiring `merge-gate`, merge options, labels) are not
+  rendered: they live in `../platform/` and `stibbons setup platform` applies
+  them.
 - **`tests/run.sh`** reports each slice as `[ok]`, `[FAIL]`, `[SKIP]` (runner
   absent, exit 77), or `[none]` (no test files). With `CI=true` — set by both CI
   templates — a skip fails the run.
@@ -137,8 +145,10 @@ if they were. A complete file keeps its real extension.
 ## After rendering
 
 Fill in the `<!-- per-repo: -->` sections of `README.md` and `CLAUDE.md`,
-edit every line marked `# per-repo:`, then `lefthook install`. The pins and
-action SHAs are current as of the template; bump them per `core.md` § 4. A
+edit every line marked `# per-repo:` (including the commented-out owner rule in `CODEOWNERS`),
+adjust the issue and PR/MR templates to the project, then `lefthook install`.
+The pins and action SHAs are current as of the template; bump them per
+`core.md` § 4. A
 version bump also needs the matching `tools.sha256` rows, for both arches, in
 the same commit: download the new artifacts, then record `sha256sum` of each.
 Where upstream publishes checksums, cross-check against them.
@@ -147,7 +157,9 @@ Where upstream publishes checksums, cross-check against them.
 
 1. Write its fragments under `<slice>/`, matching the shapes above.
 2. Add its rows to `manifest.tsv` beside the other slices' rows for each shared
-   target, and one row per plain config file it owns.
+   target, and one row per plain config file it owns. A slice with a package
+   ecosystem adds a `.github/dependabot.yml` entry fragment (`ci=github`)
+   between core's head and its `github-actions` entry.
 3. Run `bash tests/baseline/validate-templates.sh`: it renders every slice
    combination, parses and lints the output, pins fragments to the slice docs'
    fences, and runs the rendered hooks in a scratch repo.

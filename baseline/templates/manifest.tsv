@@ -55,3 +55,13 @@ README.md	core	always	core/docs/readme-tail.md.tmpl	once
 CLAUDE.md	core	always	core/docs/claude.md.tmpl	once
 AGENTS.md	core	always	CLAUDE.md	link
 docs/.gitkeep	core	always	core/docs/gitkeep.tmpl	once
+.github/dependabot.yml	core	ci=github	core/platform/dependabot-head.yml.tmpl
+.github/dependabot.yml	python	ci=github	python/dependabot.yml.tmpl
+.github/dependabot.yml	core	ci=github	core/platform/dependabot-actions.yml.tmpl
+CODEOWNERS	core	always	core/platform/codeowners.tmpl	once
+.github/ISSUE_TEMPLATE/bug.md	core	ci=github	core/platform/github-issue-bug.md.tmpl	once
+.github/ISSUE_TEMPLATE/feature.md	core	ci=github	core/platform/github-issue-feature.md.tmpl	once
+.github/pull_request_template.md	core	ci=github	core/platform/github-pr.md.tmpl	once
+.gitlab/issue_templates/Bug.md	core	ci=gitlab	core/platform/gitlab-issue-bug.md.tmpl	once
+.gitlab/issue_templates/Feature.md	core	ci=gitlab	core/platform/gitlab-issue-feature.md.tmpl	once
+.gitlab/merge_request_templates/Default.md	core	ci=gitlab	core/platform/gitlab-mr.md.tmpl	once

@@ -11,6 +11,7 @@ consumers pin a containers-db commit SHA until catalog snapshots land.
 | `slice-contract.md`   | The headings every language slice must carry                   |
 | `languages/<lang>.md` | One slice per language (`shell`, `python`)                     |
 | `templates/`          | `manifest.tsv`, `render.sh`, and the per-slice template files  |
+| `platform/`           | API-only host settings (rulesets, merge settings, labels)      |
 | `SOURCE`              | Provenance of the imported tree                                |
 
 Render a repo's files with:
@@ -36,6 +37,8 @@ kept by hand; deriving them from catalog data is a follow-up.
 | `tests/baseline/validate-slices.sh`    | Slices conform to the contract; config fences match templates |
 | `tests/baseline/validate-templates.sh` | Manifest, fence parity, render behavior, rendered-repo hooks |
 | `tests/baseline/render-parity.test.sh` | Every slice × CI render equals its golden (`--update` regenerates) |
+| `tests/baseline/validate-platform.sh`  | `platform/` parses; GitHub requires the CI template's `merge-gate`; labels |
+| `tests/baseline/validate-platform-mutations.test.sh` | Each single break of the spec or CI template fails `validate-platform.sh` |
 
 `tests/baseline/install-tools.sh` installs every pinned tool through the
 templates' own installer. CI runs the gates with `BASELINE_REQUIRE_TOOLS=1`,
