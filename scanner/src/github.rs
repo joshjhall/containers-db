@@ -1016,8 +1016,10 @@ mod tests {
         }
         let dir = repo_with_origin(Some(ORIGIN));
         assert_eq!(origin_url(dir.path()).unwrap(), ORIGIN);
+        // Fails only because `origin` is absent — not seeded by the template.
         let dir = repo_with_origin(None);
-        assert!(origin_url(dir.path()).is_err(), "no templated origin");
+        let err = format!("{:#}", origin_url(dir.path()).unwrap_err());
+        assert!(err.contains("No such remote 'origin'"), "{err}");
     }
 
     #[test]
