@@ -464,21 +464,111 @@ mod tests {
     use chrono::TimeZone;
     use serde_json::json;
 
-    /// Every exemption from the `disallowed-methods` ban on
-    /// `Command::new` (workspace `clippy.toml`) is one of the four known
-    /// spawns, each anchored to its function. Clippy is the enforcement:
-    /// CI's `cargo clippy --workspace --all-targets -- -D warnings` fails
-    /// on a git spawn that bypasses [`crate::git_command`] however the
-    /// program name is spelled, in `src/` and `tests/` alike (#588, #599).
-    /// This test makes widening that escape hatch a visible change: a new
-    /// `allow`/`expect`, a crate-wide `#![...]`, or the control's
-    /// exemption moving to another function fails here even under a
-    /// plain `cargo test`.
+    /// Lint attributes that can silence the `disallowed-methods` ban on
+    /// `Command::new` (workspace `clippy.toml`): the lint itself, the
+    /// `clippy::style` and `clippy::all` groups that contain it, and
+    /// `warnings`.
+    const SPAWN_BAN_SILENCERS: [&str; 4] = [
+        "clippy::disallowed_methods",
+        "clippy::style",
+        "clippy::all",
+        "warnings",
+    ];
+
+    /// The item an outer attribute starting at `at` applies to: skip the
+    /// rest of the attribute, any further attributes and comments, then
+    /// name the `fn` on the next line, or describe whatever else is there.
+    fn attributed_item(text: &str, at: usize) -> String {
+        let after = text[at..].find(']').map_or("", |e| &text[at + e + 1..]);
+        let mut open_attr = false;
+        for line in after.lines().map(str::trim) {
+            if open_attr {
+                open_attr = !line.contains(']');
+                continue;
+            }
+            if line.is_empty() || line.starts_with("//") {
+                continue;
+            }
+            if line.starts_with("#[") {
+                open_attr = !line.contains(']');
+                continue;
+            }
+            let mut rest = line;
+            while let Some(r) = [
+                "pub(crate) ",
+                "pub(super) ",
+                "pub ",
+                "async ",
+                "const ",
+                "unsafe ",
+            ]
+            .iter()
+            .find_map(|q| rest.strip_prefix(q))
+            {
+                rest = r;
+            }
+            return match rest.strip_prefix("fn ") {
+                Some(name) => name
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap()
+                    .to_string(),
+                None => format!("<non-fn item: {line}>"),
+            };
+        }
+        "<end of file>".to_string()
+    }
+
+    /// Every way to silence the `disallowed-methods` ban on `Command::new`
+    /// is one of the four known spawns, each anchored to its function.
+    /// Clippy is the enforcement: CI's `cargo clippy --workspace
+    /// --all-targets -- -D warnings` fails on a git spawn that bypasses
+    /// [`crate::git_command`] however the program name is spelled, in
+    /// `src/` and `tests/` alike (#588, #599). This test makes widening
+    /// that escape hatch a visible change even under a plain `cargo test`:
+    /// a new `allow`/`expect` of the lint, its `clippy::style` or
+    /// `clippy::all` group, or `warnings`, on any item or crate-wide, in
+    /// either workspace crate; an exemption moving to another function;
+    /// the ban dropping out of `clippy.toml`; or a `[lints]` table
+    /// overriding it. Not caught: `-A` flags passed to clippy itself.
     #[test]
     fn spawn_exemptions_are_pinned() {
-        let needle = ["clippy::", "disallowed_methods"].concat();
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut stack = vec![manifest.join("src"), manifest.join("tests")];
+        let workspace = manifest.parent().unwrap();
+        let read = |rel: &str| std::fs::read_to_string(workspace.join(rel)).unwrap();
+
+        let clippy_toml = read("clippy.toml");
+        assert!(
+            clippy_toml.contains("{ path = \"std::process::Command::new\""),
+            "clippy.toml must keep the Command::new ban:\n{clippy_toml}"
+        );
+        for krate in ["scanner", "validator"] {
+            assert!(
+                read(&format!("{krate}/Cargo.toml")).contains("[lints]\nworkspace = true\n"),
+                "{krate} must inherit the workspace lints unchanged"
+            );
+        }
+        let lints = read("Cargo.toml");
+        let lints = lints
+            .split_once("[workspace.lints.clippy]")
+            .unwrap()
+            .1
+            .split("\n[")
+            .next()
+            .unwrap()
+            .trim();
+        assert_eq!(lints, "all = \"warn\"", "workspace clippy lints changed");
+
+        let mut stack: Vec<_> = [
+            "scanner/src",
+            "scanner/tests",
+            "validator/src",
+            "validator/tests",
+        ]
+        .iter()
+        .map(|d| workspace.join(d))
+        .filter(|d| d.is_dir())
+        .collect();
         let mut found = Vec::new();
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
@@ -492,38 +582,54 @@ mod tests {
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
                 let rel = path
-                    .strip_prefix(manifest)
+                    .strip_prefix(workspace)
                     .unwrap()
                     .to_string_lossy()
                     .into_owned();
-                for (at, _) in text.match_indices(&needle) {
-                    // An inner attribute covers a whole module or crate.
-                    let attr = text[..at].rfind('#').map_or("", |h| &text[h..at]);
-                    let item = if attr.starts_with("#!") {
-                        "<inner attribute>".to_string()
-                    } else {
-                        text[at..]
-                            .split_once("fn ")
-                            .map_or("<no fn>", |(_, rest)| {
-                                rest.split(|c: char| !c.is_alphanumeric() && c != '_')
-                                    .next()
-                                    .unwrap()
-                            })
-                            .to_string()
-                    };
-                    found.push((rel.clone(), item));
+                for needle in SPAWN_BAN_SILENCERS {
+                    for (at, _) in text.match_indices(needle) {
+                        // A whole lint name, not the tail of a longer one.
+                        let prev = text[..at].chars().next_back();
+                        if prev.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                            continue;
+                        }
+                        // Only a match inside a still-open `allow`/`expect`
+                        // attribute silences anything; this skips comments
+                        // and the string literals above.
+                        let attr = text[..at].rfind('#').map_or("", |h| &text[h..at]);
+                        let silencing = ["#[allow(", "#![allow(", "#[expect(", "#![expect("]
+                            .iter()
+                            .any(|p| attr.starts_with(p))
+                            && !attr.contains(']');
+                        if !silencing {
+                            continue;
+                        }
+                        // An inner attribute covers a whole module or crate.
+                        let item = if attr.starts_with("#!") {
+                            "<inner attribute>".to_string()
+                        } else {
+                            attributed_item(&text, at)
+                        };
+                        found.push((rel.clone(), needle.to_string(), item));
+                    }
                 }
             }
         }
         found.sort();
-        let want: Vec<(String, String)> = [
-            ("src/lib.rs", "git_command"),
-            ("src/lib.rs", "run_with_env"),
-            ("src/pr/mod.rs", "hostile_home_fails_a_plain_commit"),
-            ("src/validate.rs", "npx"),
+        let want: Vec<(String, String, String)> = [
+            ("scanner/src/lib.rs", "git_command"),
+            ("scanner/src/lib.rs", "run_with_env"),
+            ("scanner/src/pr/mod.rs", "hostile_home_fails_a_plain_commit"),
+            ("scanner/src/validate.rs", "npx"),
         ]
         .iter()
-        .map(|(f, n)| (f.to_string(), n.to_string()))
+        .map(|(f, n)| {
+            (
+                f.to_string(),
+                SPAWN_BAN_SILENCERS[0].to_string(),
+                n.to_string(),
+            )
+        })
         .collect();
         assert_eq!(
             found, want,
