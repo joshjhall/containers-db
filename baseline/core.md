@@ -342,6 +342,12 @@ Every repo has:
   the hooks (`lefthook install`), and how to install the pinned tools (§ 4).
   Exact means copy-pasteable, not "run the linters".
 
+The scaffold (`templates/`) writes these as create-only stubs. It writes
+`README.md` with the layout and the "Lint and tests" section filled in for the
+selected slices, `CLAUDE.md` with its sections to fill in, the `AGENTS.md`
+symlink, and `docs/`. After that they belong to the repo: a re-render never
+overwrites them, and a drift check never reports them.
+
 ---
 
 ## 6. Test minimum

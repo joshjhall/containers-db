@@ -1,0 +1,20 @@
+
+## Usage
+
+<!-- per-repo: install, build, and the main commands. -->
+
+## Lint and tests
+
+Install the pinned tools, then the git hooks:
+
+```bash
+bin/install-tools.sh
+just install-hooks
+```
+
+Run every linter, then the test suite (the same commands CI runs):
+
+```bash
+just lint
+just test
+```

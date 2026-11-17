@@ -15,15 +15,16 @@ render.sh --slices shell,python --ci github,gitlab --out /path/to/repo
 templating language, no YAML merge, no network — so a non-LLM tool
 (`stibbons setup standards`) and a skill produce identical bytes.
 
-One row per line, four **tab**-separated columns. Blank lines and lines starting
-with `#` are ignored.
+One row per line, four or five **tab**-separated columns. Blank lines and lines
+starting with `#` are ignored.
 
 | Column   | Meaning                                                                 |
 | -------- | ----------------------------------------------------------------------- |
 | `target` | repo-relative output path; never absolute, never containing `..`        |
 | `slice`  | owner slice: `core` (always rendered) or a language slice (`shell`, `python`) |
 | `when`   | `always`, `ci=github`, or `ci=gitlab`                                   |
-| `source` | template path relative to this directory                                |
+| `source` | template path relative to this directory; for a `link` row, the link text |
+| `mode`   | optional: empty (tracked), `once` (create-only), or `link` (symlink)    |
 
 **Render rule.** Keep a row when its `slice` is `core` or was selected, **and**
 its `when` is `always` or names a selected CI platform. Then, for each distinct
@@ -31,8 +32,27 @@ its `when` is `always` or names a selected CI platform. Then, for each distinct
 `source` files **in manifest order**. Mark a target ending in `.sh` executable.
 Nothing else: no substitution, no escaping, no trailing-newline fix-up.
 
+**Modes.** A target's rows all carry the same `mode`.
+
+- *tracked* (no `mode`) is the rule above. The renderer owns the file, so a
+  drift check compares it against a fresh render.
+- `once` is **create-only**. It is written by the same rule, but only when the
+  target does not exist. An existing one is left alone even with `--force`,
+  never refuses a render, and is not drift once the user edits it. The docs
+  stubs (`README.md`, `CLAUDE.md`) and layout placeholders (`docs/.gitkeep`, an
+  empty source) are `once`.
+- `link` writes a **symlink** whose text is `source`, read relative to the link's
+  directory. The text must name a non-link target that the same render writes,
+  with no `..` and no leading `/`. A link target has exactly one row and is
+  create-only, like `once`. `AGENTS.md` → `CLAUDE.md` is the one link.
+
+A 4-column reader that ignores `mode` renders these rows wrongly (it would copy
+`CLAUDE.md` from a template path that does not exist), so a renderer must
+implement all three.
+
 That is the full contract. Any other value in `slice` is a slice the manifest
-defines; any other `when` is an error, as is a missing `source`. `render.sh` is
+defines; any other `when` or `mode` is an error, as is a missing
+`source`. `render.sh` is
 the reference implementation: it validates every row before writing anything,
 and refuses to overwrite an existing target without `--force`.
 
@@ -103,7 +123,8 @@ if they were. A complete file keeps its real extension.
 
 ## After rendering
 
-Edit every line marked `# per-repo:`, then `lefthook install`. The pins and
+Fill in the `<!-- per-repo: -->` sections of `README.md` and `CLAUDE.md`,
+edit every line marked `# per-repo:`, then `lefthook install`. The pins and
 action SHAs are current as of the template; bump them per `core.md` § 4. A
 version bump also needs the matching `tools.sha256` rows, for both arches, in
 the same commit: download the new artifacts, then record `sha256sum` of each.
