@@ -299,7 +299,8 @@ through the host API (`stibbons setup platform`):
 `platform/labels.yml` holds the label vocabulary (`type/*`, `severity/*`,
 `effort/*`, `status/*`) for both hosts. The platform files a repo does carry
 are rendered from `templates/`: Dependabot on GitHub (`github-actions` plus each
-slice's ecosystem), `CODEOWNERS`, and issue and PR/MR templates.
+slice's ecosystem), Renovate on GitLab (the CI image plus each slice's
+ecosystem), `CODEOWNERS`, and issue and PR/MR templates.
 
 ---
 
@@ -424,6 +425,7 @@ What an audit tests, per repo:
 - [ ] CI has lint → test → security, plus a single merge gate that runs `if: always()` and fails unless every stage succeeded
 - [ ] the default branch requires that gate (GitHub: `merge-gate`; GitLab: pipeline must succeed) and refuses force-push
 - [ ] on GitHub, Dependabot covers `github-actions` and each slice's package ecosystem
+- [ ] on GitLab, Renovate covers the CI image and each slice's package ecosystem
 - [ ] the secret scan covers the whole change range, falling back to full history (not `HEAD~1`) when there is no base
 - [ ] CI installs every tool and runs every check with no skip guard
 - [ ] no CI image uses `:latest` or a floating tag; every action is SHA-pinned with a version comment

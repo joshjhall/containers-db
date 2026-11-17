@@ -80,3 +80,4 @@ CODEOWNERS	core	always	core/platform/codeowners.tmpl	once
 .gitlab/issue_templates/Bug.md	core	ci=gitlab	core/platform/gitlab-issue-bug.md.tmpl	once
 .gitlab/issue_templates/Feature.md	core	ci=gitlab	core/platform/gitlab-issue-feature.md.tmpl	once
 .gitlab/merge_request_templates/Default.md	core	ci=gitlab	core/platform/gitlab-mr.md.tmpl	once
+renovate.json	core	ci=gitlab	core/platform/renovate.json.tmpl

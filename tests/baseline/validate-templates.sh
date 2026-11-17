@@ -160,7 +160,8 @@ test_core_fragments_are_inert() {
     found="$(command find "$TEMPLATES" -type f \( -name '_typos.toml' -o -name 'typos.toml' \
         -o -name 'ruff.toml' -o -name '.ruff.toml' -o -name '.shellcheckrc' -o -name 'dprint.json' \
         -o -name '.rumdl.toml' -o -name '.taplo.toml' -o -name 'taplo.toml' -o -name '.gitignore' \
-        -o -name '.gitleaks.toml' -o -name '.conform.yaml' -o -name '.editorconfig' -o -name 'uv.toml' -o -name '.python-version' \) \
+        -o -name '.gitleaks.toml' -o -name '.conform.yaml' -o -name '.editorconfig' -o -name 'uv.toml' -o -name '.python-version' \
+        -o -name 'renovate.json' \) \
         -print)"
     assert_equals "" "$found" "No template uses a name its tool would auto-discover"
     # A partial-script fragment named *.sh / *.py is picked up by the repo's
@@ -345,6 +346,24 @@ test_render_platform_files() {
         "A gitlab render writes the GitLab issue/MR templates and no .github/ (no Dependabot)"
     assert_true "[ -f \"$out/core-gh/CODEOWNERS\" ] && [ -f \"$out/sh-gl/CODEOWNERS\" ]" \
         "CODEOWNERS is written for both hosts"
+    # #633: Dependabot is GitHub-only, so a GitLab render keeps its pins
+    # current with Renovate, and a GitHub render must not get both.
+    assert_true "[ -f \"$out/sh-gl/renovate.json\" ] && [ ! -e \"$out/py-gh/renovate.json\" ] && [ ! -e \"$out/core-gh/renovate.json\" ]" \
+        "A gitlab render writes renovate.json; a github render does not"
+    if command -v jq >/dev/null 2>&1; then
+        local rule image matched=no
+        # The image rule's versioning regex must still match the CI image tag:
+        # a tag reshaped without the rule would leave Renovate unable to bump it.
+        rule="$(jq -r '.packageRules[] | select(.matchPackageNames == ["debian"]) | .versioning | sub("^regex:"; "")' \
+            "$out/sh-gl/renovate.json" 2>&1)" || rule=""
+        image="$(command sed -n 's/^  image: debian:\([^ ]*\)$/\1/p' "$out/sh-gl/.gitlab-ci.yml")"
+        assert_not_empty "$image" "The GitLab CI template's default image is debian:<tag>"
+        [ -n "$rule" ] && command printf '%s\n' "$image" | command grep -qP -- "$rule" && matched=yes
+        assert_equals "yes" "$matched" \
+            "renovate.json's debian versioning regex matches the GitLab CI image tag ($image)"
+    else
+        skip_test "jq not installed"
+    fi
 }
 
 # --- Validity of the rendered files --------------------------------------------

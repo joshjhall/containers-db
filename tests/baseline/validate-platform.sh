@@ -7,6 +7,8 @@
 #   - every spec file parses and declares `version: 1`;
 #   - the GitHub ruleset requires exactly the CI template's gate job, read from
 #     the template, so renaming the job without the spec fails here;
+#   - the required check is bound to an app when `integration_id` is set, and
+#     the ruleset names no bypass actors;
 #   - GitLab, whose template has no gate job, requires pipeline success instead;
 #   - the label vocabulary is well-formed and carries every label the issue
 #     workflow selects and parks work by.
@@ -21,6 +23,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck source=tests/baseline/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
+# shellcheck source=tests/baseline/lib/workflow-labels.sh
+source "$SCRIPT_DIR/lib/workflow-labels.sh"
 
 PLATFORM_DIR="${PLATFORM_DIR:-$REPO_ROOT/baseline/platform}"
 GITHUB_CI="${GITHUB_CI:-$REPO_ROOT/baseline/templates/core/ci/github-ci.yml.tmpl}"
@@ -70,6 +74,19 @@ test_github_requires_the_ci_gate_job() {
     assert_equals "$gate" "$required" "github.yml requires exactly the CI template's gate job, nothing else"
     assert_equals "always()" "$(yq ".jobs.\"$gate\".if" "$GITHUB_CI")" \
         "The gate job runs even when a stage fails (a skipped required check counts as passed)"
+}
+
+test_github_check_source() {
+    have_yq || return 0
+    local g="$PLATFORM_DIR/github.yml"
+    # Tag, not value: a quoted "15368" is a string GitHub's API rejects or, worse,
+    # a consumer passes through unchecked. Absent (!!null) is allowed.
+    assert_equals "" \
+        "$(yq '.ruleset.rules.required_status_checks.required_status_checks[]
+            | select((.integration_id | tag) != "!!null" and (.integration_id | tag) != "!!int") | .context' "$g")" \
+        "merge-gate's integration_id, when set, is an integer app id"
+    assert_equals "!!seq 0" "$(yq '(.ruleset.bypass_actors | tag) + " " + (.ruleset.bypass_actors | length | tostring)' "$g")" \
+        "The ruleset declares no bypass actors"
 }
 
 test_github_merge_settings() {
@@ -131,10 +148,7 @@ test_labels_cover_the_workflow() {
     have_yq || return 0
     local names want missing=""
     names="$(yq '.labels[].name' "$PLATFORM_DIR/labels.yml")"
-    for want in severity/critical severity/high severity/medium severity/low \
-        effort/trivial effort/small effort/medium effort/large \
-        status/in-progress status/pr-pending status/commit-pending status/on-hold status/blocked \
-        type/bug type/feature; do
+    for want in "${WORKFLOW_LABELS[@]}"; do
         command grep -qxF "$want" <<<"$names" || missing="$missing $want"
     done
     assert_equals "" "$missing" "labels.yml carries every label the issue workflow selects and parks by"
@@ -142,6 +156,7 @@ test_labels_cover_the_workflow() {
 
 run_test test_spec_files_parse "Every spec file parses and is versioned"
 run_test test_github_requires_the_ci_gate_job "GitHub requires exactly the CI template's merge-gate job"
+run_test test_github_check_source "GitHub binds the required check to an app and allows no bypass"
 run_test test_github_merge_settings "GitHub merge settings and ruleset protections"
 run_test test_gitlab_requires_pipeline_success "GitLab requires pipeline success and protects the default branch"
 run_test test_labels_well_formed "The label vocabulary is well-formed"
