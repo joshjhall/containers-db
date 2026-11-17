@@ -97,7 +97,7 @@ refused_through() {
 test_force_refuses_tracked_symlink() {
     # #627: --force used to truncate and append through a symlink at a
     # tracked target, writing wherever it pointed (outside --out).
-    local out="$WORKDIR/thru-real" dest="$WORKDIR/dest-real.just"
+    local out="$WORKDIR/thru-real" dest="$WORKDIR/dest-real.just" err rc
     command mkdir -p "$out"
     command printf 'theirs\n' >"$dest"
     command ln -s "$dest" "$out/justfile"
@@ -118,6 +118,17 @@ test_force_refuses_tracked_symlink() {
     command ln -s "$dest" "$out/bin"
     refused_through parent "$out" "refusing to write through symlink $out/bin"
     assert_equals "" "$(command ls -A "$dest")" "parent: ...nothing is written into the linked directory"
+
+    # The walk must reach a deeper segment too: .github is real, workflows is
+    # the link above the tracked .github/workflows/ci.yml.
+    out="$WORKDIR/thru-nested" dest="$WORKDIR/elsewhere-wf"
+    command mkdir -p "$out/.github" "$dest"
+    command ln -s "$dest" "$out/.github/workflows"
+    err="$("$RENDER" --slices shell,python --ci github --out "$out" --force 2>&1 >/dev/null)" && rc=0 || rc=$?
+    assert_equals "2" "$rc" "nested: --force render exits 2"
+    assert_contains "$err" "refusing to write through symlink $out/.github/workflows" "nested: ...refused at the second segment"
+    assert_equals "" "$(command ls -A "$dest")" "nested: ...nothing is written into the linked directory"
+    assert_true "[ ! -e \"$out/CLAUDE.md\" ]" "nested: ...and writes no other target"
 
     # An absent create-only target (docs/.gitkeep is `once`) under a symlinked
     # directory would be created through it just the same.
