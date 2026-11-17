@@ -16,8 +16,9 @@
 #
 # Refuses (exit 2) an unknown slice or CI platform, a manifest row with an
 # unknown `when` or `mode` or a missing source, an absolute or `..` target, a
-# target whose rows disagree on `mode`, a bad link, and an existing tracked
-# target unless --force. Nothing is written until every check passes. Prints
+# target whose rows disagree on `mode`, a bad link, an existing tracked target
+# unless --force, and, even with --force, a symlink at or above a tracked
+# target inside --out. Nothing is written until every check passes. Prints
 # each target it wrote. bash-3.2 clean.
 set -euo pipefail
 
@@ -147,6 +148,20 @@ if [ "$force" -eq 0 ]; then
         if [ -e "$out/$t" ] || [ -L "$out/$t" ]; then die "refusing to overwrite $out/$t (pass --force)"; fi
     done
 fi
+# A tracked target is truncated and appended to, and both redirections (and
+# mkdir -p) follow symlinks. So a symlink at the target, or at any directory
+# between --out and it, would send the write wherever the link points, which
+# can be outside --out. Refuse it, even with --force. --out itself may be a link.
+for t in $targets; do
+    [ -z "$(mode_of "$t")" ] || continue
+    p="" rest="$t"
+    while [ -n "$rest" ]; do
+        seg="${rest%%/*}"
+        case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac
+        p="${p:+$p/}$seg"
+        if [ -L "$out/$p" ]; then die "refusing to write through symlink $out/$p"; fi
+    done
+done
 
 # Pass 2: write. A create-only target (once, link) that already exists — even
 # as a dangling symlink — is the user's now and is left alone. Each written

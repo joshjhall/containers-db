@@ -5,6 +5,8 @@
 # symlink (`link`). This pins what render.sh does with each:
 #   - a `once` target is written when absent and never overwritten, even with
 #     --force, and an existing one never blocks a render;
+#   - a symlink at or above a tracked target is refused even with --force,
+#     never written through (#627);
 #   - a `link` target is a real symlink with the manifest's link text;
 #   - the README stub's "Lint and tests" commands exist in the same render;
 #   - a malformed mode row is refused before anything is written.
@@ -80,6 +82,48 @@ test_once_does_not_block() {
     assert_equals "2" "$rc" "A dangling symlink at a tracked target refuses a render without --force"
     assert_contains "$err" "refusing to overwrite" "...by the overwrite check"
     assert_true "[ ! -e \"$tracked/nowhere.just\" ]" "...and nothing is written through it"
+}
+
+# refused_through <case> <out> <expected-error> — a --force render into <out>
+# must exit 2 with <expected-error> and create no other target (all-or-nothing).
+refused_through() {
+    local name="$1" out="$2" want="$3" rc=0 err
+    err="$("$RENDER" --slices shell,python --ci github --out "$out" --force 2>&1 >/dev/null)" || rc=$?
+    assert_equals "2" "$rc" "$name: --force render exits 2"
+    assert_contains "$err" "$want" "$name: ...refused by the symlink check"
+    assert_true "[ ! -e \"$out/CLAUDE.md\" ] && [ ! -e \"$out/.github\" ]" "$name: ...and writes no other target"
+}
+
+test_force_refuses_tracked_symlink() {
+    # #627: --force used to truncate and append through a symlink at a
+    # tracked target, writing wherever it pointed (outside --out).
+    local out="$WORKDIR/thru-real" dest="$WORKDIR/dest-real.just"
+    command mkdir -p "$out"
+    command printf 'theirs\n' >"$dest"
+    command ln -s "$dest" "$out/justfile"
+    refused_through resolving "$out" "refusing to write through symlink $out/justfile"
+    assert_equals "theirs" "$(command cat "$dest")" "resolving: ...the link's destination is untouched"
+    assert_true "[ -L \"$out/justfile\" ]" "resolving: ...and the link is kept"
+
+    out="$WORKDIR/thru-dangle" dest="$WORKDIR/dest-dangle.just"
+    command mkdir -p "$out"
+    command ln -s "$dest" "$out/justfile"
+    refused_through dangling "$out" "refusing to write through symlink $out/justfile"
+    assert_true "[ ! -e \"$dest\" ]" "dangling: ...nothing is created at the link's destination"
+
+    # A symlinked directory above a tracked target redirects mkdir -p and the
+    # write just the same.
+    out="$WORKDIR/thru-parent" dest="$WORKDIR/elsewhere-dir"
+    command mkdir -p "$out" "$dest"
+    command ln -s "$dest" "$out/bin"
+    refused_through parent "$out" "refusing to write through symlink $out/bin"
+    assert_equals "" "$(command ls -A "$dest")" "parent: ...nothing is written into the linked directory"
+
+    # --out itself being a link is the user's choice of destination.
+    command mkdir -p "$WORKDIR/real-out"
+    command ln -s "$WORKDIR/real-out" "$WORKDIR/out-link"
+    "$RENDER" --ci github --out "$WORKDIR/out-link" --force >/dev/null
+    assert_true "[ -f \"$WORKDIR/real-out/justfile\" ]" "A symlinked --out is rendered into"
 }
 
 test_link_is_symlink() {
@@ -204,6 +248,7 @@ test_manifest_declares_docs_minimum() {
 run_test test_once_survives_force "A once target survives --force"
 run_test test_once_recreated_when_absent "A missing once target is re-created"
 run_test test_once_does_not_block "An existing once/link target never blocks a render"
+run_test test_force_refuses_tracked_symlink "--force never writes through a symlink at or above a tracked target"
 run_test test_link_is_symlink "A link target is a symlink with the manifest's text"
 run_test test_readme_commands_exist "README stub commands exist in every render"
 run_test test_bad_mode_rows_refused "Malformed mode rows are refused by their own check, without writing"
