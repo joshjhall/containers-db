@@ -33,8 +33,14 @@ test_once_survives_force() {
     command printf 'edited\n' >"$out/justfile"
     list="$("$RENDER" --slices shell --ci github --out "$out" --force)"
     assert_equals "# Mine" "$(command cat "$out/README.md")" "--force leaves an edited once target alone"
-    assert_not_contains "$(command cat "$out/justfile")" "edited" "--force still rewrites a tracked target"
+    "$RENDER" --slices shell --ci github --out "$WORKDIR/once-fresh" >/dev/null
+    assert_equals "$(command cat "$WORKDIR/once-fresh/justfile")" "$(command cat "$out/justfile")" \
+        "--force still rewrites a tracked target to the fresh render"
     assert_not_contains "$list" "README.md" "A skipped once target is not reported as written"
+    command rm "$out/AGENTS.md"
+    command ln -s README.md "$out/AGENTS.md"
+    "$RENDER" --slices shell --ci github --out "$out" --force >/dev/null
+    assert_equals "README.md" "$(command readlink "$out/AGENTS.md")" "--force leaves an existing link alone"
 }
 
 test_once_recreated_when_absent() {
@@ -83,7 +89,11 @@ test_readme_commands_exist() {
         for ci in github gitlab; do
             out="$WORKDIR/cmd-${slices:-core}-$ci"
             "$RENDER" --slices "$slices" --ci "$ci" --out "$out" >/dev/null
-            recipes="$(cd "$out" && just --summary 2>/dev/null | command tr ' ' '\n')"
+            if ! recipes="$(cd "$out" && just --summary 2>&1)"; then
+                _fail "just --summary failed in ${slices:-core}/$ci" "$recipes"
+                continue
+            fi
+            recipes="$(command tr ' ' '\n' <<<"$recipes")"
             n=0
             while IFS= read -r cmd; do
                 n=$((n + 1))
@@ -157,7 +167,9 @@ test_link_in_subdirectory() {
 
 test_manifest_declares_docs_minimum() {
     # core.md § 5: README, CLAUDE.md, AGENTS.md as a link to it — all create-only.
-    assert_contains "$(command cat "$MANIFEST")" "$(command printf 'AGENTS.md\tcore\talways\tCLAUDE.md\tlink')" "AGENTS.md links to CLAUDE.md"
+    assert_equals "core always CLAUDE.md link" \
+        "$(command awk -F '\t' '$1 == "AGENTS.md" { print $2, $3, $4, $5 }' "$MANIFEST")" \
+        "AGENTS.md has exactly one row: a core link to CLAUDE.md"
     assert_equals "" "$(command awk -F '\t' '($1 == "README.md" || $1 == "CLAUDE.md") && $5 != "once"' "$MANIFEST")" \
         "Every README.md / CLAUDE.md row is create-only"
 }
