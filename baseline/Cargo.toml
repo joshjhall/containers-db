@@ -1,0 +1,16 @@
+[package]
+name = "repo-baseline"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The repo-baseline templates, embedded for consumers that pin a containers-db commit"
+build = "build.rs"
+
+[lib]
+name = "repo_baseline"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

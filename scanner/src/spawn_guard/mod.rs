@@ -8,7 +8,7 @@
 //! a visible change even under a plain `cargo test`: a new `allow` or
 //! `expect` (bare or inside `cfg_attr`) of the lint, its `clippy::style`
 //! or `clippy::all` group, or `warnings`, on any item or crate-wide, in
-//! either workspace crate; an exemption moving to another item; the ban
+//! any workspace crate; an exemption moving to another item; the ban
 //! leaving `clippy.toml`; a crate-level `clippy.toml` or `.cargo` config
 //! shadowing it; or a `[lints]` table, crate or workspace, overriding it.
 //!
@@ -104,7 +104,7 @@ fn the_ban_and_lint_levels_are_in_place() {
         banned_paths(&clippy_toml).contains(&"std::process::Command::new".to_string()),
         "clippy.toml must keep the live Command::new ban:\n{clippy_toml}"
     );
-    for krate in ["scanner", "validator"] {
+    for krate in ["scanner", "validator", "baseline"] {
         assert!(
             inherits_workspace_lints(&read(&format!("{krate}/Cargo.toml"))),
             "{krate} must inherit the workspace lints unchanged"
@@ -122,7 +122,7 @@ fn the_ban_and_lint_levels_are_in_place() {
         "workspace rust lints changed; `warnings = \"allow\"` there silences the ban"
     );
     assert_eq!(
-        shadowing_configs(workspace(), &["scanner", "validator"]),
+        shadowing_configs(workspace(), &["scanner", "validator", "baseline"]),
         Vec::<String>::new(),
         "a crate-level clippy.toml or .cargo config would shadow the workspace ban"
     );
@@ -132,7 +132,7 @@ fn the_ban_and_lint_levels_are_in_place() {
 fn spawn_exemptions_are_pinned() {
     let ws = workspace();
     // Whole crates, so build.rs, benches/ and examples/ count too.
-    let dirs = ["scanner", "validator"];
+    let dirs = ["scanner", "validator", "baseline"];
     let mut found = Vec::new();
     for path in rust_files(ws, &dirs) {
         let rel = path

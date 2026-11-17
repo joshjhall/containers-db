@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["validator", "scanner"]
+members = ["validator", "scanner", "baseline"]
 
 [workspace.package]
 edition = "2024"
