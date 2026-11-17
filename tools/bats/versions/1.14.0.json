@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "tool": "bats",
+  "version": "1.14.0",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "bats-tarball",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "amd64",
+          "arm64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/bats-core/bats-core/archive/refs/tags/v1.14.0.tar.gz",
+      "prefix": "/usr/local",
+      "strip_components": 1,
+      "binaries": [
+        "bats"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177"
+      },
+      "bin_source_dir": "bin"
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-11-17T00:00:00Z",
+    "updated_at": "2026-11-17T00:00:00Z",
+    "schema_version": 1
+  }
+}

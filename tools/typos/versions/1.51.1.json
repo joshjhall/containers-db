@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "tool": "typos",
+  "version": "1.51.1",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "typos-amd64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "amd64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/crate-ci/typos/releases/download/v1.51.1/typos-v1.51.1-x86_64-unknown-linux-musl.tar.gz",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "typos"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "93c301fd4120ff076e2cc2a6d6a61cab4a4bdb81899287c0938b452e56d1f454"
+      }
+    },
+    {
+      "name": "typos-arm64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "arm64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/crate-ci/typos/releases/download/v1.51.1/typos-v1.51.1-aarch64-unknown-linux-musl.tar.gz",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "typos"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "2ac5e37b3236b3c07dec5cdf1527acf143aec4674a6089b0bf424d021b35e099"
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-11-17T00:00:00Z",
+    "updated_at": "2026-11-17T00:00:00Z",
+    "schema_version": 1
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "tool": "conform",
+  "version": "0.1.0-alpha.31",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "conform-amd64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "amd64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/siderolabs/conform/releases/download/v0.1.0-alpha.31/conform-linux-amd64",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "conform"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "344dd5fad42c61bf739491b490d453943d06f9aaed5488a738c0bbd4588b6914"
+      }
+    },
+    {
+      "name": "conform-arm64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "arm64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/siderolabs/conform/releases/download/v0.1.0-alpha.31/conform-linux-arm64",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "conform"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "38fcd8630e2ab5804fa1c8c9ccc388bf9f6f55647a263c819851f5d2ae182195"
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-11-17T00:00:00Z",
+    "updated_at": "2026-11-17T00:00:00Z",
+    "schema_version": 1
+  }
+}

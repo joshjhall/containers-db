@@ -113,29 +113,29 @@ jobs:
             -s schema/tool.schema.json \
             "${data_args[@]}"
 
-      - name: Validate rust version files against version schema
+      - name: Validate every tool version file against version schema
+        # One glob, like the index step above: a new tools/<name>/versions/
+        # is covered without editing this workflow (#623 added 14 tools whose
+        # version files the old per-tool rust/go/node steps never checked).
+        # system_package tools have no versions/, so require only a non-empty
+        # total match rather than one per dir.
         run: |
+          set -euo pipefail
+          shopt -s nullglob
+          versions=(tools/*/versions/*.json)
+          if [ "${#versions[@]}" -eq 0 ]; then
+            echo "::error::No tools/*/versions/*.json found — glob validated nothing"
+            exit 1
+          fi
+          data_args=()
+          for f in "${versions[@]}"; do
+            data_args+=(-d "$f")
+          done
           npx --no-install ajv validate \
             --spec=draft2020 \
             -c ajv-formats \
             -s schema/version.schema.json \
-            -d "tools/rust/versions/*.json"
-
-      - name: Validate go version files against version schema
-        run: |
-          npx --no-install ajv validate \
-            --spec=draft2020 \
-            -c ajv-formats \
-            -s schema/version.schema.json \
-            -d "tools/go/versions/*.json"
-
-      - name: Validate node version files against version schema
-        run: |
-          npx --no-install ajv validate \
-            --spec=draft2020 \
-            -c ajv-formats \
-            -s schema/version.schema.json \
-            -d "tools/node/versions/*.json"
+            "${data_args[@]}"
 
       - name: Validate tier example fixtures against version schema
         run: |
@@ -178,6 +178,19 @@ jobs:
         # One-off cleanup for evidence re-test repeats (#450); keeps the
         # mixed-result guard and the triple-set invariant pinned.
         run: tests/dedupe-tested.test.sh
+
+      - name: Lint baseline pin generator
+        run: shellcheck bin/baseline-pins.sh tests/baseline-pins.test.sh
+
+      - name: Test baseline pin generator
+        # Drift, write-path and refusal cases, each on a scratch copy (#623).
+        run: tests/baseline-pins.test.sh
+
+      - name: Baseline pins match the catalog
+        # The repo-baseline tools.versions / tools.sha256 / ruff+uv
+        # required-version are generated from tools/<id>/. A hand edit to a
+        # pin file, or a catalog change that was not regenerated, fails here.
+        run: bin/baseline-pins.sh --check
 
       - name: Negative test — broken fixtures must each fail validation
         run: |

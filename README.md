@@ -62,6 +62,10 @@ See [`docs/baseline/hook-layering.md`](docs/baseline/hook-layering.md) for the
 repo-baseline decision that git hooks call `just` recipes and only `just` calls
 the tools.
 
+The baseline's tool pins (`tools.versions`, `tools.sha256`, ruff/uv
+`required-version`) are generated from the catalog's `tools/<id>/` entries by
+`bin/baseline-pins.sh`; see [`docs/baseline/tool-pins.md`](docs/baseline/tool-pins.md).
+
 ## Schema versioning
 
 Both schemas declare `schemaVersion: 1` as a const. Every breaking change

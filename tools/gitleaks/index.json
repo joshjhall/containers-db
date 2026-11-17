@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "gitleaks",
+  "display_name": "Gitleaks",
+  "kind": "cli",
+  "homepage": "https://github.com/gitleaks/gitleaks",
+  "source_repo": "https://github.com/gitleaks/gitleaks",
+  "license": "MIT",
+  "activity": {
+    "score": "active",
+    "scan_cadence_days": 30,
+    "scanned_at": "2026-11-17T00:00:00Z"
+  },
+  "channels": {
+    "stable": {
+      "default": true,
+      "description": "Upstream tagged releases."
+    }
+  },
+  "default_version": "8.30.1",
+  "available": [
+    {
+      "version": "8.30.1"
+    }
+  ],
+  "validation_tiers": {
+    "tier2": {
+      "available": true,
+      "notes": "Per-arch sha256 of the release asset pinned in the version file; it is the source bin/baseline-pins.sh renders into the repo-baseline tools.sha256."
+    }
+  },
+  "version_args": [
+    "version"
+  ]
+}

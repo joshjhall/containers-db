@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "tool": "lefthook",
+  "version": "2.2.1",
+  "channel": "stable",
+  "install_methods": [
+    {
+      "name": "lefthook-amd64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "amd64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/evilmartians/lefthook/releases/download/v2.2.1/lefthook_2.2.1_Linux_x86_64",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "lefthook"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "ebee376ee803749c39dd8c6fecff47e08e63e03b02b5ef62e3ea616e4312b1e0"
+      }
+    },
+    {
+      "name": "lefthook-arm64",
+      "method_kind": "binary-tarball",
+      "platform": {
+        "os": [
+          "debian",
+          "ubuntu",
+          "rhel",
+          "alpine"
+        ],
+        "arch": [
+          "arm64"
+        ]
+      },
+      "dependencies": [
+        {
+          "tool": "ca_certificates"
+        }
+      ],
+      "source_url_template": "https://github.com/evilmartians/lefthook/releases/download/v2.2.1/lefthook_2.2.1_Linux_aarch64",
+      "prefix": "/usr/local",
+      "strip_components": 0,
+      "binaries": [
+        "lefthook"
+      ],
+      "verification": {
+        "tier": 2,
+        "algorithm": "sha256",
+        "pinned_checksum": "c1903087d643cb26187665eaf6f484a8a295af438dad01138f3e54d6b4985b41"
+      }
+    }
+  ],
+  "metadata": {
+    "added_at": "2026-11-17T00:00:00Z",
+    "updated_at": "2026-11-17T00:00:00Z",
+    "schema_version": 1
+  }
+}
