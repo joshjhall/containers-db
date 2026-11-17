@@ -170,6 +170,20 @@ test_mutated_flags_fail_parity() {
     assert_contains "$got" "vscode shellformat.flag" "A drifted shfmt_flags fails the vscode check"
     assert_contains "$got" "zed shfmt arguments" "A drifted shfmt_flags fails the zed check"
     assert_contains "$got" ".editorconfig [*.sh] indent_size" "A drifted shfmt_flags fails the .editorconfig check"
+    assert_contains "$got" "zed Shell Script tab_size" "A drifted shfmt -i fails the zed tab_size check"
+}
+
+test_mutated_case_indent_fails_parity() {
+    # Dropping -ci leaves the indent alone, so only the switch_case_indent
+    # branch can catch it.
+    local copy="$WORKDIR/tmpl-copy4" out="$WORKDIR/mutated4" got
+    command cp -R "$TEMPLATES" "$copy"
+    assert_true "mutate 's/^shfmt_flags := \"-i 4 -ci\"\$/shfmt_flags := \"-i 4\"/' \"$copy/shell/justfile-recipes.just\"" \
+        "The -ci mutation applied to the scratch copy"
+    RENDER_MANIFEST="$copy/manifest.tsv" "$copy/render.sh" --slices shell --out "$out" >/dev/null
+    got="$(editor_parity "$out")"
+    assert_contains "$got" "switch_case_indent disagrees with shfmt -ci" "A dropped -ci fails the .editorconfig check"
+    assert_not_contains "$got" "indent_size" "...and only the case-indent check (indent unchanged)"
 }
 
 test_mutated_severity_and_ruff_fail_parity() {
@@ -228,6 +242,7 @@ run_test test_unknown_ide_refused "An unknown IDE is refused without writing"
 run_test test_editor_json_parses "Composed editor JSON parses for every slice x IDE"
 run_test test_formatter_flags_match_hooks "Editor formatter flags equal the hooks' (justfile) flags"
 run_test test_mutated_flags_fail_parity "A drifted shfmt_flags fails the parity check"
+run_test test_mutated_case_indent_fails_parity "A dropped -ci fails the switch_case_indent check"
 run_test test_mutated_severity_and_ruff_fail_parity "A drifted severity or non-ruff formatter fails the parity check"
 run_test test_mutated_guards_fail_parity "A restated rule or slice-less shell settings fail the parity check"
 run_test test_ide_argument_edges "--ide edge inputs: bare flag, duplicates, none+unknown"
