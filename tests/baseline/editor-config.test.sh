@@ -10,8 +10,9 @@
 #     justfile's `shfmt_flags` and shellcheck severity are read back and compared
 #     to the editor files, so a flag bump on one side fails here;
 #   - editor files never restate a linter rule (they defer to .shellcheckrc / ruff.toml);
-#   - a mutated `shfmt_flags` in a scratch template copy makes the parity check
-#     fail, so the green above is not vacuous.
+#   - a mutated `shfmt_flags`, shellcheck severity or Python formatter in a
+#     scratch template copy makes the parity check fail, so the green above is
+#     not vacuous.
 
 set -euo pipefail
 
@@ -159,10 +160,43 @@ test_mutated_flags_fail_parity() {
     assert_contains "$got" ".editorconfig [*.sh] indent_size" "A drifted shfmt_flags fails the .editorconfig check"
 }
 
+test_mutated_severity_and_ruff_fail_parity() {
+    # The shellcheck-severity and ruff-formatter branches must also fail when
+    # drifted, not only pass on the real templates. Scratch copy again.
+    local copy="$WORKDIR/tmpl-copy2" out="$WORKDIR/mutated2" got
+    command cp -R "$TEMPLATES" "$copy"
+    command sed -i 's/shellcheck --severity=warning/shellcheck --severity=error/' "$copy/shell/justfile-recipes.just"
+    command sed -i 's/"charliermarsh.ruff"/"ms-python.black-formatter"/' "$copy/python/vscode-settings.json.tmpl"
+    command sed -i 's/"name": "ruff"/"name": "pylsp"/' "$copy/python/zed-settings.json.tmpl"
+    assert_contains "$(command cat "$copy/shell/justfile-recipes.just")" "--severity=error" \
+        "The severity mutation applied to the scratch copy"
+    RENDER_MANIFEST="$copy/manifest.tsv" "$copy/render.sh" --slices shell,python --out "$out" >/dev/null
+    got="$(editor_parity "$out")"
+    assert_contains "$got" "vscode shellcheck.customArgs" "A drifted shellcheck severity fails the vscode check"
+    assert_contains "$got" "vscode [python] formatter is not ruff" "A non-ruff vscode Python formatter fails"
+    assert_contains "$got" "zed Python formatter is not the ruff language server" "A non-ruff zed Python formatter fails"
+}
+
+test_ide_argument_edges() {
+    local out="$WORKDIR/bare" rc=0
+    "$RENDER" --ci github --out "$out" --ide >/dev/null 2>&1 || rc=$?
+    assert_exit 2 "$rc" "A bare --ide (no value) is a usage error"
+    assert_true "[ ! -e \"$out\" ]" "A bare --ide writes nothing"
+    out="$WORKDIR/dup"
+    "$RENDER" --ci github --ide vscode,vscode --out "$out" >/dev/null
+    assert_equals ".editorconfig .vscode/extensions.json .vscode/settings.json" "$(editor_targets "$out")" \
+        "A repeated IDE selects it once"
+    rc=0
+    "$RENDER" --ci github --ide none,emacs --out "$WORKDIR/none-bad" >/dev/null 2>&1 || rc=$?
+    assert_exit 2 "$rc" "none does not mask an unknown IDE"
+}
+
 run_test test_ide_selection "--ide selects exactly its editor targets (default: both)"
 run_test test_unknown_ide_refused "An unknown IDE is refused without writing"
 run_test test_editor_json_parses "Composed editor JSON parses for every slice x IDE"
 run_test test_formatter_flags_match_hooks "Editor formatter flags equal the hooks' (justfile) flags"
 run_test test_mutated_flags_fail_parity "A drifted shfmt_flags fails the parity check"
+run_test test_mutated_severity_and_ruff_fail_parity "A drifted severity or non-ruff formatter fails the parity check"
+run_test test_ide_argument_edges "--ide edge inputs: bare flag, duplicates, none+unknown"
 
 generate_report
