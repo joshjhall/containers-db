@@ -109,10 +109,17 @@ test_skip_guarded_just_fails() {
 
 test_tool_in_skip_is_allowed() {
     have_tools || return 0
-    # The clean render already names every tool in skip:; this pins that the
-    # rule-1 scan never reads skip: entries.
-    gate_on base
-    assert_not_contains "$OUT" "command -v" "skip: entries naming the tool are exempt from rule 1"
+    # Precondition: the render really guards hooks by naming the tool in skip:,
+    # so a pass below proves those entries are exempt rather than absent.
+    assert_contains "$(command cat "$WORKDIR/base/lefthook.yml")" 'run: "! command -v shfmt >/dev/null 2>&1"' \
+        "The render names shfmt in a skip: guard"
+    # A skip: entry that names a tool in a way rule 1 would reject if it scanned
+    # skip: bodies: no leading `just `, several segments, a pipe.
+    mutate skiptool lefthook.yml 'run: "! command -v shfmt >/dev/null 2>&1"' \
+        'run: "shfmt --version | grep -q 3 && ! true"'
+    gate_on skiptool
+    assert_equals "0" "$RC" "A tool named in skip: does not trip rule 1"
+    assert_not_contains "$OUT" "shfmt --version" "...and the skip: body is never reported"
 }
 
 test_unknown_recipe_fails() {
@@ -136,14 +143,48 @@ test_multi_segment_direct_tool_fails() {
 
 test_multiline_run_fails() {
     have_tools || return 0
+    # Three lines, offender LAST: every newline must split, not just the first.
     mutate multiline lefthook.yml "run: just lint-conflicts {staged_files}" \
         "run: |
         just lint-conflicts {staged_files}
+        just lint-large-files {staged_files}
         grep -l x {staged_files}"
     gate_on multiline
-    assert_equals "1" "$RC" "A direct tool on a later line of a block run: fails the gate"
+    assert_equals "1" "$RC" "A direct tool on the third line of a block run: fails the gate"
     assert_contains "$OUT" "pre-commit.check-merge-conflict: run: segment does not call just: grep -l x" \
-        "...naming the second line"
+        "...naming the third line"
+}
+
+test_other_separators_fail() {
+    have_tools || return 0
+    local sep tool
+    for sep in ";" "|" "||"; do
+        tool="tee /tmp/x"
+        mutate "sep$sep" lefthook.yml "run: just lint-typos" "run: just lint-typos $sep $tool"
+        gate_on "sep$sep"
+        assert_equals "1" "$RC" "A direct tool after '$sep' fails the gate"
+        assert_contains "$OUT" "pre-push.typos: run: segment does not call just: $tool" \
+            "...naming the segment after '$sep'"
+    done
+}
+
+test_recipe_with_two_patterns_fails() {
+    have_tools || return 0
+    mutate twopat justfile "        list=\"\$(git ls-files '*.md')\"" \
+        "        list=\"\$(git ls-files '*.md')\"
+        extra=\"\$(git ls-files '*.markdown')\""
+    gate_on twopat
+    assert_equals "1" "$RC" "A file-taking recipe with two git ls-files lines fails the gate"
+    assert_contains "$OUT" "recipe 'lint-md' takes files but has 2 git ls-files lines" "...naming the recipe and count"
+}
+
+test_unbraced_glob_mismatch_fails() {
+    have_tools || return 0
+    mutate unbraced lefthook.yml 'glob: "*.md"' 'glob: "docs/*.md"'
+    gate_on unbraced
+    assert_equals "1" "$RC" "A glob without braces that disagrees with its recipe fails the gate"
+    assert_contains "$OUT" "pre-commit.rumdl: glob (docs/*.md) != recipe 'lint-md' git ls-files (*.md)" \
+        "...naming both sides"
 }
 
 test_recipe_without_pattern_fails() {
@@ -173,7 +214,10 @@ run_test test_skip_guarded_just_fails "AC4: a skip-guarded just fails"
 run_test test_tool_in_skip_is_allowed "A tool named in skip: is exempt"
 run_test test_unknown_recipe_fails "A hook calling an undefined recipe fails"
 run_test test_multi_segment_direct_tool_fails "A direct tool in one && segment fails"
-run_test test_multiline_run_fails "A direct tool on a later line of a block run: fails"
+run_test test_multiline_run_fails "A direct tool on the third line of a block run: fails"
+run_test test_other_separators_fail "A direct tool after ;, | or || fails"
+run_test test_recipe_with_two_patterns_fails "A file-taking recipe with two git ls-files lines fails"
+run_test test_unbraced_glob_mismatch_fails "An unbraced glob mismatch fails"
 run_test test_recipe_without_pattern_fails "A file-taking recipe without git ls-files fails"
 run_test test_bad_usage_exits_2 "Bad usage exits 2"
 

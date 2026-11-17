@@ -236,7 +236,7 @@ test_render_shell_only() {
     local out="$WORKDIR/shell"
     render_to "$out" --slices shell --ci gitlab >/dev/null
     assert_contains "$(command cat "$out/lefthook.yml")" "run: just lint-sh {staged_files}" "A shell render's hooks run shellcheck through just"
-    assert_contains "$(command cat "$out/justfile")" 'shellcheck --severity=warning "$@"' "...and the justfile carries its flags"
+    assert_contains "$(command cat "$out/justfile")" 'shellcheck --severity=warning -- "$@"' "...and the justfile carries its flags"
     assert_not_contains "$(command cat "$out/lefthook.yml")" "--severity" "...and the hooks carry none"
     assert_not_contains "$(command cat "$out/lefthook.yml")" "ruff" "A shell-only render has no python hook rows"
     assert_not_contains "$(command cat "$out/tests/run.sh")" "pytest" "A shell-only tests/run.sh has no pytest stage"

@@ -7,4 +7,4 @@ lint-actions *files:
         list="$(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || actionlint "$@"
+    [ "$#" -eq 0 ] || actionlint -- "$@"

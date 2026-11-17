@@ -7,7 +7,7 @@ fmt-py *files:
         list="$(git ls-files '*.py')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || ruff format "$@"
+    [ "$#" -eq 0 ] || ruff format -- "$@"
 
 # Lint Python. No arguments: every tracked *.py.
 lint-py *files:
@@ -17,7 +17,7 @@ lint-py *files:
         list="$(git ls-files '*.py')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || ruff check "$@"
+    [ "$#" -eq 0 ] || ruff check -- "$@"
 
 # Check Python formatting without writing. No arguments: every tracked *.py.
 fmt-py-check *files:
@@ -27,4 +27,4 @@ fmt-py-check *files:
         list="$(git ls-files '*.py')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || ruff format --check "$@"
+    [ "$#" -eq 0 ] || ruff format --check -- "$@"

@@ -78,7 +78,7 @@ fmt-config *files:
         list="$(git ls-files '*.json' '*.yml' '*.yaml')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || dprint fmt "$@"
+    [ "$#" -eq 0 ] || dprint fmt -- "$@"
 
 # Check JSON and YAML formatting over the whole tree
 fmt-config-check:
@@ -92,7 +92,7 @@ fmt-toml *files:
         list="$(git ls-files '*.toml')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || taplo fmt "$@"
+    [ "$#" -eq 0 ] || taplo fmt -- "$@"
 
 # Check TOML formatting over the whole tree
 fmt-toml-check:
@@ -106,7 +106,7 @@ lint-md *files:
         list="$(git ls-files '*.md')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || rumdl check "$@"
+    [ "$#" -eq 0 ] || rumdl check -- "$@"
 
 # Check spelling over the whole tree
 lint-typos:
@@ -129,7 +129,7 @@ fmt-py *files:
         list="$(git ls-files '*.py')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || ruff format "$@"
+    [ "$#" -eq 0 ] || ruff format -- "$@"
 
 # Lint Python. No arguments: every tracked *.py.
 lint-py *files:
@@ -139,7 +139,7 @@ lint-py *files:
         list="$(git ls-files '*.py')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || ruff check "$@"
+    [ "$#" -eq 0 ] || ruff check -- "$@"
 
 # Check Python formatting without writing. No arguments: every tracked *.py.
 fmt-py-check *files:
@@ -149,7 +149,7 @@ fmt-py-check *files:
         list="$(git ls-files '*.py')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || ruff format --check "$@"
+    [ "$#" -eq 0 ] || ruff format --check -- "$@"
 
 # Run the single test entry point
 test:

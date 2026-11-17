@@ -9,7 +9,7 @@ lint-sh *files:
         list="$(git ls-files '*.sh')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || shellcheck --severity=warning "$@"
+    [ "$#" -eq 0 ] || shellcheck --severity=warning -- "$@"
 
 # Format shell scripts in place. No arguments: every tracked *.sh.
 fmt-sh *files:
@@ -19,7 +19,7 @@ fmt-sh *files:
         list="$(git ls-files '*.sh')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || shfmt -w {{ shfmt_flags }} "$@"
+    [ "$#" -eq 0 ] || shfmt -w {{ shfmt_flags }} -- "$@"
 
 # Check shell formatting without writing. No arguments: every tracked *.sh.
 fmt-sh-check *files:
@@ -29,4 +29,4 @@ fmt-sh-check *files:
         list="$(git ls-files '*.sh')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || shfmt -d {{ shfmt_flags }} "$@"
+    [ "$#" -eq 0 ] || shfmt -d {{ shfmt_flags }} -- "$@"

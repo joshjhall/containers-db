@@ -76,7 +76,7 @@ fmt-config *files:
         list="$(git ls-files '*.json' '*.yml' '*.yaml')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || dprint fmt "$@"
+    [ "$#" -eq 0 ] || dprint fmt -- "$@"
 
 # Check JSON and YAML formatting over the whole tree
 fmt-config-check:
@@ -90,7 +90,7 @@ fmt-toml *files:
         list="$(git ls-files '*.toml')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || taplo fmt "$@"
+    [ "$#" -eq 0 ] || taplo fmt -- "$@"
 
 # Check TOML formatting over the whole tree
 fmt-toml-check:
@@ -104,7 +104,7 @@ lint-md *files:
         list="$(git ls-files '*.md')"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -eq 0 ] || rumdl check "$@"
+    [ "$#" -eq 0 ] || rumdl check -- "$@"
 
 # Check spelling over the whole tree
 lint-typos:
