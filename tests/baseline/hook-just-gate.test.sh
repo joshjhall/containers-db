@@ -196,6 +196,75 @@ test_recipe_without_pattern_fails() {
         "...naming the recipe"
 }
 
+test_substring_recipe_name_fails() {
+    have_tools || return 0
+    # `md` is a suffix of the defined `lint-md`: only an exact name match fails it.
+    mutate substr lefthook.yml "run: just lint-typos" "run: just md"
+    gate_on substr
+    assert_equals "1" "$RC" "A hook calling a recipe that is only a substring of a defined one fails"
+    assert_contains "$OUT" "pre-push.typos: calls recipe 'md', which the justfile does not define" \
+        "...naming the undefined recipe"
+}
+
+test_hidden_command_fails() {
+    have_tools || return 0
+    local body
+    for body in 'just lint-typos $(tee /tmp/x)' 'just lint-typos `tee /tmp/x`' 'just lint-typos > /tmp/x'; do
+        mutate "hide-${#body}" lefthook.yml "run: just lint-typos" "run: $body"
+        gate_on "hide-${#body}"
+        assert_equals "1" "$RC" "A segment hiding a command behind just fails: $body"
+        assert_contains "$OUT" "pre-push.typos: run: segment hides a command or redirect behind just: $body" \
+            "...naming the segment"
+    done
+    mutate bg lefthook.yml "run: just lint-typos" "run: just lint-typos & tee /tmp/x"
+    gate_on bg
+    assert_equals "1" "$RC" "A direct tool after a single & fails the gate"
+    assert_contains "$OUT" "pre-push.typos: run: segment does not call just: tee /tmp/x" "...naming the backgrounded segment"
+}
+
+test_empty_run_fails() {
+    have_tools || return 0
+    mutate emptyrun lefthook.yml "      run: just lint-typos" "      run: \"\""
+    gate_on emptyrun
+    assert_equals "1" "$RC" "A hook with an empty run: fails the gate"
+    assert_contains "$OUT" "pre-push.typos: empty run:" "...naming the hook"
+}
+
+test_no_hook_commands_fails() {
+    have_tools || return 0
+    command mkdir -p "$WORKDIR/nohooks"
+    command printf 'pre-commit:\n  parallel: true\n' >"$WORKDIR/nohooks/lefthook.yml"
+    command cp "$WORKDIR/base/justfile" "$WORKDIR/nohooks/justfile"
+    gate_on nohooks
+    assert_equals "1" "$RC" "A lefthook.yml with no hook commands fails the gate (never a vacuous pass)"
+    assert_contains "$OUT" "defines no hook commands" "...and says why"
+}
+
+test_multi_recipe_glob_mismatch_fails() {
+    have_tools || return 0
+    # Two file-taking recipes behind one glob: only the drifted one is named.
+    mutate tworec lefthook.yml "run: just lint-py && just fmt-py-check" "run: just lint-py && just lint-sh"
+    gate_on tworec
+    assert_equals "1" "$RC" "A two-recipe hook whose second recipe disagrees with the glob fails"
+    assert_contains "$OUT" "pre-push.ruff: glob (*.py) != recipe 'lint-sh' git ls-files (*.sh)" \
+        "...naming the recipe that disagrees"
+    assert_not_contains "$OUT" "recipe 'lint-py'" "...and not the one that agrees"
+}
+
+test_no_glob_hook_is_not_compared() {
+    have_tools || return 0
+    # A hook with no glob may call a file-taking recipe: rule 4 does not apply.
+    mutate noglob lefthook.yml "run: just lint-typos" "run: just lint-md"
+    gate_on noglob
+    assert_equals "0" "$RC" "A no-glob hook calling a file-taking recipe passes"
+}
+
+test_missing_justfile_exits_2() {
+    local rc=0
+    "$GATE" "$WORKDIR/base/lefthook.yml" "$WORKDIR/nope.just" >/dev/null 2>&1 || rc=$?
+    assert_equals "2" "$rc" "A missing justfile exits 2"
+}
+
 test_bad_usage_exits_2() {
     local rc=0
     "$GATE" >/dev/null 2>&1 || rc=$?
@@ -219,6 +288,13 @@ run_test test_other_separators_fail "A direct tool after ;, | or || fails"
 run_test test_recipe_with_two_patterns_fails "A file-taking recipe with two git ls-files lines fails"
 run_test test_unbraced_glob_mismatch_fails "An unbraced glob mismatch fails"
 run_test test_recipe_without_pattern_fails "A file-taking recipe without git ls-files fails"
+run_test test_substring_recipe_name_fails "A recipe name that is only a substring of a defined one fails"
+run_test test_hidden_command_fails "A command or redirect hidden behind just, or after &, fails"
+run_test test_empty_run_fails "An empty run: fails"
+run_test test_no_hook_commands_fails "A lefthook.yml with no commands fails"
+run_test test_multi_recipe_glob_mismatch_fails "A two-recipe hook names only the recipe that disagrees with the glob"
+run_test test_no_glob_hook_is_not_compared "A no-glob hook is not compared under rule 4"
+run_test test_missing_justfile_exits_2 "A missing justfile exits 2"
 run_test test_bad_usage_exits_2 "Bad usage exits 2"
 
 generate_report

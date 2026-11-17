@@ -410,6 +410,27 @@ test_tool_flags_only_in_justfile() {
     assert_contains "$(command cat "$out/justfile")" 'gitleaks_flags := "--redact"' "The justfile owns gitleaks' flags"
 }
 
+test_lint_conflicts_reports_despite_missing_path() {
+    if ! command -v just >/dev/null 2>&1; then
+        skip_test "just not installed"
+        return 0
+    fi
+    local repo="$WORKDIR/conflicts" rc out
+    render_to "$repo" --ci github >/dev/null
+    command printf '<<<<<<< HEAD\n' >"$repo/marked.txt"
+    command printf 'clean\n' >"$repo/clean.txt"
+    # A missing operand makes grep exit 2 even after it printed a match; the
+    # recipe must still fail and name the marked file.
+    rc=0
+    out="$(cd "$repo" && just lint-conflicts clean.txt gone.txt marked.txt 2>&1)" || rc=$?
+    assert_equals "1" "$rc" "lint-conflicts fails on a marker even when another path is missing"
+    assert_contains "$out" "marked.txt" "...naming the marked file"
+    assert_not_contains "$out" "clean.txt" "...and not the clean one"
+    rc=0
+    (cd "$repo" && just lint-conflicts clean.txt gone.txt >/dev/null 2>&1) || rc=$?
+    assert_equals "0" "$rc" "lint-conflicts passes clean files and skips a missing path"
+}
+
 test_rendered_ci_pins() {
     local out="$WORKDIR/full"
     local images
@@ -826,6 +847,7 @@ run_test test_rendered_files_parse "Every rendered file parses"
 run_test test_rendered_files_lint "Rendered scripts, workflow, and justfile lint clean"
 run_test test_hooks_call_only_just "#620: every render's hooks call only just recipes that agree with their globs"
 run_test test_tool_flags_only_in_justfile "#620: tool flags appear only in the justfile"
+run_test test_lint_conflicts_reports_despite_missing_path "lint-conflicts reports markers even when a path is unreadable"
 run_test test_rendered_ci_pins "Rendered CI pins images and actions"
 run_test test_rendered_gitlab_tool_cache "Rendered GitLab CI caches tool downloads keyed on the pin files"
 run_test test_run_sh_reports_skip_and_none "The rendered tests/run.sh reports SKIP, none, and FAIL honestly"

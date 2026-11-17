@@ -9,11 +9,18 @@ lint-conflicts *files:
         list="$(git ls-files)"
         while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<<"$list"
     fi
-    [ "$#" -gt 0 ] || exit 0
-    if grep -lE '^(<{7} |>{7} |={7}$)' -- "$@" 2>/dev/null; then
-        echo "ERROR: merge conflict markers found in the above file(s)"
-        exit 1
-    fi
+    # Read the matches, not grep's status: grep exits 2 when ANY operand is
+    # unreadable (a deleted or submodule path), even after it printed matches.
+    status=0
+    for f in "$@"; do
+        [ -f "$f" ] || continue
+        if grep -qE '^(<{7} |>{7} |={7}$)' -- "$f"; then
+            echo "$f"
+            status=1
+        fi
+    done
+    [ "$status" -eq 0 ] || echo "ERROR: merge conflict markers found in the above file(s)"
+    exit "$status"
 
 # Fail on any file over 1 MB. No arguments: every tracked file.
 lint-large-files *files:

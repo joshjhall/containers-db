@@ -8,9 +8,10 @@
 # appear. This checks a RENDERED pair, so it sees the composed result. Fails
 # (exit 1, one `FAIL:` line per offender) when:
 #
-#   1. a segment of a hook `run:` (split on && || ; | and newlines) does not
-#      start with `just ` — `skip:` entries are exempt, naming the tool there
-#      is how the guard works;
+#   1. a segment of a hook `run:` (split on && || ; | & and newlines) does not
+#      start with `just `, or carries a command substitution or redirect
+#      (`$(`, a backtick, `<`, `>`) — `skip:` entries are exempt, naming the
+#      tool there is how the guard works;
 #   2. a hook's `skip:` guards `just` itself (just is required, never skipped);
 #   3. a hook calls a recipe the justfile does not define;
 #   4. a hook with a `glob:` calls a file-taking recipe whose whole-tree
@@ -68,8 +69,11 @@ recipe_facts="$(cd "$(dirname "$justfile")" && just --justfile "$(basename "$jus
 }
 
 # recipe_defined <name> / recipe_takes_files <name>
-recipe_defined() { printf '%s\n' "$recipe_facts" | grep -qF -- "$1${tab}params${tab}"; }
-recipe_takes_files() { ! printf '%s\n' "$recipe_facts" | grep -qxF -- "$1${tab}params${tab}0"; }
+# Compare the name field exactly: a substring match would let `just md`
+# through because `lint-md` exists.
+recipe_params() { printf '%s\n' "$recipe_facts" | awk -F"$tab" -v r="$1" '$1 == r && $2 == "params" { print $3 }'; }
+recipe_defined() { [ -n "$(recipe_params "$1")" ]; }
+recipe_takes_files() { [ "$(recipe_params "$1")" != 0 ]; }
 
 # recipe_patterns <name> — the quoted pathspecs of its git ls-files line(s),
 # one per line, sorted.
@@ -111,7 +115,7 @@ while IFS= read -r cmd; do
     fi
 
     # Rule 1 + 3, per segment.
-    segments="$(printf '%s\n' "$run" | sed -e 's/&&/\n/g' -e 's/||/\n/g' -e 's/[;|]/\n/g' |
+    segments="$(printf '%s\n' "$run" | sed -e 's/&&/\n/g' -e 's/||/\n/g' -e 's/[;|&]/\n/g' |
         sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' || true)"
     if [ -z "$segments" ]; then
         fail "$cmd: empty run:"
@@ -120,6 +124,10 @@ while IFS= read -r cmd; do
     recipes=""
     while IFS= read -r seg; do
         case "$seg" in
+            *'$('* | *'`'* | *'<'* | *'>'*)
+                fail "$cmd: run: segment hides a command or redirect behind just: $seg"
+                continue
+                ;;
             'just '*) ;;
             *)
                 fail "$cmd: run: segment does not call just: $seg"
