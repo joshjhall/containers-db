@@ -5,20 +5,38 @@ version-pinning policy, and docs/test minimums every repo gets, plus the
 templates that render it. containers-db is the single source of truth (#558);
 consumers pin a containers-db commit SHA until catalog snapshots land.
 
-| Path                  | What it is                                                     |
-| --------------------- | -------------------------------------------------------------- |
-| `core.md`             | The language-neutral spec                                      |
-| `slice-contract.md`   | The headings every language slice must carry                   |
-| `languages/<lang>.md` | One slice per language (`shell`, `python`)                     |
-| `templates/`          | `manifest.tsv`, `render.sh`, and the per-slice template files  |
-| `platform/`           | API-only host settings (rulesets, merge settings, labels)      |
-| `SOURCE`              | Provenance of the imported tree                                |
+| Path                             | What it is                                                    |
+| -------------------------------- | ------------------------------------------------------------- |
+| `core.md`                        | The language-neutral spec                                     |
+| `slice-contract.md`              | The headings every language slice must carry                  |
+| `languages/<lang>.md`            | One slice per language (`shell`, `python`)                    |
+| `templates/`                     | `manifest.tsv`, `render.sh`, and the per-slice template files |
+| `platform/`                      | API-only host settings (rulesets, merge settings, labels)     |
+| `SOURCE`                         | Provenance of the imported tree                               |
+| `Cargo.toml`, `build.rs`, `src/` | The `repo-baseline` crate that embeds `templates/`            |
 
 Render a repo's files with:
 
 ```bash
 baseline/templates/render.sh --slices shell,python --ci github --out DIR
 ```
+
+## Consuming the templates from Rust
+
+`baseline/` is also the `repo-baseline` crate. Its `build.rs` embeds every file
+under `templates/` into `repo_baseline::FILES` (`(path, bytes)`, sorted), so a
+consumer pins a snapshot by commit and renders offline with no checkout:
+
+```toml
+[dependencies.repo-baseline]
+git = "https://github.com/joshjhall/containers-db"
+rev = "<full commit sha>"
+```
+
+`repo_baseline::get(path)` looks up one file, and `repo_baseline::TEMPLATES_DIR`
+is the build-host path of `templates/` (for tests that run `render.sh` against
+the same snapshot). joshjhall/containers' `stibbons setup standards` is the
+first consumer.
 
 ## Provenance
 
