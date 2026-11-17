@@ -832,6 +832,18 @@
       "image_digest": "sha256:ffa9e1f0234969143ea46b69ea103cb5cc2c8c728aaeea72d07af9f8aea5f4f3",
       "duration_seconds": 9.162236102,
       "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T06:23:08.388606145Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44029439609",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-amd64",
+      "image_digest": "sha256:f6e40251f9cd887b27896e06d04824bfbc51b548afeb83860dadca113d053f24",
+      "duration_seconds": 8.344775758,
+      "error_class": "validate"
     }
   ]
 }
