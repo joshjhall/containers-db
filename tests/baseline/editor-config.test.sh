@@ -235,6 +235,14 @@ test_ide_argument_edges() {
     rc=0
     "$RENDER" --ci github --ide none,emacs --out "$WORKDIR/none-bad" >/dev/null 2>&1 || rc=$?
     assert_exit 2 "$rc" "none does not mask an unknown IDE"
+    # Manifest side: an `ide=` value the renderer does not know is refused too.
+    local copy="$WORKDIR/tmpl-badwhen"
+    command cp -R "$TEMPLATES" "$copy"
+    command printf 'x.txt\tcore\tide=emacs\tcore/tools.versions\n' >>"$copy/manifest.tsv"
+    rc=0
+    RENDER_MANIFEST="$copy/manifest.tsv" "$copy/render.sh" --out "$WORKDIR/badwhen" >/dev/null 2>&1 || rc=$?
+    assert_exit 2 "$rc" "A manifest row with an unknown ide= when exits 2"
+    assert_true "[ ! -e \"$WORKDIR/badwhen\" ]" "...and writes nothing"
 }
 
 run_test test_ide_selection "--ide selects exactly its editor targets (default: both)"
