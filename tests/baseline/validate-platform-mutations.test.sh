@@ -93,11 +93,17 @@ test_github_mutants() {
         "The gate job runs even when a stage fails (a skipped required check counts as passed)"
     mutant merge-commits platform/github.yml 's/allow_merge_commit: false/allow_merge_commit: true/' \
         "github.yml is squash-only and deletes the branch on merge"
+    mutant no-squash platform/github.yml 's/allow_squash_merge: true/allow_squash_merge: false/' \
+        "github.yml is squash-only and deletes the branch on merge"
+    mutant rebase-merges platform/github.yml 's/allow_rebase_merge: false/allow_rebase_merge: true/' \
+        "github.yml is squash-only and deletes the branch on merge"
     mutant keep-branch platform/github.yml 's/delete_branch_on_merge: true/delete_branch_on_merge: false/' \
         "github.yml is squash-only and deletes the branch on merge"
     mutant any-branch platform/github.yml 's/include: \["~DEFAULT_BRANCH"\]/include: ["~ALL"]/' \
         "The ruleset targets the default branch only"
     mutant force-push platform/github.yml 's/non_fast_forward: true/non_fast_forward: false/' \
+        "The ruleset blocks force-push and deletion"
+    mutant deletable-branch platform/github.yml 's/deletion: true/deletion: false/' \
         "The ruleset blocks force-push and deletion"
     mutant bad-signatures platform/github.yml 's/^  required_signatures: optional/  required_signatures: sometimes/' \
         "required_signatures is optional or required"
@@ -115,6 +121,8 @@ test_gitlab_mutants() {
         "The protected default branch takes no direct push and no force-push"
     mutant gitlab-force-push platform/gitlab.yml 's/allow_force_push: false/allow_force_push: true/' \
         "The protected default branch takes no direct push and no force-push"
+    mutant gitlab-bad-version platform/gitlab.yml 's/^version: 1/version: 2/' \
+        "gitlab.yml parses and declares version: 1"
     mutant bad-unsigned platform/gitlab.yml 's/reject_unsigned_commits: optional/reject_unsigned_commits: maybe/' \
         "reject_unsigned_commits is optional or required"
 }
@@ -133,6 +141,8 @@ test_label_mutants() {
         "No label name repeats"
     mutant missing-label platform/labels.yml '/status\/blocked/d' \
         "labels.yml carries every label the issue workflow selects and parks by"
+    mutant labels-bad-version platform/labels.yml 's/^version: 1/version: 2/' \
+        "labels.yml parses and declares version: 1"
     mutant no-labels platform/labels.yml '/^  - {/d' \
         "labels.yml lists at least one label"
 }
