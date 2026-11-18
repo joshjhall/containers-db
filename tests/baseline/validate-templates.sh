@@ -125,7 +125,7 @@ test_manifest_rows_well_formed() {
     local target slice when source mode bad=""
     while IFS="$(command printf '\t')" read -r target slice when source mode; do
         [ -n "$source" ] || bad="$bad [$target: fewer than 4 columns]"
-        case "$when" in always | ci=github | ci=gitlab) ;; *) bad="$bad [$target: when=$when]" ;; esac
+        case "$when" in always | ci=github | ci=gitlab | ide=vscode | ide=zed) ;; *) bad="$bad [$target: when=$when]" ;; esac
         case "$mode" in
             '' | once) [ -f "$TEMPLATES/$source" ] || bad="$bad [$target: missing $source]" ;;
             link) ;; # source is link text, checked by render-modes.test.sh
@@ -160,7 +160,7 @@ test_core_fragments_are_inert() {
     found="$(command find "$TEMPLATES" -type f \( -name '_typos.toml' -o -name 'typos.toml' \
         -o -name 'ruff.toml' -o -name '.ruff.toml' -o -name '.shellcheckrc' -o -name 'dprint.json' \
         -o -name '.rumdl.toml' -o -name '.taplo.toml' -o -name 'taplo.toml' -o -name '.gitignore' \
-        -o -name '.gitleaks.toml' -o -name '.conform.yaml' -o -name 'uv.toml' -o -name '.python-version' \) \
+        -o -name '.gitleaks.toml' -o -name '.conform.yaml' -o -name '.editorconfig' -o -name 'uv.toml' -o -name '.python-version' \) \
         -print)"
     assert_equals "" "$found" "No template uses a name its tool would auto-discover"
     # A partial-script fragment named *.sh / *.py is picked up by the repo's

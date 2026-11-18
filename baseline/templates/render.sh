@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Render the repo-baseline scaffold for a chosen set of slices and CI platforms.
 #
-#   render.sh --slices shell,python --ci github,gitlab --out DIR [--force]
+#   render.sh --slices shell,python --ci github,gitlab [--ide vscode,zed] --out DIR [--force]
 #
 # Reads manifest.tsv beside this script: every row whose slice is selected
-# (`core` always is) and whose `when` holds is written to DIR/<target>; rows
-# sharing a target are concatenated in manifest order. No templating language,
-# no network — the same bytes a plain `cat` loop would produce, which is the
-# contract a non-LLM renderer (stibbons) implements independently. Format and
+# (`core` always is) and whose `when` holds (`always`, a selected CI platform,
+# or a selected IDE; --ide defaults to vscode,zed, `none` selects neither) is
+# written to DIR/<target>; rows sharing a target are concatenated in manifest
+# order. No templating language, no network — the same bytes a plain `cat`
+# loop would produce, which is the contract a non-LLM renderer (stibbons)
+# implements independently. Format and
 # rationale: README.md.
 #
 # An optional 5th column, `mode`, marks a target create-only (`once`: written
 # only when absent, even under --force) or a symlink (`link`: `source` is the
 # link text, naming another target of the same render; also create-only).
 #
-# Refuses (exit 2) an unknown slice or CI platform, a manifest row with an
+# Refuses (exit 2) an unknown slice, CI platform or IDE, a manifest row with an
 # unknown `when` or `mode` or a missing source, an absolute or `..` target, a
 # target whose rows disagree on `mode`, a bad link, an existing tracked target
 # unless --force, and, even with --force, a symlink at or above (inside --out)
@@ -32,11 +34,11 @@ die() {
 }
 
 usage() {
-    printf 'usage: render.sh --slices a,b --ci github,gitlab --out DIR [--force]\n' >&2
+    printf 'usage: render.sh --slices a,b --ci github,gitlab [--ide vscode,zed|none] --out DIR [--force]\n' >&2
     exit 2
 }
 
-slices="" ci="" out="" force=0
+slices="" ci="" ide="vscode,zed" out="" force=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --slices)
@@ -47,6 +49,11 @@ while [ "$#" -gt 0 ]; do
         --ci)
             [ "$#" -ge 2 ] || usage
             ci="$2"
+            shift 2
+            ;;
+        --ide)
+            [ "$#" -ge 2 ] || usage
+            ide="$2"
             shift 2
             ;;
         --out)
@@ -83,6 +90,15 @@ for p in $(printf '%s' "$ci" | tr ',' ' '); do
     case "$p" in
         github | gitlab) platforms="$platforms$p " ;;
         *) die "unknown CI platform '$p' (known: github gitlab)" ;;
+    esac
+done
+
+ides=" "
+for e in $(printf '%s' "$ide" | tr ',' ' '); do
+    case "$e" in
+        vscode | zed) ides="$ides$e " ;;
+        none) ;;
+        *) die "unknown IDE '$e' (known: vscode zed none)" ;;
     esac
 done
 
@@ -123,7 +139,10 @@ while IFS="$(printf '\t')" read -r target slice when source mode || [ -n "${targ
         ci=github | ci=gitlab)
             case "$platforms" in *" ${when#ci=} "*) keep=1 ;; *) keep=0 ;; esac
             ;;
-        *) die "manifest line $n: unknown when '$when' (known: always ci=github ci=gitlab)" ;;
+        ide=vscode | ide=zed)
+            case "$ides" in *" ${when#ide=} "*) keep=1 ;; *) keep=0 ;; esac
+            ;;
+        *) die "manifest line $n: unknown when '$when' (known: always ci=github ci=gitlab ide=vscode ide=zed)" ;;
     esac
     case "$selected" in *" $slice "*) ;; *) keep=0 ;; esac
     [ "$keep" -eq 1 ] && printf '%s\t%s\t%s\n' "$target" "$source" "$mode" >>"$plan"

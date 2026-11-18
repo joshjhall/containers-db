@@ -312,7 +312,7 @@ jobs:
           tests/baseline/render-parity.test.sh tests/baseline/validate-slices.sh
           tests/baseline/validate-templates.sh
           tests/baseline/hook-just-gate.sh tests/baseline/hook-just-gate.test.sh
-          tests/baseline/render-modes.test.sh
+          tests/baseline/render-modes.test.sh tests/baseline/editor-config.test.sh
           tests/baseline/validate-platform.sh
           tests/baseline/validate-platform-mutations.test.sh
 
@@ -330,6 +330,9 @@ jobs:
 
       - name: Render modes (create-only stubs, AGENTS.md symlink)
         run: tests/baseline/render-modes.test.sh
+
+      - name: Editor config (IDE selection, formatter-flag parity)
+        run: tests/baseline/editor-config.test.sh
 
       - name: Platform settings spec (merge-gate, labels)
         run: tests/baseline/validate-platform.sh

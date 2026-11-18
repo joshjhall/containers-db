@@ -41,13 +41,19 @@ modes() {
 
 combos=0
 names=""
-for slices in core core,shell core,python core,shell,python; do
+# Default renders select both IDEs (vscode,zed); two extra combos pin the
+# single-IDE selections (#560).
+for combo in core core,shell core,python core,shell,python core,shell,python:vscode core,shell,python:zed; do
+    slices="${combo%%:*}"
+    ide=""
+    case "$combo" in *:*) ide="${combo#*:}" ;; esac
     for ci in github gitlab; do
-        name="${slices//,/+}-$ci"
+        [ -z "$ide" ] || [ "$ci" = github ] || continue
+        name="${slices//,/+}-$ci${ide:+-$ide}"
         out="$scratch/$name"
         combos=$((combos + 1))
         names="$names$name"$'\n'
-        if ! "$render" --slices "$slices" --ci "$ci" --out "$out" >/dev/null; then
+        if ! "$render" --slices "$slices" --ci "$ci" ${ide:+--ide "$ide"} --out "$out" >/dev/null; then
             fail "$name: render.sh exited non-zero"
             continue
         fi

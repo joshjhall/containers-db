@@ -1,0 +1,22 @@
+# Repo-baseline Dependabot config (core § 3). Each entry keeps one ecosystem's
+# pins current; the github-actions entry bumps an action's SHA and its
+# `# vX.Y.Z` comment together. Slices add their package ecosystem below.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /tests # tests/requirements.txt
+    schedule:
+      interval: weekly
+    groups:
+      pip:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

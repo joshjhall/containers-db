@@ -1,0 +1,19 @@
+# EditorConfig — https://editorconfig.org. Matches what the formatters write
+# (dprint, taplo; shfmt and ruff per slice), so an editor without a formatter
+# plugin still saves files the hooks accept. Rules live in the tools' configs.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+# A trailing double space is a Markdown hard line break.
+trim_trailing_whitespace = false
+
+[*.py]
+indent_size = 4
