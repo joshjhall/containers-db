@@ -358,7 +358,45 @@ Example: Homebrew upgraded ruff to 0.17 and the repo pins 0.16.10, so ruff exits
 
 Bumping: one edit to the single source, then `just lint` + `just test`. A
 dependency bot covers only what it has an ecosystem for (GitHub Actions SHAs,
-lockfiles); a tool pin in a config file is bumped by hand.
+lockfiles, the CI image). The baseline's own tool pins follow § Pin maintenance
+below.
+
+### Pin maintenance
+
+A rendered repo's `tools.versions`, `tools.sha256`, and the ruff/uv
+`required-version` pins are **refreshed by re-rendering from a newer
+containers-db snapshot**, on GitHub and GitLab alike. No bot in the rendered
+repo bumps them (#639).
+
+The constraint: `install-tools.sh` verifies every download against
+`tools.sha256` and fails on a missing or mismatched entry, so a version and its
+per-arch hashes must change in one commit, and the hashes must be ones someone
+vetted.
+
+- **Renovate regex managers — rejected.** Hosted Renovate (the Mend app) does
+  not run `postUpgradeTasks`, so a `customManagers` entry on `tools.versions`
+  could only bump the version. Every such PR would fail the install, in every
+  consumer, on every tool release. Dependabot has no ecosystem for these files.
+- **A scheduled bump job — rejected.** A job that downloads the newest release
+  and writes back the hash it computes is trust-on-first-use. It would accept a
+  re-tagged or compromised artifact, which is exactly what `tools.sha256`
+  exists to refuse.
+- **Re-render — chosen.** The catalog's Tier 2 `pinned_checksum` is the one
+  vetted source. containers-db's `bin/baseline-pins.sh` regenerates every pin
+  file from it, so version and hashes always arrive together.
+
+To pick up new pins in a rendered repo:
+
+1. Move the pinned containers-db snapshot forward (the `repo-baseline` `rev`
+   your renderer builds against, or a newer `stibbons`).
+2. Run `stibbons setup standards check`, which reports the pin files as
+   `stale`, then `stibbons setup standards init` to rewrite them.
+3. Run `just lint` + `just test`, and commit the pin files together.
+
+Do not point a Renovate or Dependabot manager at `tools.versions`,
+`tools.sha256`, `ruff.toml`, or `uv.toml`. `tests/baseline/pin-lockstep.test.sh`
+fails if a rendered config does, or if any rendered pin disagrees with the
+catalog.
 
 ---
 
