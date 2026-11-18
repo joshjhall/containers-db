@@ -273,7 +273,550 @@
       "status": "supported"
     }
   ],
-  "tested": [],
+  "tested": [
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:45:08.959275206Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-amd64",
+      "image_digest": "sha256:bca2b89b27d77bfdded6f0cc072df7d453e863ebbd9edc9aa6c0010cf15e6c68",
+      "duration_seconds": 21.062087971,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.22",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:40:28.725734084Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.22-arm64",
+      "image_digest": "sha256:8e8d64e88d2475d863035dc5ae60d2e7da99661593f8cec6250682968ef9ba8c",
+      "duration_seconds": 15.550038481,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:41:10.885194302Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-amd64",
+      "image_digest": "sha256:457a3596ad0f346223bf47decc213f6903be031cb1b4efb35dd8eaeebee3afe9",
+      "duration_seconds": 23.425240211,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:41:44.548045073Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-arm64",
+      "image_digest": "sha256:ae902124f8768c94207cd7365e88f9ddad83460241600ede7f5f08dce40538b1",
+      "duration_seconds": 15.818668783,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.24",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:42:23.871174074Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.24-amd64",
+      "image_digest": "sha256:b11e7880019e12a16942b98362dc1fd1ebce72f1f6416114343ced23f4e19f2d",
+      "duration_seconds": 22.377621285,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.24",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:45:52.709788674Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.24-arm64",
+      "image_digest": "sha256:b9c1f7bf82a793aa30ef15dc8eab4231640ff1a870d65f1879c9ae0d9caea850",
+      "duration_seconds": 17.462481093,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc"
+        },
+        {
+          "tool": "musl_dev",
+          "package": "musl-dev"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:41:14.110385645Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:294cb872a7b38fa80d8b7dcfc1f1b3eca018cbff552898933066a696e1142dbd",
+      "duration_seconds": 24.093188207,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:12.2.0-3"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.36-9+deb12u14"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:40:32.504298102Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-arm64",
+      "image_digest": "sha256:bad276b5ed9492672ca2fe1d1605521e0895c0e80f528d9c6deeaa9ff3024424",
+      "duration_seconds": 16.719122726,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419~deb12u2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:12.2.0-3"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.36-9+deb12u14"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:43:12.150153347Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-amd64",
+      "image_digest": "sha256:a6f108ebd6145bb957d1e3ab4fe296985aeb2f4ff94c4b7d18eaa2e5f0c20356",
+      "duration_seconds": 22.582367195,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419+deb13u1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:14.2.0-1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:40:41.67580829Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-arm64",
+      "image_digest": "sha256:a6798512d17421bd220be902911ff960e6158fb1c59a25d0ef4f0a2ad35e8f69",
+      "duration_seconds": 18.614722,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20250419+deb13u1"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:14.2.0-1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:47:16.827040215Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-amd64",
+      "image_digest": "sha256:6efde1e4340895267a81fa68c9679c3703681c7dce9f1e1a147cbcfb9fcd69f0",
+      "duration_seconds": 19.59627976,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-100.3.el10_2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "14.4.1-5.el10_3"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.39-147.el10_3"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.40.2-24.el10_3.24"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:41:53.50803316Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-arm64",
+      "image_digest": "sha256:ddd30030b0f184749d39424554b93f5d32727c0df8d967419d1b90f3d5e0dd39",
+      "duration_seconds": 16.437031903,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-100.3.el10_2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "14.4.1-5.el10_3"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.39-147.el10_3"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.40.2-24.el10_3.24"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:46:13.815339005Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:d30b21d673335f9d695392d8c09ca2112e634e1d54d77bac58f709a61daddd41",
+      "duration_seconds": 16.788505215,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-90.3.el9_8"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "11.5.0-17.el9_9"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.34-290.el9_9"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.37.4-28.el9_9.1"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:45:31.551826851Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-arm64",
+      "image_digest": "sha256:ece9a3f147f944221822760396013305d613ad485d6be91e268516ce69161b88",
+      "duration_seconds": 15.89649477,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "2026.2.92_v9.0.319-90.3.el9_8"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "11.5.0-17.el9_9"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "glibc-devel",
+          "version": "2.34-290.el9_9"
+        },
+        {
+          "tool": "util_linux",
+          "package": "util-linux",
+          "version": "2.37.4-28.el9_9.1"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:43:50.38477469Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-amd64",
+      "image_digest": "sha256:f6e40251f9cd887b27896e06d04824bfbc51b548afeb83860dadca113d053f24",
+      "duration_seconds": 25.828425786,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.24.04.2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:13.2.0-7ubuntu1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.39-0ubuntu8.12"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:47:15.04355393Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-arm64",
+      "image_digest": "sha256:8f478c2cb9ae9f97be7002f798790e988d21cb4764a2155302faf9725ba0fd4c",
+      "duration_seconds": 18.092560092,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.24.04.2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:13.2.0-7ubuntu1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.39-0ubuntu8.12"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-17T22:46:52.390027449Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:789e13ff67e22962b59db729df1db18713ec8d1f4a740514de88899fc5364dc9",
+      "duration_seconds": 26.60320613,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.26.04.2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:15.2.0-5ubuntu1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.43-2ubuntu2.7"
+        }
+      ],
+      "verification_tier": 3
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "arm64",
+      "tested_at": "2026-11-17T22:46:03.257507587Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/44191883595",
+      "result": "pass",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-arm64",
+      "image_digest": "sha256:7e443e3dff9738bf98814cbf14d8a72b0b34f20e5fe47a69349e8f4723529e34",
+      "duration_seconds": 20.676091966,
+      "version_output": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+      "dependencies": [
+        {
+          "tool": "ca_certificates",
+          "package": "ca-certificates",
+          "version": "20260816ubuntu0.26.04.2"
+        },
+        {
+          "tool": "gcc",
+          "package": "gcc",
+          "version": "4:15.2.0-5ubuntu1"
+        },
+        {
+          "tool": "libc_dev",
+          "package": "libc6-dev",
+          "version": "2.43-2ubuntu2.7"
+        }
+      ],
+      "verification_tier": 3
+    }
+  ],
   "tool": "rust",
   "version": "1.100.0"
 }
