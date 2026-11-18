@@ -331,18 +331,21 @@ else
     fail "mutation 11 setup" "typos=1.99.0 was not rendered into github only"
 fi
 
-# 11b. The identity check covers the TOML pin sources too, not just tools.versions.
-fresh
-echo '# github-only' >"$tree/baseline/templates/python/uv-github.toml"
-printf 'uv.toml\tpython\tci=github\tpython/uv-github.toml\n' \
-    >>"$tree/baseline/templates/manifest.tsv"
-expect_problem "github-only uv.toml skew" "uv.toml differs between the github and gitlab renders"
-if grep -qx '# github-only' "$last_out/github/uv.toml" &&
-    ! grep -qx '# github-only' "$last_out/gitlab/uv.toml"; then
-    pass "mutation 11b setup: skew is in the github render only"
-else
-    fail "mutation 11b setup" "'# github-only' was not rendered into github's uv.toml only"
-fi
+# 11b. Every other file in check 0's list gets the same github-only skew, so
+#      dropping any of them from that list fails here, naming the file.
+for pf in tools.sha256 ruff.toml uv.toml bin/ruff-version.sh; do
+    fresh
+    echo '# github-only' >"$tree/baseline/templates/python/github-skew.tmpl"
+    printf '%s\tpython\tci=github\tpython/github-skew.tmpl\n' "$pf" \
+        >>"$tree/baseline/templates/manifest.tsv"
+    expect_problem "github-only $pf skew" "$pf differs between the github and gitlab renders"
+    if grep -qx '# github-only' "$last_out/github/$pf" &&
+        ! grep -qx '# github-only' "$last_out/gitlab/$pf"; then
+        pass "mutation 11b setup ($pf): skew is in the github render only"
+    else
+        fail "mutation 11b setup ($pf)" "'# github-only' was not rendered into github's $pf only"
+    fi
+done
 
 # 11c. A pin file rendered for one host only is refused, not silently skipped:
 #      move ruff.toml's sole row to ci=github so gitlab never renders it.
