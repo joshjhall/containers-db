@@ -10,6 +10,8 @@
 #     (the change a regex bot would produce) fails here, naming the tool;
 #   - ruff's required-version (read through the rendered bin/ruff-version.sh)
 #     and uv's required-version match the catalog;
+#   - the pin files render byte-identically for --ci github and --ci gitlab,
+#     so checking the gitlab render alone covers both hosts;
 #   - no other rendered file carries a second copy of a pinned version;
 #   - no Renovate or Dependabot manager targets the pin files.
 #
@@ -48,6 +50,19 @@ check_tree() {
             --out "$out/$host" >"$out/$host.log" 2>&1; then
             echo "PROBLEM: render --ci $host failed: $(tr '\n' ' ' <"$out/$host.log")"
             return
+        fi
+    done
+
+    # 0. Pin files are host-independent. Checks 1-3 read only the gitlab
+    #    render, so a host-specific pin (a ci=github row concatenated onto a pin
+    #    file) would go unchecked. Refuse any divergence between the renders.
+    #    bin/ruff-version.sh is included because check 2 executes it.
+    local pf
+    for pf in tools.versions tools.sha256 ruff.toml uv.toml bin/ruff-version.sh; do
+        if [ ! -f "$out/github/$pf" ] || [ ! -f "$out/gitlab/$pf" ]; then
+            echo "PROBLEM: $pf is not rendered for both hosts (github, gitlab); pins must be host-independent"
+        elif ! cmp -s "$out/github/$pf" "$out/gitlab/$pf"; then
+            echo "PROBLEM: $pf differs between the github and gitlab renders; pins must be host-independent"
         fi
     done
     local r="$out/gitlab"
@@ -179,9 +194,11 @@ fresh() {
 
 # expect_problem NAME NEEDLE — run check_tree on $tree; pass only if it reports
 # a PROBLEM line containing NEEDLE (so a case cannot pass by breaking elsewhere).
+# Sets $last_out to the render dir so a case can inspect what was rendered.
 expect_problem() {
     local probs o
     o=$(mktemp -d "$tree.out.XXXX")
+    last_out=$o
     probs=$(check_tree "$tree" "$o")
     if grep -F -- "$2" <<<"$probs" | grep -q '^PROBLEM'; then
         pass "$1"
@@ -296,6 +313,30 @@ expect_problem "dependabot targets a pin file" "Renovate/Dependabot entry target
 fresh
 : >"$tree/baseline/templates/core/platform/renovate.json.tmpl"
 expect_problem "empty renovate.json fails closed" "renovate.json is missing or empty"
+
+# 11. A github-only pin skew is caught. Checks 1-3 read the gitlab render, so
+#     without the host-identity check a ci=github row on a pin file would pass.
+fresh
+echo 'typos=1.99.0' >"$tree/baseline/templates/core/tools-github.versions"
+printf 'tools.versions\tcore\tci=github\tcore/tools-github.versions\n' \
+    >>"$tree/baseline/templates/manifest.tsv"
+expect_problem "github-only tools.versions skew" \
+    "tools.versions differs between the github and gitlab renders"
+# Guard the setup: the row must actually have landed in the github render only,
+# or the case would pass on some other divergence.
+if grep -qx 'typos=1.99.0' "$last_out/github/tools.versions" &&
+    ! grep -qx 'typos=1.99.0' "$last_out/gitlab/tools.versions"; then
+    pass "mutation 11 setup: skew is in the github render only"
+else
+    fail "mutation 11 setup" "typos=1.99.0 was not rendered into github only"
+fi
+
+# 11b. The identity check covers the TOML pin sources too, not just tools.versions.
+fresh
+echo '# github-only' >"$tree/baseline/templates/python/uv-github.toml"
+printf 'uv.toml\tpython\tci=github\tpython/uv-github.toml\n' \
+    >>"$tree/baseline/templates/manifest.tsv"
+expect_problem "github-only uv.toml skew" "uv.toml differs between the github and gitlab renders"
 
 if [ "$fails" -gt 0 ]; then
     echo "$fails case(s) failed"
