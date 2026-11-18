@@ -28,6 +28,20 @@ so renaming the job without updating the spec fails the gate.
 `tests/baseline/validate-platform-mutations.test.sh` breaks scratch copies one
 way at a time and requires the gate to fail on each.
 
+## Check source and bypass
+
+A required check named only by its context is satisfied by a check or status of
+that name from **any** app or token with checks/statuses write access. So
+`github.yml` binds `merge-gate` to an app with `integration_id`. `15368` is
+GitHub Actions, which runs the CI template. The field is optional. Drop it, or
+set the right app id, if a repo's CI posts the check from another app. When it
+is present, the gate requires an integer.
+
+`bypass_actors` is `[]`: nobody, admins included, bypasses the ruleset. It is
+stated in the spec rather than left to the consumer's default, so a per-repo
+bypass is a reviewed edit to this list, not a side effect of how the ruleset was
+created.
+
 ## Placeholders and per-repo values
 
 - `~DEFAULT_BRANCH` (GitHub) and `DEFAULT_BRANCH` (GitLab) stand for the repo's

@@ -17,6 +17,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # shellcheck source=tests/baseline/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
+# shellcheck source=tests/baseline/lib/workflow-labels.sh
+source "$SCRIPT_DIR/lib/workflow-labels.sh"
 
 GATE="$SCRIPT_DIR/validate-platform.sh"
 SRC_PLATFORM="$REPO_ROOT/baseline/platform"
@@ -59,19 +61,36 @@ failed_messages() {
 
 # mutant <name> <file-relative-to-scratch> <sed-expr> <expected gate message>
 mutant() {
-    local d="$WORKDIR/$1" changed=yes msgs
+    local d="$WORKDIR/$1" changed=yes
     fresh "$d"
     command sed -i -e "$3" "$d/$2"
     # A sed that matched nothing leaves a pristine copy, which passes: catch it
     # here so a renamed fixture cannot turn this into a vacuous result.
     command cmp -s "$d/$2" "$(mutant_source "$2")" && changed=no
     assert_equals "yes" "$changed" "Mutation '$1' changed $2"
-    run_gate "$d"
+    expect_target_failure "$1" "$d" "$4"
+}
+
+# mutant_rm <name> <file-relative-to-scratch> <expected gate message> — the
+# file is deleted outright rather than edited.
+mutant_rm() {
+    local d="$WORKDIR/$1"
+    fresh "$d"
+    command rm -f "$d/$2"
+    assert_true "[ ! -e \"$d/$2\" ]" "Mutation '$1' removed $2"
+    expect_target_failure "$1" "$d" "$3"
+}
+
+# expect_target_failure <name> <dir> <expected gate message> — the gate run on
+# <dir> exits non-zero and reports <expected gate message> among its failures.
+expect_target_failure() {
+    local msgs
+    run_gate "$2"
     msgs="$(failed_messages)"
     assert_true "[ $GATE_RC -ne 0 ]" "Mutation '$1' makes the gate exit non-zero (exit $GATE_RC)"
-    if ! command grep -qxF -- "$4" <<<"$msgs"; then
+    if ! command grep -qxF -- "$3" <<<"$msgs"; then
         _fail "Mutation '$1' fails the gate on its target assertion" \
-            "Expected: $4" "Reported: ${msgs:-(no failing assertion)}"
+            "Expected: $3" "Reported: ${msgs:-(no failing assertion)}"
     fi
 }
 
@@ -119,6 +138,37 @@ test_github_mutants() {
         "required_signatures is optional or required"
     mutant bad-version platform/github.yml 's/^version: 1/version: 2/' \
         "github.yml parses and declares version: 1"
+    mutant empty-github platform/github.yml '1,$d' \
+        "github.yml exists and is not empty"
+    # A second context beside merge-gate: the required set is then wider than
+    # the CI template's single gate job.
+    mutant extra-check platform/github.yml '/^ *- context: merge-gate$/i\        - context: lint' \
+        "github.yml requires exactly the CI template's gate job, nothing else"
+    mutant string-integration-id platform/github.yml 's/integration_id: 15368/integration_id: "15368"/' \
+        "merge-gate's integration_id, when set, is an integer app id"
+    mutant bypass-actor platform/github.yml 's/^  bypass_actors: \[\]/  bypass_actors: [{ actor_id: 5, actor_type: RepositoryRole, bypass_mode: always }]/' \
+        "The ruleset declares no bypass actors"
+    # Absent is not empty: yq's length of null is 0, so a length-only check
+    # would let a dropped key fall back to the consumer's default.
+    mutant no-bypass-key platform/github.yml '/^  bypass_actors:/d' \
+        "The ruleset declares no bypass actors"
+}
+
+# integration_id is optional (platform/README.md): a spec without it must pass,
+# or the documented "drop it" option would break the gate.
+test_integration_id_optional() {
+    command -v yq >/dev/null 2>&1 || {
+        skip_test "yq not installed"
+        return 0
+    }
+    local d="$WORKDIR/no-integration-id"
+    fresh "$d"
+    command sed -i -e '/^ *integration_id: /d' "$d/platform/github.yml"
+    assert_equals "" "$(yq '.. | select(has("integration_id")?) | .context' "$d/platform/github.yml")" \
+        "The scratch spec has no integration_id"
+    run_gate "$d"
+    assert_equals "0" "$GATE_RC" "The gate passes when integration_id is left out"
+    assert_equals "" "$(failed_messages)" "...and reports no failing assertion"
 }
 
 test_gitlab_mutants() {
@@ -149,8 +199,18 @@ test_label_mutants() {
         "Every label has a prefix/name, a 6-hex uppercase color, and a description"
     mutant dup-label platform/labels.yml 's/name: type\/docs,/name: type\/bug,/' \
         "No label name repeats"
-    mutant missing-label platform/labels.yml '/status\/blocked/d' \
-        "labels.yml carries every label the issue workflow selects and parks by"
+    # Every workflow label, one mutant each. They share one message, so each
+    # also checks the gate named THIS label as missing: a sed that deleted a
+    # different line would otherwise pass for the wrong reason.
+    local label
+    for label in "${WORKFLOW_LABELS[@]}"; do
+        mutant "missing-${label//\//-}" platform/labels.yml "/name: ${label//\//\\/},/d" \
+            "labels.yml carries every label the issue workflow selects and parks by"
+        assert_contains "$GATE_OUT" "Actual:   ' $label'" \
+            "Mutation 'missing-${label//\//-}' is reported as missing exactly $label"
+    done
+    mutant_rm missing-labels platform/labels.yml \
+        "labels.yml exists and is not empty"
     mutant labels-bad-version platform/labels.yml 's/^version: 1/version: 2/' \
         "labels.yml parses and declares version: 1"
     mutant no-labels platform/labels.yml '/^  - {/d' \
@@ -158,6 +218,7 @@ test_label_mutants() {
 }
 
 run_test test_pristine_passes "The gate passes on the real spec"
+run_test test_integration_id_optional "A spec without the optional integration_id passes"
 run_test test_github_mutants "Each GitHub spec or CI template mutation fails its own assertion"
 run_test test_gitlab_mutants "Each GitLab spec mutation fails its own assertion"
 run_test test_label_mutants "Each label vocabulary mutation fails its own assertion"

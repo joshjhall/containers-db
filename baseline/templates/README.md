@@ -118,11 +118,13 @@ if they were. A complete file keeps its real extension.
 - **Platform files**: on GitHub, `.github/dependabot.yml` keeps the action SHAs
   and each slice's package pins current (core adds `github-actions`, python
   adds `pip` for `tests/requirements.txt`, and shell has nothing to update),
-  plus issue and PR templates. On GitLab, issue and MR templates under
-  `.gitlab/`. `CODEOWNERS` is written for both hosts. Settings only an API can
-  set (the ruleset requiring `merge-gate`, merge options, labels) are not
-  rendered: they live in `../platform/` and `stibbons setup platform` applies
-  them.
+  plus issue and PR templates. On GitLab, where Dependabot does not run,
+  `renovate.json` does the same job: it bumps the CI image's dated tag (never its
+  Debian codename), and Renovate detects each slice's ecosystem itself (python's
+  `tests/requirements.txt`). Issue and MR templates go under `.gitlab/`.
+  `CODEOWNERS` is written for both hosts. Settings only an API can set (the
+  ruleset requiring `merge-gate`, merge options, labels) are not rendered: they
+  live in `../platform/` and `stibbons setup platform` applies them.
 - **Editor config**: `.editorconfig` always, and `.vscode/` / `.zed/` settings
   for each `--ide` selected. The settings turn on format-on-save with the
   formatter flags the justfile uses (shfmt `-i 4 -ci`, ruff, dprint, taplo).
@@ -172,7 +174,10 @@ Where upstream publishes checksums, cross-check against them.
 2. Add its rows to `manifest.tsv` beside the other slices' rows for each shared
    target, and one row per plain config file it owns. A slice with a package
    ecosystem adds a `.github/dependabot.yml` entry fragment (`ci=github`)
-   between core's head and its `github-actions` entry.
+   between core's head and its `github-actions` entry. On GitLab, Renovate
+   detects common ecosystems on its own. If it would not find the slice's pins,
+   add a rule to `core/platform/renovate.json.tmpl`. JSON cannot be composed from
+   fragments, so that file is shared by every slice.
 3. Run `bash tests/baseline/validate-templates.sh`: it renders every slice
    combination, parses and lints the output, pins fragments to the slice docs'
    fences, and runs the rendered hooks in a scratch repo.

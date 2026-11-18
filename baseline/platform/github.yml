@@ -16,6 +16,9 @@ ruleset:
   name: default-branch
   target: branch
   enforcement: active
+  # Nobody bypasses the ruleset. Stated here rather than left to the
+  # consumer's default; a per-repo bypass is an edit to this list.
+  bypass_actors: []
   conditions:
     ref_name:
       include: ["~DEFAULT_BRANCH"]
@@ -32,6 +35,10 @@ ruleset:
       strict_required_status_checks_policy: false
       required_status_checks:
         - context: merge-gate
+          # Optional: the app the check must come from. 15368 is GitHub
+          # Actions, so a same-named status from any other app or token does
+          # not satisfy the rule. Drop it, or change it, if CI runs elsewhere.
+          integration_id: 15368
     non_fast_forward: true # no force-push
     deletion: true # the default branch cannot be deleted
   # Signed commits are opt-in: requiring them blocks every contributor who has
