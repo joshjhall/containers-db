@@ -104,6 +104,7 @@ check_tree() {
         vf="$root/tools/$name/versions/$v.json"
         [ -f "$vf" ] || continue # already reported above
         keys=$(jq -r '.install_methods[]
+            | select(.verification.pinned_checksum)
             | ((.platform.arch // []) | if type == "string" then [.] else . end | sort)
             | if . == ["amd64"] then "x86_64" elif . == ["arm64"] then "aarch64"
               elif . == ["amd64", "arm64"] then "any" else empty end' "$vf")
@@ -143,7 +144,8 @@ check_tree() {
     for cfg in "$r/renovate.json" "$out/github/.github/dependabot.yml"; do
         [ -s "$cfg" ] || echo "PROBLEM: ${cfg#"$out"/} is missing or empty; cannot check its managers"
     done
-    if ! managers=$(jq -r '.customManagers // [] | length' "$r/renovate.json" 2>&1); then
+    if ! managers=$(jq -r '.customManagers // [] | length' "$r/renovate.json" 2>&1) ||
+        [ -z "$managers" ]; then
         echo "PROBLEM: renovate.json does not parse: $managers"
     elif [ "$managers" != 0 ]; then
         echo "PROBLEM: renovate.json has customManagers; a hosted-Renovate regex bump changes tools.versions without tools.sha256"
@@ -202,7 +204,19 @@ jq '.install_methods[].verification.pinned_checksum |= ("f" * 64)' \
     "$tree/tools/dprint/versions/$old.json" >"$tree/tools/dprint/versions/9.9.9.json"
 jq '.default_version = "9.9.9"' "$tree/tools/dprint/index.json" >"$tree/x" && mv "$tree/x" "$tree/tools/dprint/index.json"
 sed -i 's/^dprint=.*/dprint=9.9.9/' "$tree/baseline/templates/core/tools.versions"
+# Guard the setup itself: an empty or schema-drifted 9.9.9.json would make the
+# lookup return nothing and still "mismatch", passing for the wrong reason.
+fhash=$(printf 'f%.0s' $(seq 64))
+if jq -e --arg h "$fhash" '[.install_methods[].verification.pinned_checksum] | length >= 2 and all(. == $h)' \
+    "$tree/tools/dprint/versions/9.9.9.json" >/dev/null; then
+    pass "mutation 3 setup: 9.9.9.json carries the fabricated hashes"
+else
+    fail "mutation 3 setup" "9.9.9.json was not built as expected"
+fi
+# The needle names the catalog's fabricated hash, so only the stale-hash path
+# (committed old hash vs vetted new one) can produce it.
 expect_problem "catalog+version bump with stale sha256 (x86_64)" "dprint-x86_64 sha256"
+expect_problem "...naming the vetted 9.9.9 hash (x86_64)" "catalog checksum for dprint 9.9.9 ('$fhash')"
 expect_problem "catalog+version bump with stale sha256 (aarch64)" "dprint-aarch64 sha256"
 
 # 4. A hand-edited ruff required-version is caught through bin/ruff-version.sh.
