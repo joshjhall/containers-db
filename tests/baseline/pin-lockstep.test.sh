@@ -97,6 +97,26 @@ check_tree() {
             echo "PROBLEM: $key sha256 $hex does not match the catalog checksum for $tool $ver ('${sum:-<none>}')"
     done < <(grep -v '^#' "$r/tools.sha256" | grep .)
 
+    #    The other direction: every arch the catalog vets for a pinned tool has
+    #    a tools.sha256 entry. install-tools.sh refuses a download with none.
+    local keys
+    while IFS='=' read -r name v; do
+        vf="$root/tools/$name/versions/$v.json"
+        [ -f "$vf" ] || continue # already reported above
+        keys=$(jq -r '.install_methods[]
+            | ((.platform.arch // []) | if type == "string" then [.] else . end | sort)
+            | if . == ["amd64"] then "x86_64" elif . == ["arm64"] then "aarch64"
+              elif . == ["amd64", "arm64"] then "any" else empty end' "$vf")
+        for arch in $keys; do
+            grep -q "^$name-$arch " "$r/tools.sha256" ||
+                echo "PROBLEM: no sha256 entry for $name-$arch in tools.sha256; install-tools.sh would refuse it"
+        done
+    done < <({
+        grep -v '^#' "$r/tools.versions" | grep .
+        echo "ruff=$(sed -n 's/^required-version = "==\([^"]*\)"$/\1/p' "$r/ruff.toml")"
+        echo "uv=$(sed -n 's/^required-version = "==\([^"]*\)"$/\1/p' "$r/uv.toml")"
+    })
+
     # 4. no second copy of a pin: a line naming a tool next to its pinned
     #    version, in any rendered file other than the pin sources. Comment
     #    lines are skipped: prose may cite the version a quirk was seen in.
@@ -106,7 +126,9 @@ check_tree() {
         while IFS= read -r f; do
             rel=${f#"$out"/}
             [[ "$rel" =~ $PIN_FILES_RE ]] && continue
-            grep -vE '^[[:space:]]*(#|//|<!--)' "$f" | grep -qE -- "$re" || continue
+            # Not `grep -q`: an early exit SIGPIPEs the upstream grep, and
+            # pipefail would turn a real match into a skip.
+            grep -vE '^[[:space:]]*(#|//|<!--)' "$f" | grep -E -- "$re" >/dev/null || continue
             echo "PROBLEM: $rel hardcodes $name $v; read it from the pin file instead"
         done < <(grep -rlE -- "$re" "$out/github" "$out/gitlab")
     done < <({
@@ -116,13 +138,21 @@ check_tree() {
     })
 
     # 5. no bot manager may target a pin file: it could only bump one of them.
-    if [ -n "$(jq -r '.customManagers // [] | .[]' "$r/renovate.json")" ]; then
+    #    Fail closed: a missing or unparsable config is a PROBLEM, not a pass.
+    local cfg managers
+    for cfg in "$r/renovate.json" "$out/github/.github/dependabot.yml"; do
+        [ -s "$cfg" ] || echo "PROBLEM: ${cfg#"$out"/} is missing or empty; cannot check its managers"
+    done
+    if ! managers=$(jq -r '.customManagers // [] | length' "$r/renovate.json" 2>&1); then
+        echo "PROBLEM: renovate.json does not parse: $managers"
+    elif [ "$managers" != 0 ]; then
         echo "PROBLEM: renovate.json has customManagers; a hosted-Renovate regex bump changes tools.versions without tools.sha256"
     fi
-    if grep -nE 'tools\.(versions|sha256)|required-version|ruff\.toml|uv\.toml' \
-        "$r/renovate.json" "$out/github/.github/dependabot.yml"; then
-        echo "PROBLEM: a Renovate/Dependabot entry targets a pin file (lines above)"
-    fi
+    local hits
+    hits=$(grep -nE 'tools\.(versions|sha256)|required-version|ruff\.toml|uv\.toml' \
+        "$r/renovate.json" "$out/github/.github/dependabot.yml" 2>/dev/null)
+    [ -z "$hits" ] ||
+        echo "PROBLEM: a Renovate/Dependabot entry targets a pin file: $(tr '\n' ' ' <<<"$hits")"
 }
 
 # fresh — a scratch copy of the real tree; sets $tree.
@@ -172,7 +202,8 @@ jq '.install_methods[].verification.pinned_checksum |= ("f" * 64)' \
     "$tree/tools/dprint/versions/$old.json" >"$tree/tools/dprint/versions/9.9.9.json"
 jq '.default_version = "9.9.9"' "$tree/tools/dprint/index.json" >"$tree/x" && mv "$tree/x" "$tree/tools/dprint/index.json"
 sed -i 's/^dprint=.*/dprint=9.9.9/' "$tree/baseline/templates/core/tools.versions"
-expect_problem "catalog+version bump with stale sha256" "dprint-x86_64 sha256"
+expect_problem "catalog+version bump with stale sha256 (x86_64)" "dprint-x86_64 sha256"
+expect_problem "catalog+version bump with stale sha256 (aarch64)" "dprint-aarch64 sha256"
 
 # 4. A hand-edited ruff required-version is caught through bin/ruff-version.sh.
 fresh
@@ -198,6 +229,22 @@ printf '\n[default]\nlocale = "en-us" # typos v%s\n' \
     "$(awk -F= '$1 == "typos" { print $2 }' "$tree/baseline/templates/core/tools.versions")" \
     >>"$tree/baseline/templates/core/typos.toml.tmpl"
 expect_problem "hardcoded duplicate pin" "_typos.toml hardcodes typos"
+
+# 8. A deleted sha256 line (version kept) is caught: install-tools.sh would
+#    refuse the download, so the gate must refuse the render first.
+fresh
+sed -i '/^shfmt-aarch64 /d' "$tree/baseline/templates/shell/tools.sha256"
+expect_problem "missing sha256 entry" "no sha256 entry for shfmt-aarch64"
+
+# 9. A Dependabot entry pointing at a pin file is caught.
+fresh
+printf '    # watches tools.versions\n' >>"$tree/baseline/templates/core/platform/dependabot-actions.yml.tmpl"
+expect_problem "dependabot targets a pin file" "Renovate/Dependabot entry targets a pin file"
+
+# 10. A missing renovate.json fails closed rather than passing the guard.
+fresh
+: >"$tree/baseline/templates/core/platform/renovate.json.tmpl"
+expect_problem "empty renovate.json fails closed" "renovate.json is missing or empty"
 
 if [ "$fails" -gt 0 ]; then
     echo "$fails case(s) failed"
