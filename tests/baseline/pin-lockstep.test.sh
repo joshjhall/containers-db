@@ -92,7 +92,17 @@ check_tree() {
             | ((.platform.arch // []) | if type == "string" then [.] else . end | sort) as $p
             | select(($a == "x86_64" and $p == ["amd64"]) or ($a == "aarch64" and $p == ["arm64"])
                      or ($a == "any" and $p == ["amd64", "arm64"]))
-            | .verification.pinned_checksum' "$vf" | head -1)
+            | .verification.pinned_checksum // empty' "$vf" | head -1)
+        # Two empties compare equal, so refuse a malformed hash or an
+        # unvetted (tool, arch) before the equality test can fail open.
+        if ! [[ "$hex" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "PROBLEM: $key sha256 '$hex' is not a 64-hex digest"
+            continue
+        fi
+        if [ -z "$sum" ]; then
+            echo "PROBLEM: $key has no vetted catalog checksum for $tool $ver"
+            continue
+        fi
         [ "$hex" = "$sum" ] ||
             echo "PROBLEM: $key sha256 $hex does not match the catalog checksum for $tool $ver ('${sum:-<none>}')"
     done < <(grep -v '^#' "$r/tools.sha256" | grep .)
@@ -255,6 +265,22 @@ expect_problem "missing sha256 entry" "no sha256 entry for shfmt-aarch64"
 fresh
 sed -i '/^uv-x86_64 /d' "$tree/baseline/templates/python/tools.sha256"
 expect_problem "missing sha256 entry (uv, via required-version)" "no sha256 entry for uv-x86_64"
+
+# 8c. A key-only sha256 line (empty hash) is refused, not compared as
+#     empty == empty.
+fresh
+sed -i 's/^\(shfmt-x86_64\) .*/\1/' "$tree/baseline/templates/shell/tools.sha256"
+expect_problem "empty sha256 hash" "shfmt-x86_64 sha256 '' is not a 64-hex digest"
+
+# 8d. A sha256 entry for an arch the catalog never vetted is refused.
+fresh
+printf 'shfmt-any %s\n' "$(printf 'a%.0s' $(seq 64))" >>"$tree/baseline/templates/shell/tools.sha256"
+expect_problem "sha256 for an unvetted arch" "shfmt-any has no vetted catalog checksum"
+
+# 8e. A pinned tool with no catalog entry is reported, not skipped.
+fresh
+echo 'nosuchtool=1.0.0' >>"$tree/baseline/templates/core/tools.versions"
+expect_problem "tool missing from catalog" "pins nosuchtool=1.0.0 but the catalog default is '<none>'"
 
 # 9. A Dependabot entry pointing at a pin file is caught.
 fresh
