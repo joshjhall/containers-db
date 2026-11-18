@@ -253,21 +253,21 @@ fresh
 bats_ver=$(awk -F= '$1 == "bats" { print $2 }' "$tree/baseline/templates/shell/tools.versions")
 vetted=$(jq -r '.install_methods[]
     | select(((.platform.arch // []) | if type == "string" then [.] else . end | sort) == ["amd64", "arm64"])
-    | .verification.pinned_checksum // empty' "$tree/tools/bats/versions/$bats_ver.json" 2>/dev/null | head -1)
+    | .verification.pinned_checksum // empty' "$tree/tools/bats/versions/$bats_ver.json" | head -1)
 committed=$(awk '$1 == "bats-any" { print $2 }' "$tree/baseline/templates/shell/tools.sha256")
 # Guard the setup: an empty or drifted lookup would make the needle below
-# meaningless (or match a different failure path).
+# meaningless (or match a different failure path), so skip the case on failure.
 if [[ "$vetted" =~ ^[0-9a-f]{64}$ ]] && [ "$vetted" = "$committed" ]; then
     pass "mutation 3b setup: bats-any matches the vetted any-arch catalog hash"
+    # A well-formed digest, so the shape guard passes and only the comparison
+    # against the any-arch catalog entry can report it.
+    ehash=$(printf 'e%.0s' $(seq 64))
+    sed -i "s/^bats-any .*/bats-any $ehash/" "$tree/baseline/templates/shell/tools.sha256"
+    expect_problem "stale sha256 for the any arch (bats-any)" \
+        "bats-any sha256 $ehash does not match the catalog checksum for bats $bats_ver ('$vetted')"
 else
     fail "mutation 3b setup" "bats $bats_ver any-arch hash '${vetted:-<none>}' vs committed '${committed:-<none>}'"
 fi
-# A well-formed digest, so the shape guard passes and only the comparison
-# against the any-arch catalog entry can report it.
-ehash=$(printf 'e%.0s' $(seq 64))
-sed -i "s/^bats-any .*/bats-any $ehash/" "$tree/baseline/templates/shell/tools.sha256"
-expect_problem "stale sha256 for the any arch (bats-any)" \
-    "bats-any sha256 $ehash does not match the catalog checksum for bats $bats_ver ('$vetted')"
 
 # 4. A hand-edited ruff required-version is caught through bin/ruff-version.sh.
 fresh
