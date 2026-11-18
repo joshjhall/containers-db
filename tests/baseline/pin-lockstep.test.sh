@@ -337,6 +337,24 @@ echo '# github-only' >"$tree/baseline/templates/python/uv-github.toml"
 printf 'uv.toml\tpython\tci=github\tpython/uv-github.toml\n' \
     >>"$tree/baseline/templates/manifest.tsv"
 expect_problem "github-only uv.toml skew" "uv.toml differs between the github and gitlab renders"
+if grep -qx '# github-only' "$last_out/github/uv.toml" &&
+    ! grep -qx '# github-only' "$last_out/gitlab/uv.toml"; then
+    pass "mutation 11b setup: skew is in the github render only"
+else
+    fail "mutation 11b setup" "'# github-only' was not rendered into github's uv.toml only"
+fi
+
+# 11c. A pin file rendered for one host only is refused, not silently skipped:
+#      move ruff.toml's sole row to ci=github so gitlab never renders it.
+fresh
+sed -i 's/^\(ruff\.toml\tpython\t\)always\t/\1ci=github\t/' "$tree/baseline/templates/manifest.tsv"
+expect_problem "pin file rendered for one host only" \
+    "ruff.toml is not rendered for both hosts (github, gitlab)"
+if [ -f "$last_out/github/ruff.toml" ] && [ ! -e "$last_out/gitlab/ruff.toml" ]; then
+    pass "mutation 11c setup: ruff.toml rendered for github only"
+else
+    fail "mutation 11c setup" "ruff.toml was not rendered for github only"
+fi
 
 if [ "$fails" -gt 0 ]; then
     echo "$fails case(s) failed"
