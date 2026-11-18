@@ -250,6 +250,12 @@ fresh
 sed -i '/^shfmt-aarch64 /d' "$tree/baseline/templates/shell/tools.sha256"
 expect_problem "missing sha256 entry" "no sha256 entry for shfmt-aarch64"
 
+# 8b. The same holds for ruff/uv, whose version comes from required-version
+#     rather than tools.versions.
+fresh
+sed -i '/^uv-x86_64 /d' "$tree/baseline/templates/python/tools.sha256"
+expect_problem "missing sha256 entry (uv, via required-version)" "no sha256 entry for uv-x86_64"
+
 # 9. A Dependabot entry pointing at a pin file is caught.
 fresh
 printf '    # watches tools.versions\n' >>"$tree/baseline/templates/core/platform/dependabot-actions.yml.tmpl"
