@@ -315,6 +315,7 @@ jobs:
           tests/baseline/render-modes.test.sh tests/baseline/editor-config.test.sh
           tests/baseline/validate-platform.sh
           tests/baseline/validate-platform-mutations.test.sh
+          tests/baseline/pin-lockstep.test.sh
 
       - name: Slice contract conformance
         run: bash tests/baseline/validate-slices.sh
@@ -339,6 +340,9 @@ jobs:
 
       - name: Platform gate mutation self-test
         run: tests/baseline/validate-platform-mutations.test.sh
+
+      - name: Rendered pins in lockstep with the catalog (#639)
+        run: tests/baseline/pin-lockstep.test.sh
 
   # The job above floats on `stable`, which only ever moves past the declared
   # minimum. This job builds on exactly `rust-version`, so a newer-than-MSRV

@@ -45,8 +45,10 @@ the `pygments>=2.20.0` pin that joshjhall/containers' stibbons carried as a
 local patch, so the templates are byte-identical to the copy stibbons shipped
 at the move.
 
-Tool pins (`templates/*/tools.versions`, `templates/*/tools.sha256`) are still
-kept by hand; deriving them from catalog data is a follow-up.
+Tool pins (`templates/*/tools.versions`, `templates/*/tools.sha256`, and the
+ruff/uv `required-version`) are generated from the catalog by
+`bin/baseline-pins.sh`. Rendered repos refresh them by re-rendering; see
+`core.md` § 4 Pin maintenance.
 
 ## Gates
 
