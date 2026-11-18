@@ -272,6 +272,11 @@ fresh
 sed -i 's/^\(shfmt-x86_64\) .*/\1/' "$tree/baseline/templates/shell/tools.sha256"
 expect_problem "empty sha256 hash" "shfmt-x86_64 sha256 '' is not a 64-hex digest"
 
+# 8c'. A truncated (63-hex) hash is refused by the digest-shape guard.
+fresh
+sed -i 's/^\(shfmt-x86_64 [0-9a-f]\{63\}\)[0-9a-f]$/\1/' "$tree/baseline/templates/shell/tools.sha256"
+expect_problem "truncated sha256 hash" "shfmt-x86_64 sha256 '$(awk '$1 == "shfmt-x86_64" { print substr($2, 1, 63) }' "$tree/baseline/templates/shell/tools.sha256")' is not a 64-hex digest"
+
 # 8d. A sha256 entry for an arch the catalog never vetted is refused.
 fresh
 printf 'shfmt-any %s\n' "$(printf 'a%.0s' $(seq 64))" >>"$tree/baseline/templates/shell/tools.sha256"
