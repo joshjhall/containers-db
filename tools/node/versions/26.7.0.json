@@ -904,6 +904,18 @@
       "image_digest": "sha256:be96b1c34d9a432cf2f6f6cd66b50674e98d41e8ec20aa4f7d5ab9316127bf41",
       "duration_seconds": 10.604072676,
       "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-25T15:55:53.953106845Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/45649320741",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:d9f26f906f662eb4719f603887fe7a12ca39819666ef9cf9124f3e60e8e68b90",
+      "duration_seconds": 9.611909339,
+      "error_class": "validate"
     }
   ]
 }

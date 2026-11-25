@@ -844,6 +844,78 @@
       "image_digest": "sha256:8b825dc5575ce7111d7ba5b642d3cbc6d69fcb2aa685d3d32bf07cfcab40ef7e",
       "duration_seconds": 7.966398606,
       "error_class": "validate"
+    },
+    {
+      "os": "debian",
+      "os_version": "12",
+      "arch": "amd64",
+      "tested_at": "2026-11-25T15:55:02.26062032Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/45649320741",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-12-amd64",
+      "image_digest": "sha256:06c3bbbdaf94b48b89ca2948a69ea3b80a7e3823130983a7f5c88448e016f32b",
+      "duration_seconds": 6.388720637,
+      "error_class": "validate"
+    },
+    {
+      "os": "debian",
+      "os_version": "13",
+      "arch": "amd64",
+      "tested_at": "2026-11-25T15:55:37.367147416Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/45649320741",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-debian-13-amd64",
+      "image_digest": "sha256:8fb96102f72e97e4d9ad324d7c0e0e771e3e69cdf41333b727faddeac0b5de1c",
+      "duration_seconds": 5.297355377,
+      "error_class": "validate"
+    },
+    {
+      "os": "rhel",
+      "os_version": "10",
+      "arch": "amd64",
+      "tested_at": "2026-11-25T15:54:47.768122589Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/45649320741",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-10-amd64",
+      "image_digest": "sha256:c93cc46872afce790620456990885b0eb7eb831d95f83d968c35bfe747edd98f",
+      "duration_seconds": 5.371364303,
+      "error_class": "validate"
+    },
+    {
+      "os": "rhel",
+      "os_version": "9",
+      "arch": "amd64",
+      "tested_at": "2026-11-25T15:55:56.862782977Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/45649320741",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-rhel-9-amd64",
+      "image_digest": "sha256:6cd818f0036df9d584784d430f792e6fff000aa398b720a8315d50b291708ac7",
+      "duration_seconds": 5.475570867,
+      "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "24.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-25T15:54:46.221121728Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/45649320741",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-24.04-amd64",
+      "image_digest": "sha256:1ee5c76b2401f9154c884cc6ebd4d260128e2f0f03e6f88f0b686529b0a65c5f",
+      "duration_seconds": 7.050249617,
+      "error_class": "validate"
+    },
+    {
+      "os": "ubuntu",
+      "os_version": "26.04",
+      "arch": "amd64",
+      "tested_at": "2026-11-25T15:55:17.177160036Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/45649320741",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-ubuntu-26.04-amd64",
+      "image_digest": "sha256:d9f26f906f662eb4719f603887fe7a12ca39819666ef9cf9124f3e60e8e68b90",
+      "duration_seconds": 7.340186956,
+      "error_class": "validate"
     }
   ]
 }
