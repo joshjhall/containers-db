@@ -688,6 +688,30 @@
       "image_digest": "sha256:bb9b9c088f7f7fadc95696b370c86943b4d35fa911835c57363169ce7264022a",
       "duration_seconds": 184.091760122,
       "error_class": "install_method"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "amd64",
+      "tested_at": "2026-11-27T15:33:55.518180379Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/46024732803",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-amd64",
+      "image_digest": "sha256:757cc62c054b0c56731366f630cb714f862abbcd628be8f6bc7bce632b609c4b",
+      "duration_seconds": 396.215330397,
+      "error_class": "install_method"
+    },
+    {
+      "os": "alpine",
+      "os_version": "3.23",
+      "arch": "arm64",
+      "tested_at": "2026-11-27T15:34:04.178897618Z",
+      "ci_run": "https://github.com/joshjhall/containers/actions/runs/46024732803",
+      "result": "fail",
+      "image_ref": "ghcr.io/joshjhall/containers/base-alpine-3.23-arm64",
+      "image_digest": "sha256:ac8a4c7b51a51b77629ca957036a2301c044cbaf1420b075545000fdb7cafe7b",
+      "duration_seconds": 394.212925908,
+      "error_class": "install_method"
     }
   ]
 }
