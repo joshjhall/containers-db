@@ -1,11 +1,11 @@
 {
   "activity": {
     "scan_cadence_days": 1,
-    "scanned_at": "2026-11-12T21:15:41Z",
+    "scanned_at": "2026-11-28T02:22:33Z",
     "score": "very-active",
     "signals": {
-      "last_commit_at": "2026-11-12T20:03:00Z",
-      "last_release_at": "2026-11-12T18:19:42Z",
+      "last_commit_at": "2026-11-28T01:17:35Z",
+      "last_release_at": "2026-11-27T19:31:41Z",
       "open_advisories": 6,
       "releases_last_90d": 5
     }
@@ -94,6 +94,9 @@
     },
     {
       "version": "1.100.0"
+    },
+    {
+      "version": "1.100.1"
     }
   ],
   "channels": {
